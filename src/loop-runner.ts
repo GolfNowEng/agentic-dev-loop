@@ -16,12 +16,16 @@ import { appendRunLog } from "./runs-log.js";
  * Given the ticket key being worked, returns the Verdict the skill wrote
  * to verdict.json (already parsed - callers that need raw-file semantics
  * should use verdict.ts themselves before handing a Verdict here) along
- * with the wall-clock start/end timestamps of the run.
+ * with the wall-clock start/end timestamps of the run and the *measured*
+ * cost from claude -p's own usage report -- ceilings must never trust
+ * verdict.cost_usd, the skill's own self-report, since a misbehaving or
+ * runaway agent could under-report it and defeat the ceiling entirely.
  */
 export type RunSkillFn = (ticketKey: string) => Promise<{
   verdict: Verdict;
   started: string;
   ended: string;
+  costUsd: number;
 }>;
 
 /**
@@ -99,14 +103,14 @@ export async function runLoopIteration(
     return { kind: "skipped-race", ticket: ticket.key };
   }
 
-  const { verdict, started, ended } = await runSkill(ticket.key);
+  const { verdict, started, ended, costUsd } = await runSkill(ticket.key);
 
   const runDurationMin =
     (new Date(ended).getTime() - new Date(started).getTime()) / 60000;
 
   const ceilingResult = checkCeilings({
     runsToday: runsToday + 1,
-    runCostUsd: verdict.cost_usd,
+    runCostUsd: costUsd,
     runDurationMin,
     config: config.ceilings,
   });
@@ -122,7 +126,7 @@ export async function runLoopIteration(
     await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
   }
 
-  const logLine = buildRunLogLine(ticket.key, verdict, started, ended);
+  const logLine = buildRunLogLine(ticket.key, verdict, started, ended, costUsd);
   await appendRunLog(runsLogPath, logLine);
 
   return { kind: "ran", ticket: ticket.key, logLine };
@@ -149,13 +153,16 @@ export function decideEpicMove(
 
 /**
  * Derive the RunLogLine to append for this run from its Verdict and the
- * ticket/timing/skill metadata gathered around it.
+ * ticket/timing/skill metadata gathered around it. `costUsd` is the
+ * measured cost from claude -p's own usage report, not verdict.cost_usd
+ * (the skill's self-report) -- see RunSkillFn's doc comment.
  */
 export function buildRunLogLine(
   ticket: string,
   verdict: Verdict,
   started: string,
   ended: string,
+  costUsd: number,
 ): RunLogLine {
   return {
     ticket,
@@ -172,7 +179,7 @@ export function buildRunLogLine(
     failure_category: verdict.failure_category,
     detail: verdict.detail,
     pr: verdict.pr,
-    cost_usd: verdict.cost_usd,
+    cost_usd: costUsd,
     tokens: verdict.tokens,
   };
 }

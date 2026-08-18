@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendRunLog, readRunLog } from "../src/runs-log.js";
+import { appendRunLog, readRunLog, countRunsToday } from "../src/runs-log.js";
 import type { RunLogLine } from "../src/types.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -122,6 +122,47 @@ describe("appendRunLog", () => {
       expect(typeof line.cost_usd).toBe("number");
       expect(typeof line.tokens.in).toBe("number");
       expect(typeof line.tokens.out).toBe("number");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("countRunsToday", () => {
+  it("returns 0 when the file does not exist yet", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "runs-log-count-test-"));
+    const path = join(dir, "runs.jsonl");
+    try {
+      const count = await countRunsToday(path, new Date("2026-08-16T12:00:00Z"));
+      expect(count).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts only lines whose started falls on the same UTC calendar day as now", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "runs-log-count-test-"));
+    const path = join(dir, "runs.jsonl");
+    try {
+      await appendRunLog(path, makeLine({ ticket: "PROJ-1", started: "2026-08-16T00:00:01Z" }));
+      await appendRunLog(path, makeLine({ ticket: "PROJ-2", started: "2026-08-16T23:59:59Z" }));
+      await appendRunLog(path, makeLine({ ticket: "PROJ-3", started: "2026-08-15T23:59:59Z" }));
+      await appendRunLog(path, makeLine({ ticket: "PROJ-4", started: "2026-08-17T00:00:00Z" }));
+
+      const count = await countRunsToday(path, new Date("2026-08-16T12:00:00Z"));
+      expect(count).toBe(2);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 0 when no lines match the given day", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "runs-log-count-test-"));
+    const path = join(dir, "runs.jsonl");
+    try {
+      await appendRunLog(path, makeLine({ ticket: "PROJ-1", started: "2026-08-15T12:00:00Z" }));
+      const count = await countRunsToday(path, new Date("2026-08-16T12:00:00Z"));
+      expect(count).toBe(0);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

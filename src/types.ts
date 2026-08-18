@@ -160,6 +160,17 @@ export interface TargetRepoConfig {
 }
 
 /**
+ * Shape of pipeline.loop.config.json -- loop-mechanics settings (how the
+ * `main.ts` process behaves), kept separate from pipeline.<project>.config.json
+ * (which project/Jira/repo it points at) since the two vary independently:
+ * one loop-config file per repo checkout, not one per project.
+ */
+export interface LoopConfig {
+  /** Seconds to sleep between polls when the queue is empty. */
+  pollIntervalSec: number;
+}
+
+/**
  * Shape of pipeline.config.json.
  */
 export interface Config {

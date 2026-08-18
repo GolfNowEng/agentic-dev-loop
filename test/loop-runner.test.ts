@@ -55,6 +55,9 @@ function makeVerdict(overrides: Partial<Verdict> = {}): Verdict {
   };
 }
 
+/** Default measured cost for a mocked runSkill, matching makeVerdict's cost_usd. */
+const MEASURED_COST_USD = 1.0;
+
 async function withTempRunsLog<T>(
   fn: (path: string) => Promise<T>,
 ): Promise<T> {
@@ -141,6 +144,7 @@ describe("runLoopIteration", () => {
         }),
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:05:00Z",
+        costUsd: MEASURED_COST_USD,
       }));
 
       const deps: LoopIterationDeps = {
@@ -183,6 +187,7 @@ describe("runLoopIteration", () => {
         verdict: makeVerdict(),
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:05:00Z",
+        costUsd: MEASURED_COST_USD,
       }));
 
       const config = makeConfig();
@@ -217,6 +222,41 @@ describe("runLoopIteration", () => {
         verdict: makeVerdict({ cost_usd: config.ceilings.maxCostPerRunUsd + 1 }),
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:05:00Z",
+        costUsd: config.ceilings.maxCostPerRunUsd + 1,
+      }));
+
+      const deps: LoopIterationDeps = {
+        jiraClient,
+        config,
+        runSkill,
+        loopKind: "dev",
+        runsLogPath,
+        runsToday: 0,
+      };
+
+      const result = await runLoopIteration(deps);
+
+      expect(result.kind).toBe("paused");
+    });
+  });
+
+  it("ceiling breach (cost/run): pauses using the MEASURED cost, even when the verdict under-reports its own cost_usd", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket: JiraTicket = { key: "PROJ-4b", status: "Ready", epic: "EPIC-READY" };
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+        claimTicket: vi.fn(async () => true),
+      });
+      const config = makeConfig();
+      // The skill under-reports its own cost (e.g. a bug, or a misbehaving
+      // agent) but the measured cost from the claude -p spawn is what
+      // actually breaches the ceiling -- checkCeilings must trust the
+      // measured value, never the skill's self-report.
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({ cost_usd: 0.01 }),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:05:00Z",
+        costUsd: config.ceilings.maxCostPerRunUsd + 1,
       }));
 
       const deps: LoopIterationDeps = {
@@ -247,6 +287,7 @@ describe("runLoopIteration", () => {
         // Timeout is 30 min; make this run take much longer.
         started: "2026-08-16T14:00:00Z",
         ended: "2026-08-16T15:30:00Z",
+        costUsd: MEASURED_COST_USD,
       }));
 
       const deps: LoopIterationDeps = {
@@ -276,6 +317,7 @@ describe("runLoopIteration", () => {
         verdict: makeVerdict({ outcome: "landed" }),
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
       }));
 
       const deps: LoopIterationDeps = {
@@ -313,6 +355,7 @@ describe("runLoopIteration", () => {
         }),
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
       }));
 
       const deps: LoopIterationDeps = {
@@ -345,6 +388,7 @@ describe("runLoopIteration", () => {
         verdict: makeVerdict(),
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
       }));
 
       const deps: LoopIterationDeps = {
@@ -389,6 +433,7 @@ describe("runLoopIteration", () => {
         verdict: makeVerdict(),
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
       }));
 
       const deps: LoopIterationDeps = {
