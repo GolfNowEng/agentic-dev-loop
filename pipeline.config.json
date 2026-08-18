@@ -7,7 +7,8 @@
     "pollJql": {
       "refine": "___",
       "dev": "___"
-    }
+    },
+    "epicLinkField": "___"
   },
   "ceilings": { "maxRunsPerDay": "___", "maxCostPerRunUsd": "___", "runTimeoutMin": "___" },
   "autoPromoteLabel": "___"

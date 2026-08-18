@@ -111,6 +111,13 @@ export interface JiraConfig {
   readyEpic: string;
   claimStatus: ClaimStatusConfig;
   pollJql: PollJqlConfig;
+  /**
+   * How a ticket is linked to its epic in this Jira instance: either the
+   * literal string "parent" (team-managed projects) or a custom field id
+   * such as "customfield_10014" (company-managed projects). Placeholder
+   * "___" until Appendix A of the pipeline spec is filled in.
+   */
+  epicLinkField: string;
 }
 
 export interface CeilingsConfig {
