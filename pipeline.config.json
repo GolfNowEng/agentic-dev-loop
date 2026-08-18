@@ -12,5 +12,9 @@
     "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" }
   },
   "ceilings": { "maxRunsPerDay": 10, "maxCostPerRunUsd": 5, "runTimeoutMin": 45 },
-  "autoPromoteLabel": "auto-promote"
+  "autoPromoteLabel": "auto-promote",
+  "targetRepo": {
+    "url": "git@github.com:fandango/webtarsthree.git",
+    "defaultBranch": "master"
+  }
 }

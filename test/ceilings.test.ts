@@ -20,6 +20,7 @@ function makeConfig(overrides: Partial<Config["ceilings"]> = {}): Config {
       ...overrides,
     },
     autoPromoteLabel: "auto-promote",
+    targetRepo: { url: "git@github.com:org/repo.git", defaultBranch: "main" },
   };
 }
 

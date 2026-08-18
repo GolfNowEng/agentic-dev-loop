@@ -130,4 +130,16 @@ export interface Config {
    * to skip the human review epic and go straight to the ready epic.
    */
   autoPromoteLabel: string;
+  /**
+   * The codebase this skill grounds tickets against -- separate from this
+   * pipeline repo itself, which only orchestrates. Kept in config (not
+   * hardcoded) so the same pipeline repos can be pointed at a different
+   * project later.
+   */
+  targetRepo: {
+    /** git remote URL, e.g. "git@github.com:org/repo.git". */
+    url: string;
+    /** Branch treated as the current baseline, e.g. "master". */
+    defaultBranch: string;
+  };
 }

@@ -18,6 +18,7 @@ function makeConfig(): Config {
     },
     ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
     autoPromoteLabel: "auto-promote",
+    targetRepo: { url: "git@github.com:org/repo.git", defaultBranch: "main" },
   };
 }
 

@@ -31,6 +31,8 @@ const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
   ["jira.statusNames.bounced", (c) => c.jira.statusNames.bounced],
   ["jira.statusNames.prOpen", (c) => c.jira.statusNames.prOpen],
   ["autoPromoteLabel", (c) => c.autoPromoteLabel],
+  ["targetRepo.url", (c) => c.targetRepo.url],
+  ["targetRepo.defaultBranch", (c) => c.targetRepo.defaultBranch],
 ];
 
 /**
