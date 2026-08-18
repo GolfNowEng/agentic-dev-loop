@@ -19,6 +19,18 @@ describe("parseVerdict", () => {
     expect(verdict.failure_category).toBeNull();
   });
 
+  it("parses outcome \"ready\" -- ticket-refine's own passing verdict, distinct from the shared RunOutcome enum", () => {
+    const raw = JSON.stringify({
+      outcome: "ready",
+      phase_reached: "verify",
+      failure_category: null,
+      detail: "Refined ticket written.",
+    });
+    const verdict = parseVerdict(raw);
+    expect(verdict.outcome).toBe("ready");
+    expect(verdict.failure_category).toBeNull();
+  });
+
   it("never throws on undefined input, and treats it as agent_error", () => {
     let verdict;
     expect(() => {

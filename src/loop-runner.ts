@@ -123,11 +123,16 @@ export async function runLoopIteration(
     return { action: "paused-ceiling", pauseReason: postCheck.detail };
   }
 
-  if (verdict.outcome === "landed") {
+  // ticket-refine reports its own passing verdict as "ready" (a refined
+  // ticket, not a PR) -- normalize to "landed" for the shared RunOutcome
+  // schema before anything downstream (epic move, runs.jsonl) sees it.
+  const outcome = verdict.outcome === "ready" ? "landed" : verdict.outcome;
+
+  if (outcome === "landed") {
     const autoPromote = ticket.labels.includes(config.autoPromoteLabel);
     const targetEpic = autoPromote ? config.jira.readyEpic : config.jira.reviewEpic;
     await jiraClient.moveToEpic(ticket.key, targetEpic);
-  } else if (verdict.outcome === "bounced") {
+  } else if (outcome === "bounced") {
     await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
   }
 
@@ -138,7 +143,7 @@ export async function runLoopIteration(
     model: result.model,
     started: result.startedAt,
     ended: result.endedAt,
-    outcome: verdict.outcome,
+    outcome,
     phase_reached: verdict.phase_reached,
     red_confirmed: verdict.red_confirmed ?? false,
     verify_loops: verdict.verify_loops ?? 0,

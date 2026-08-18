@@ -7,9 +7,9 @@
  */
 
 import { readFile } from "node:fs/promises";
-import type { RunOutcome, PhaseReached, Verdict } from "./types.js";
+import type { VerdictOutcome, PhaseReached, Verdict } from "./types.js";
 
-const VALID_OUTCOMES: RunOutcome[] = ["landed", "bounced", "error", "killed"];
+const VALID_OUTCOMES: VerdictOutcome[] = ["landed", "ready", "bounced", "error", "killed"];
 const VALID_PHASES: PhaseReached[] = [
   "intake",
   "plan",
@@ -23,7 +23,7 @@ function isValidVerdictShape(value: unknown): value is Verdict {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
 
-  if (!VALID_OUTCOMES.includes(v.outcome as RunOutcome)) return false;
+  if (!VALID_OUTCOMES.includes(v.outcome as VerdictOutcome)) return false;
   if (!VALID_PHASES.includes(v.phase_reached as PhaseReached)) return false;
   if (v.failure_category !== null && typeof v.failure_category !== "string") {
     return false;

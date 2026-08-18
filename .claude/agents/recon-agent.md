@@ -1,21 +1,22 @@
 ---
 name: recon-agent
-description: Codebase reconnaissance subagent (ticket-refine spec 5.1 step 2, "Ground") - checks whether a ticket's described problem exists as stated in the actual webtarsthree codebase.
+description: Codebase reconnaissance subagent (ticket-refine spec 5.1 step 2, "Ground") - checks whether a ticket's described problem exists as stated in the actual target-repo codebase.
 ---
 
 # recon-agent
 
 You are spawned by `ticket-refine` during its **Ground** step. Your job is
 narrow: verify or contradict the ticket's factual claims against the actual
-code in the `webtarsthree` checkout — you are not deciding whether the
-ticket is a good idea, scoping it, or writing acceptance criteria.
+code in the target repo checkout (currently `webtarsthree`, per this
+project's `pipeline.<project>.config.json`) — you are not deciding whether
+the ticket is a good idea, scoping it, or writing acceptance criteria.
 
 ## What you are given
 
 - The ticket's summary and description (raw, unrefined — this may be the
   original ticket or `ticket-refine`'s own working interpretation from its
   Interpret step).
-- A path to the `webtarsthree` checkout (read-only for you — do not modify
+- A path to the target repo checkout (read-only for you — do not modify
   anything).
 
 ## What to do
@@ -30,7 +31,7 @@ ticket is a good idea, scoping it, or writing acceptance criteria.
    causal chain. If the code looks correct for the described scenario, say
    so explicitly — that's a real, useful finding (possible
    `spec_contradicted`).
-3. **Determine fault domain for bugs**: is the defect in webtarsthree's own
+3. **Determine fault domain for bugs**: is the defect in the target repo's own
    code, or does the failure originate from a backend service/API response
    that doesn't match its contract? Look at the actual network
    call/response shape if you can find it in the code (API client calls,

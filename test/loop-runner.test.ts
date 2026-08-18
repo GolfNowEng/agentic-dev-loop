@@ -275,6 +275,33 @@ describe("runLoopIteration", () => {
     expect(jiraClient.moveToEpic).toHaveBeenCalledWith("PROJ-142", config.jira.readyEpic);
   });
 
+  it("a verdict with outcome \"ready\" (ticket-refine's own passing outcome) moves the epic and logs as \"landed\"", async () => {
+    const jiraClient = makeMockJiraClient();
+    const runSkill: RunSkillFn = vi.fn(async () =>
+      makeRunSkillResult({
+        verdictRaw: JSON.stringify({
+          outcome: "ready",
+          phase_reached: "verify",
+          failure_category: null,
+          detail: "Refined ticket written.",
+        }),
+      }),
+    );
+    const config = makeConfig();
+
+    const result = await runLoopIteration({
+      jiraClient,
+      config,
+      jql: "epic in (EPIC-1)",
+      runSkill,
+      runsLogPath,
+      runsToday: 0,
+    });
+
+    expect(jiraClient.moveToEpic).toHaveBeenCalledWith("PROJ-142", config.jira.reviewEpic);
+    expect(result.logLine?.outcome).toBe("landed");
+  });
+
   it("a bounced verdict sets status bounced and does not move the ticket's epic", async () => {
     const jiraClient = makeMockJiraClient();
     const runSkill: RunSkillFn = vi.fn(async () =>

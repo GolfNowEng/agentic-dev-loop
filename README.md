@@ -35,15 +35,17 @@ This repo is currently a **structural scaffold only**. Concretely:
 - The loop-runner's pure functions — config loading, JQL query building,
   verdict parsing, ceiling enforcement, and run logging — are implemented
   and unit-tested.
-- The **Jira client is a stub that throws** until the placeholders in
-  `pipeline.config.json` (Appendix A of the spec) are filled in with real
-  epic IDs, statuses, and JQL.
-- The **`ticket-refine` skill itself has not been authored yet** — only a
-  stub `SKILL.md` exists at `.claude/skills/ticket-refine/SKILL.md`. It does
-  not perform any refinement yet.
+- The Jira client is real (`RealJiraClient`) and fully bound for the
+  `webtarsthree` project via `pipeline.webtarsthree.config.json`. Adding a
+  second project means adding a second `pipeline.<project>.config.json` —
+  see `docs/config.md`.
+- `ticket-refine` (see `.claude/skills/ticket-refine/SKILL.md`) and its
+  `recon-agent`, `devils-advocate-agent`, and `verifier-agent` subagents are
+  fully authored.
 
-In short: the scaffolding and tested plumbing exist, but the loop cannot yet
-talk to Jira or actually refine a ticket end to end.
+Not yet built: a loop-runner CLI entrypoint that actually spawns `claude -p`
+in a loop, and the live dashboard. See `docs/` for how the pieces fit
+together, and `CLAUDE.md` for this repo's role and working rules.
 
 ## Running tests
 

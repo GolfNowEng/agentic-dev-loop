@@ -1,10 +1,10 @@
-// Success/failure rate rollup over runs.jsonl. Run with:
-//   npm run stats [-- --days N]
+// Success/failure rate rollup over a project's runs log. Run with:
+//   npm run stats [-- --project webtarsthree --days N]
 //
-// Default lookback is 7 days. This is the "track success/failure rates over
-// time" view -- runs.jsonl already has everything needed (outcome,
-// failure_category, timestamps); this just aggregates it instead of making
-// you remember a jq incantation.
+// Default project is "webtarsthree", default lookback is 7 days. This is
+// the "track success/failure rates over time" view -- runs/<project>.jsonl
+// already has everything needed (outcome, failure_category, timestamps);
+// this just aggregates it instead of making you remember a jq incantation.
 
 import { readFile } from "node:fs/promises";
 
@@ -14,7 +14,13 @@ const days =
     ? Number(process.argv[daysArgIndex + 1])
     : 7;
 
-const RUNS_LOG_PATH = "./runs.jsonl";
+const projectArgIndex = process.argv.indexOf("--project");
+const project =
+  projectArgIndex !== -1 && process.argv[projectArgIndex + 1]
+    ? process.argv[projectArgIndex + 1]
+    : "webtarsthree";
+
+const RUNS_LOG_PATH = `./runs/${project}.jsonl`;
 
 let raw;
 try {

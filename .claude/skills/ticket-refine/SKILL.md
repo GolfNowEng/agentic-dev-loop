@@ -46,8 +46,12 @@ description already in the `### Overview` / `### Acceptance Criteria` /
 Same discipline as `dev-loop`'s `ticket-to-pr`, for dashboard parity:
 
 1. `RUN_ID` = current UTC timestamp as `YYYYMMDDTHHMMSSZ`.
-2. `RUN_DIR` = `.pipeline/runs/<TICKET>-<RUN_ID>/` (relative to this repo's
-   root). Create it.
+2. `SLUG` = the project slug derived from `pipeline.<project>.config.json`'s
+   `targetRepo.url` (same derivation as `repoSlugFromUrl` in `src/config.ts`
+   — the last path segment, minus a trailing `.git`), e.g. `webtarsthree`.
+3. `RUN_DIR` = `.pipeline/<SLUG>/runs/<TICKET>-<RUN_ID>/` (relative to this
+   repo's root). Create it. Namespacing by `SLUG` lets multiple projects'
+   runs coexist under one `research-loop` checkout without collision.
 3. Append one JSON line per phase transition to `RUN_DIR/progress.jsonl`:
    ```json
    {"ts": "<ISO-8601 UTC>", "phase": "triage|interpret|ground|attack|scope|blocked-check|synthesize|verify", "event": "phase_start|phase_end|note", "detail": "one line"}
@@ -57,18 +61,20 @@ Same discipline as `dev-loop`'s `ticket-to-pr`, for dashboard parity:
 
 ## Target repo (grounding)
 
-`pipeline.config.json`'s `targetRepo` names the codebase this skill grounds
-tickets against — `webtarsthree`
+This repo's `pipeline.<project>.config.json`'s `targetRepo` names the
+codebase this skill grounds tickets against — currently
+`pipeline.webtarsthree.config.json` points at `webtarsthree`
 (`git@github.com:fandango/webtarsthree.git`, default branch `master`). This
 is a **read-only** checkout for this skill — `ticket-refine` never commits
 or branches in the target repo, it only reads code to verify or contradict
-the ticket's claims.
+the ticket's claims. Adding a second project later means adding a second
+`pipeline.<project>.config.json` — no code or skill changes.
 
 Working directory: reuse the same persistent checkout convention as
-`ticket-to-pr` (`.pipeline/workdir/webtarsthree`), but this skill only ever
-runs `git fetch` + `git checkout <defaultBranch>` + `git reset --hard
-origin/<defaultBranch>` at the start — never creates a branch, since it
-makes no commits.
+`ticket-to-pr` (`.pipeline/<SLUG>/workdir/<SLUG>`, `SLUG` as derived in
+"Setup" above), but this skill only ever runs `git fetch` + `git checkout
+<defaultBranch>` + `git reset --hard origin/<defaultBranch>` at the start —
+never creates a branch, since it makes no commits.
 
 ## Always-emitted result line
 
@@ -91,11 +97,11 @@ share Steps 1–7 below, but this step's findings feed what "Ground" and
 much information the ticket arrived with.
 
 - **Bug checklist**: reproduce it. **Determine fault domain** — is this
-  broken in webtarsthree's own code, or is a backend service/API not
+  broken in the target repo's own code, or is a backend service/API not
   returning what its contract promises? Inspect the failing call, the
   service response, the contract. If the fault is upstream: bounce
   `blocked`, naming the owning service, and draft a follow-up ticket for
-  that team (see Step 4) rather than pretending webtarsthree can fix it
+  that team (see Step 4) rather than pretending the target repo can fix it
   client-side. Then determine: regression window (when did it last work?
   — check git log/blame on the relevant area), severity, affected surface.
 - **Tech Story checklist**: verify the ticket's claims about current
@@ -116,7 +122,7 @@ readings) — not a coin flip, not "pick the most likely one and proceed."
 ### Step 2 — Ground
 
 Spawn codebase reconnaissance subagents (see `.claude/agents/recon-agent.md`)
-against the `webtarsthree` checkout: does the described problem exist as
+against the target repo checkout: does the described problem exist as
 stated? Locate the relevant code. Reproduce the bug, or confirm the gap the
 ticket describes actually exists.
 
@@ -154,7 +160,7 @@ partial/incorrect ticket.
 
 If the work can't proceed regardless of how well-specified it is (external
 dependency, missing access, an upstream decision needed, or the Step 0
-fault-domain finding pointed outside webtarsthree) — bounce `blocked`,
+fault-domain finding pointed outside the target repo) — bounce `blocked`,
 naming the specific blocker.
 
 ### Step 6 — Synthesize

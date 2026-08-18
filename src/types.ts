@@ -27,6 +27,16 @@ export type FailureCategory =
 /** Outcome of a single run, as recorded in runs.jsonl. */
 export type RunOutcome = "landed" | "bounced" | "error" | "killed";
 
+/**
+ * The full set of outcomes a Verdict's `outcome` field may hold. Equal to
+ * RunOutcome plus "ready" -- ticket-refine's own passing-verdict word (a
+ * ticket, not a PR, so "landed" would be misleading coming from this
+ * skill). The loop runner normalizes "ready" to "landed" before writing a
+ * RunLogLine, since runs.jsonl's schema is shared with dev-loop and only
+ * ever uses RunOutcome.
+ */
+export type VerdictOutcome = RunOutcome | "ready";
+
 /** Furthest phase the run reached before it ended. */
 export type PhaseReached = "intake" | "plan" | "red" | "green" | "verify" | "pr";
 
@@ -69,7 +79,7 @@ export interface RunLogLine {
  * epic, log the run) must be derivable from this interface alone.
  */
 export interface Verdict {
-  outcome: RunOutcome;
+  outcome: VerdictOutcome;
   phase_reached: PhaseReached;
   failure_category: FailureCategory | null;
   /** One line, human-written by the skill. */
