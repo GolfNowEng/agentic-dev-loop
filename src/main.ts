@@ -32,15 +32,20 @@ const MODEL = "sonnet";
 
 /**
  * --permission-mode acceptEdits only auto-approves file edits, not MCP
- * tool calls -- Atlassian MCP calls (getJiraIssue, etc.) still prompt for
- * approval, which hangs/fails in headless -p mode. ticket-to-pr only ever
- * reads the ticket itself (fetches summary/description/comments/status);
- * it never transitions status, moves epics, or writes comments -- the
- * loop runner's REST client handles all of that.
+ * tool calls or Bash -- Atlassian MCP calls (getJiraIssue, etc.) and every
+ * Bash invocation (git worktree/push, running the test suite, lint/
+ * typecheck/build, `gh pr create`) still prompt for approval, which
+ * hangs/fails in headless -p mode. ticket-to-pr only ever reads the
+ * ticket itself via MCP (fetches summary/description/comments/status); it
+ * never transitions status, moves epics, or writes comments through MCP
+ * -- the loop runner's REST client handles all of that. Bash is allowed
+ * broadly since every TDD phase (Red/Green/Verify/PR) assumes real
+ * command execution inside the isolated per-run worktree.
  */
 const ALLOWED_TOOLS = [
   "mcp__atlassian__getAccessibleAtlassianResources",
   "mcp__atlassian__getJiraIssue",
+  "Bash",
 ].join(",");
 
 function parseArgs(argv: string[]): { configPath: string; once: boolean } {
