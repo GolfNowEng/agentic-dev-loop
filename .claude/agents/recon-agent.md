@@ -29,12 +29,15 @@ hypothesis doesn't pan out, try a different angle before reporting
 - **The specific hypothesis you're testing** (when `ticket-refine` spawned
   more than one of you in parallel, each gets a different one — stay
   scoped to yours).
-- A path to the target repo checkout. **"Read-only" means you never commit
-  or create a branch** — it does not mean you can't run things. Run the
-  existing test suite, write and run a throwaway repro script, execute a
-  failing code path — actually confirming a bug beats inferring one from
-  reading code statically. Delete any scratch files you create before you
-  finish; leave the checkout's tracked files untouched.
+- A path to this run's own isolated git worktree of the target repo (created
+  by `ticket-refine`, one per run — not the shared clone at
+  `.pipeline/<SLUG>/repo`, which you should never touch directly). You may
+  freely run things inside your worktree — the existing test suite, a
+  throwaway repro script, executing a failing code path — actually
+  confirming a bug beats inferring one from reading code statically. You
+  still never commit or create a branch here (there's nothing to commit
+  toward — this worktree gets removed after the run regardless of what you
+  find); delete any scratch files you create before you finish.
 - **Optionally, the local URL of the target repo's own dev server**, if
   `ticket-refine` started one before spawning you for this run (e.g.
   `http://localhost:3000`, proxying `/api` to a local API server). If

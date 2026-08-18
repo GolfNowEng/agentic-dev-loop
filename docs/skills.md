@@ -5,8 +5,10 @@
 `.claude/skills/ticket-refine/SKILL.md` — the skeptic. Invoked by the loop
 runner as `claude -p "/ticket-refine <TICKET-KEY>"`. Treats the raw ticket
 as an unverified claim, not an instruction to execute, and runs a fixed
-sequence against a **read-only** target-repo checkout at
-`.pipeline/<slug>/workdir/<slug>`:
+sequence against an isolated per-run `git worktree` off the shared target-
+repo clone at `.pipeline/<slug>/repo` (see `docs/logging.md`) — never the
+shared clone directly, so a human working in it manually is never affected
+by a background run:
 
 0. **Triage & route** — pick a checklist by issue type (Bug vs Tech Story
    vs unknown); for bugs, determine fault domain (client-side vs upstream
@@ -25,18 +27,16 @@ sequence against a **read-only** target-repo checkout at
    under-specified; the default is to investigate and bounce with
    evidence, not to bounce on input alone.
 2. **Ground** — pragmatic, hypothesis-driven investigation, not a lookup:
-   form 2-3 concrete competing explanations when the cause isn't obvious.
-   If any hypothesis needs a live API call to test (not just reading
-   client code), `ticket-refine` starts the target repo's own dev server
-   *once*, checking first whether one's already running — then fans out
-   one `recon-agent` per hypothesis in parallel (below), each testing its
-   own hypothesis against the target repo (and the running dev server's
-   local proxy routes, if relevant). **Hard gate: `ticket-refine` stops the
-   dev server itself before Ground ends, in every case — confirmed,
-   refuted, inconclusive, or bouncing outright** — it's the one thing in
-   this step that isn't conditional on the outcome. "More than one
-   confirmed, or none" is a finding to carry into Attack, not something to
-   silently resolve by picking one.
+   creates this run's worktree first, then forms 2-3 concrete competing
+   explanations when the cause isn't obvious. If any hypothesis needs a
+   live API call to test (not just reading client code), `ticket-refine`
+   starts the target repo's own dev server *once* inside that worktree,
+   checking first whether one's already running — then fans out one
+   `recon-agent` per hypothesis in parallel (below), each testing its own
+   hypothesis against the worktree (and the running dev server's local
+   proxy routes, if relevant). "More than one confirmed, or none" is a
+   finding to carry into Attack, not something to silently resolve by
+   picking one.
 3. **Attack** — spawn `devils-advocate-agent` (below) to try to break the
    working assumptions from Interpret/Ground.
 4. **Scope & sequence** — if oversized, draft (never create) a split as
@@ -52,25 +52,31 @@ Core rule: a bounce is a normal, successful exit — concrete evidence, not a
 crash. Everything questioned here happens *once*, upstream of the human
 review gate; once a ticket crosses into Review, `dev-loop` trusts it fully.
 
+**Cleanup is a hard gate, unconditional, every run**: stop the dev server if
+one was started, and remove this run's worktree — regardless of outcome
+(ready, bounced at any step, or error). Since this skill never commits,
+there's no "leave it for inspection" exception here (unlike `ticket-to-pr`,
+which has one for uncommitted work — see dev-loop's `docs/skills.md`).
+
 ## Subagents
 
 - **recon-agent** (`.claude/agents/recon-agent.md`) — one instance per
   hypothesis (spawned in parallel when Ground has more than one candidate
   explanation); each confirms or refutes only its own hypothesis, not a
-  generic "does the ticket hold" pass. "Read-only" means no commits/
-  branches, not no execution — it can run the test suite or a throwaway
-  repro script, and, when `ticket-refine` handed it a running dev server's
-  local URL, make live **read-only** calls against that instance's own
-  proxy routes (never any other host, never a mutating call) — chained
-  calls (e.g. search for an id, then fetch it) are expected when that's
-  what it takes to see an endpoint's real response. It never starts, stops,
-  or manages the dev server itself — that lifecycle belongs to
-  `ticket-refine`. Trial and error is expected: a first attempt not
-  panning out isn't grounds to report `inconclusive` without trying a
-  different angle. For bugs, also determines fault domain and, via
-  `git log -p`/`git blame` on the specific file(s), the regression window —
-  while scanning that commit history for Jira keys that lead to a prior
-  ticket which touched the same code. Never proposes a fix.
+  generic "does the ticket hold" pass. Works inside `ticket-refine`'s
+  per-run worktree — never the shared clone — and can run the test suite
+  or a throwaway repro script there, and, when `ticket-refine` handed it a
+  running dev server's local URL, make live **read-only** calls against
+  that instance's own proxy routes (never any other host, never a mutating
+  call) — chained calls (e.g. search for an id, then fetch it) are expected
+  when that's what it takes to see an endpoint's real response. It never
+  starts/stops the dev server or manages the worktree itself — both
+  lifecycles belong to `ticket-refine`. Trial and error is expected: a
+  first attempt not panning out isn't grounds to report `inconclusive`
+  without trying a different angle. For bugs, also determines fault domain
+  and, via `git log -p`/`git blame` on the specific file(s), the regression
+  window — while scanning that commit history for Jira keys that lead to a
+  prior ticket which touched the same code. Never proposes a fix.
 - **devils-advocate-agent** (`.claude/agents/devils-advocate-agent.md`) —
   attacks Interpret/Ground's assumptions across six angles (already fixed
   elsewhere? symptom vs. cause? hidden dependencies? blocked prerequisites?

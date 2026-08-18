@@ -65,16 +65,35 @@ This repo's `pipeline.<project>.config.json`'s `targetRepo` names the
 codebase this skill grounds tickets against — currently
 `pipeline.webtarsthree.config.json` points at `webtarsthree`
 (`git@github.com:fandango/webtarsthree.git`, default branch `master`). This
-is a **read-only** checkout for this skill — `ticket-refine` never commits
-or branches in the target repo, it only reads code to verify or contradict
-the ticket's claims. Adding a second project later means adding a second
-`pipeline.<project>.config.json` — no code or skill changes.
+skill never commits — it only reads code (and, via a dev server, exercises
+it) to verify or contradict the ticket's claims. Adding a second project
+later means adding a second `pipeline.<project>.config.json` — no code or
+skill changes.
 
-Working directory: reuse the same persistent checkout convention as
-`ticket-to-pr` (`.pipeline/<SLUG>/workdir/<SLUG>`, `SLUG` as derived in
-"Setup" above), but this skill only ever runs `git fetch` + `git checkout
-<defaultBranch>` + `git reset --hard origin/<defaultBranch>` at the start —
-never creates a branch, since it makes no commits.
+**Shared clone, per-run worktree — never work directly in the shared
+clone.** `.pipeline/<SLUG>/repo` (`SLUG` as derived in "Setup" above) is a
+`git clone` of `targetRepo.url` kept up to date with `git fetch`
+**only** — no run ever checks out a branch or resets *this* directory,
+because a human may `cd` into it, or be mid-inspection of a prior run's
+worktree, at any moment while this loop runs unattended in the background.
+Instead, at the start of Step 2 (Ground) — the only step that touches the
+target repo checkout — create an isolated, detached worktree for this run:
+
+```bash
+mkdir -p .pipeline/<SLUG>
+if [ ! -d .pipeline/<SLUG>/repo/.git ]; then
+  git clone <targetRepo.url> .pipeline/<SLUG>/repo
+fi
+git -C .pipeline/<SLUG>/repo fetch origin
+git -C .pipeline/<SLUG>/repo worktree add --detach \
+  .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>-ground \
+  origin/<targetRepo.defaultBranch>
+```
+
+Ground, and every `recon-agent` it spawns, reads and executes only inside
+`.pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>-ground` — never in
+`.pipeline/<SLUG>/repo` itself. See "Cleanup" below for removing this
+worktree once Ground (and the rest of the run) concludes.
 
 ## Always-emitted result line
 
@@ -174,33 +193,26 @@ whether it actually holds.
    not manufacturing multiple hypotheses for their own sake.
 2. **If any hypothesis needs a live API call to test** (not just reading
    client code — actually seeing what an endpoint returns), start the
-   target repo's own dev server *once*, before spawning any `recon-agent`:
-   - Check whether it's already running first (e.g. hit its health-check
-     route) — don't start a second instance.
-   - Start it per the target repo's own dev script (e.g. `npm run dev` —
-     check its `package.json`/README, don't assume a command) and wait for
-     it to be ready.
-   - Note the local URL(s) it's serving on (e.g. `http://localhost:3000`
-     with `/api` proxied to a local API server) — this is what you pass to
-     each `recon-agent` that needs it.
-   - **Hard gate: you must stop the dev server yourself before this step
-     ends**, in every case — hypotheses confirmed, refuted, or the step
-     bouncing outright. This is not conditional on how Ground concludes. If
-     you started it, you own shutting it down; do not leave it running for
-     a later step to clean up, and do not skip this because a bounce is
-     about to happen.
-   - If it fails to start, or starts but can't reach whatever upstream
-     services it depends on (e.g. missing local credentials in a freshly
-     cloned checkout), live API verification is simply unavailable for this
-     run — `recon-agent` reports that plainly rather than guessing at a
-     response shape or treating static code-reading as equivalent evidence.
+   target repo's own dev server *once*, in the worktree created above,
+   before spawning any `recon-agent`. Check whether it's already running
+   first (e.g. hit its health-check route) — don't start a second instance.
+   Start it per the target repo's own dev script (check its
+   `package.json`/README, don't assume a command) and wait for it to be
+   ready. Note the local URL(s) it's serving on (e.g. `http://localhost:3000`
+   with `/api` proxied to a local API server) — this is what you pass to
+   each `recon-agent` that needs it. If it fails to start, or starts but
+   can't reach whatever upstream services it depends on (e.g. missing local
+   credentials in a freshly cloned checkout), live API verification is
+   simply unavailable for this run — `recon-agent` reports that plainly
+   rather than guessing at a response shape or treating static code-reading
+   as equivalent evidence. (Cleanup, including stopping this server, is
+   covered once for the whole run — see "Cleanup" below.)
 3. **Fan out one `recon-agent` per hypothesis, in parallel** (see
    `.claude/agents/recon-agent.md`) — each spawned to confirm or refute one
-   specific hypothesis against the target repo checkout (and, if you
-   started one, the running dev server's local URL), not a generic "does
-   the described problem exist" pass. Parallel fan-out here is about
-   testing competing explanations at once, not increasing scrutiny of a
-   single explanation.
+   specific hypothesis against the worktree (and, if you started one, the
+   running dev server's local URL), not a generic "does the described
+   problem exist" pass. Parallel fan-out here is about testing competing
+   explanations at once, not increasing scrutiny of a single explanation.
 4. Each `recon-agent` should actually try to confirm its hypothesis, not
    just read code and infer: run the existing test suite, write a
    throwaway repro script, or — if the dev server is running — make live,
@@ -212,9 +224,6 @@ whether it actually holds.
    with concrete evidence, that's your grounding. If more than one is
    confirmed, or none is, that's itself a finding — carry it into Attack
    (Step 3) rather than picking one to move forward with.
-6. If you started the dev server in step 2, stop it now — see the hard
-   gate above. Confirm it's actually stopped (e.g. the port is free)
-   before moving on to Step 3.
 
 If the codebase contradicts the ticket's claim (the described behavior
 doesn't happen, the referenced file/function doesn't exist, the bug is
@@ -274,6 +283,25 @@ produced the ticket rubber-stamping itself.
 - If it fails: bounce with the specific `failure_category` and what's
   missing, per the checklist's own criteria.
 
+## Cleanup (hard gate, every run)
+
+Before this skill's final result line — regardless of outcome (ready,
+bounced at any step, or error):
+
+1. **If you started the target repo's dev server during Ground, stop it.**
+   Confirm it's actually stopped (e.g. the port is free), not just that you
+   sent a stop signal.
+2. **Remove this run's worktree**:
+   `git -C .pipeline/<SLUG>/repo worktree remove
+   .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>-ground`. Since this skill
+   never commits, there is no "uncommitted work worth keeping" exception
+   here (unlike `ticket-to-pr` — see its own Cleanup section) — always
+   remove it.
+
+Both apply even if you never reached Ground (nothing to clean up, but check
+before assuming so) and even if the run is about to bounce or error out.
+This is not conditional on how the run concludes.
+
 ## Definition-of-ready checklist (enforced, not vibed)
 
 0. Description follows the official template: `### Overview`,
@@ -317,10 +345,8 @@ produced the ticket rubber-stamping itself.
 
 A bounce is a normal, successful exit — not a crash. On any bounce:
 
-1. **If you started the target repo's dev server during Ground (Step 2)
-   and haven't stopped it yet, stop it now, before anything else below.**
-   The hard gate in Step 2 applies regardless of why this run is ending —
-   a bounce is not an exception to it.
+1. Run Cleanup (see above) — it applies regardless of why this run is
+   ending; a bounce is not an exception to it.
 2. Write findings to a ticket comment (never the description) with concrete
    evidence — file paths, what was found vs. claimed, the specific
    ambiguous readings, the suggested split.

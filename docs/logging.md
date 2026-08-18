@@ -16,9 +16,15 @@ apply to `dev-loop`).
 
 ## .pipeline/&lt;slug&gt;/ — per-run scratch space
 
-- `.pipeline/<slug>/workdir/<slug>/` — the **read-only** target-repo
-  checkout, reset (`git fetch` + `git reset --hard`) at the start of each
-  run. `ticket-refine` never branches or commits here.
+- `.pipeline/<slug>/repo/` — a shared `git clone` of the target repo, kept
+  current with `git fetch` **only**. No run ever checks out a branch or
+  resets this directory directly — a human can `cd` into it at any time
+  without a background run pulling the rug out from under them.
+- `.pipeline/<slug>/worktrees/<TICKET>-<RUN_ID>-ground/` — this run's own
+  isolated, detached `git worktree` off `repo/`, created at the start of
+  Ground and removed unconditionally (hard gate) before the run's Cleanup
+  completes — see `docs/skills.md`. `ticket-refine` never branches or
+  commits here either; it's read-only by convention, just isolated per run.
 - `.pipeline/<slug>/runs/<TICKET>-<RUN_ID>/` — one directory per run:
   - `progress.jsonl` — append-only phase-transition log the skill writes
     *while running* (phase_start/phase_end/note events for
