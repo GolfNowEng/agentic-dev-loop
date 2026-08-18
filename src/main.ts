@@ -203,6 +203,27 @@ async function main(): Promise<void> {
       }
     }
 
+    if (verdictRaw === undefined) {
+      // No verdict.json means the skill stopped before writing one --
+      // print whatever claude -p itself reported so a human can see why,
+      // instead of just "verdict.json was missing" with no further clue.
+      try {
+        const parsed = usageRaw as {
+          result?: string;
+          permission_denials?: Array<{ tool_name: string }>;
+        } | null;
+        if (parsed?.result) {
+          console.error(`[${SKILL_NAME}] ${ticket.key}: claude's own result text: ${parsed.result}`);
+        }
+        if (parsed?.permission_denials?.length) {
+          const denied = parsed.permission_denials.map((d) => d.tool_name).join(", ");
+          console.error(`[${SKILL_NAME}] ${ticket.key}: permission denials: ${denied}`);
+        }
+      } catch {
+        // Diagnostic logging must never itself crash the loop.
+      }
+    }
+
     const durationMin =
       (new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 60000;
 
