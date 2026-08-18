@@ -159,10 +159,39 @@ straight to Step 2) once there is *anything* concrete to investigate.
 
 ### Step 2 — Ground
 
-Spawn codebase reconnaissance subagents (see `.claude/agents/recon-agent.md`)
-against the target repo checkout: does the described problem exist as
-stated? Locate the relevant code. Reproduce the bug, or confirm the gap the
-ticket describes actually exists.
+This step is pragmatic investigation, not a lookup. Approach it the way a
+developer would debug something unclear: form hypotheses, then work through
+them with trial and error until one is confirmed or all are exhausted —
+don't stop at the first plausible-looking explanation without checking
+whether it actually holds.
+
+1. **Form hypotheses.** If the cause or the described behavior isn't
+   obvious from a first read, write down 2–3 concrete, distinct candidate
+   explanations (not "something's wrong in the auth flow" — specific enough
+   that confirming or refuting one wouldn't also confirm or refute another).
+   If there's genuinely only one plausible explanation, that's fine — this
+   is about not stopping at the first guess when there's real ambiguity,
+   not manufacturing multiple hypotheses for their own sake.
+2. **Fan out one `recon-agent` per hypothesis, in parallel** (see
+   `.claude/agents/recon-agent.md`) — each spawned to confirm or refute one
+   specific hypothesis against the target repo checkout, not a generic
+   "does the described problem exist" pass. Parallel fan-out here is about
+   testing competing explanations at once, not increasing scrutiny of a
+   single explanation.
+3. Each `recon-agent` should actually try to confirm its hypothesis, not
+   just read code and infer: run the existing test suite, write a
+   throwaway repro script, or — for a project with a configured
+   `targetRepo.stagingApiBaseUrl` — make live, read-only calls against that
+   staging environment to see what an endpoint actually returns (e.g.
+   search for an item to get its id, then call the real endpoint with that
+   id to reproduce the reported behavior). See `recon-agent.md` for the
+   staging-API rules; if no staging URL is configured, that path is simply
+   unavailable and recon-agent says so rather than substituting production
+   or guessing.
+4. Collect what each hypothesis's `recon-agent` found. If one is confirmed
+   with concrete evidence, that's your grounding. If more than one is
+   confirmed, or none is, that's itself a finding — carry it into Attack
+   (Step 3) rather than picking one to move forward with.
 
 If the codebase contradicts the ticket's claim (the described behavior
 doesn't happen, the referenced file/function doesn't exist, the bug is

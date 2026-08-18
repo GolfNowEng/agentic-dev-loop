@@ -151,5 +151,14 @@ export interface Config {
     url: string;
     /** Branch treated as the current baseline, e.g. "master". */
     defaultBranch: string;
+    /**
+     * Base URL of a staging/dev deployment recon-agent may make live,
+     * read-only API calls against to test a hypothesis (e.g. search-then-
+     * fetch to confirm what an endpoint actually returns). Optional --
+     * omit entirely if no such environment exists or is reachable; when
+     * absent, recon-agent reports that live verification wasn't possible
+     * rather than guessing or falling back to production.
+     */
+    stagingApiBaseUrl?: string;
   };
 }

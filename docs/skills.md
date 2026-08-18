@@ -24,8 +24,13 @@ sequence against a **read-only** target-repo checkout at
    can't resolve the gap. Tickets here vary a lot by author and are often
    under-specified; the default is to investigate and bounce with
    evidence, not to bounce on input alone.
-2. **Ground** — spawn `recon-agent` (below) against the target repo to
-   verify or contradict the ticket's factual claims.
+2. **Ground** — pragmatic, hypothesis-driven investigation, not a lookup:
+   form 2-3 concrete competing explanations when the cause isn't obvious,
+   fan out one `recon-agent` per hypothesis in parallel (below) to confirm
+   or refute each against the target repo (and, if configured, a staging
+   API — see `docs/config.md`), and treat "more than one confirmed, or
+   none" as a finding to carry into Attack rather than picking one to move
+   forward with.
 3. **Attack** — spawn `devils-advocate-agent` (below) to try to break the
    working assumptions from Interpret/Ground.
 4. **Scope & sequence** — if oversized, draft (never create) a split as
@@ -43,15 +48,21 @@ review gate; once a ticket crosses into Review, `dev-loop` trusts it fully.
 
 ## Subagents
 
-- **recon-agent** (`.claude/agents/recon-agent.md`) — narrow codebase
-  grounding: does the described problem/claim actually hold against the
-  code? "Read-only" means no commits/branches, not no execution — it can
-  run the test suite or a throwaway repro script to confirm a bug rather
-  than just inferring one from reading code. For bugs, also determines
-  fault domain and, via `git log -p`/`git blame` on the specific file(s),
-  the regression window — while scanning that commit history for Jira keys
-  that lead to a prior ticket which touched the same code. Never proposes a
-  fix.
+- **recon-agent** (`.claude/agents/recon-agent.md`) — one instance per
+  hypothesis (spawned in parallel when Ground has more than one candidate
+  explanation); each confirms or refutes only its own hypothesis, not a
+  generic "does the ticket hold" pass. "Read-only" means no commits/
+  branches, not no execution — it can run the test suite or a throwaway
+  repro script, and, when `targetRepo.stagingApiBaseUrl` is configured,
+  make live **read-only** calls against staging (never production) —
+  chained calls (e.g. search for an id, then fetch it) are expected when
+  that's what it takes to see an endpoint's real response. Trial and error
+  is expected: a first attempt not panning out isn't grounds to report
+  `inconclusive` without trying a different angle. For bugs, also
+  determines fault domain and, via `git log -p`/`git blame` on the
+  specific file(s), the regression window — while scanning that commit
+  history for Jira keys that lead to a prior ticket which touched the same
+  code. Never proposes a fix.
 - **devils-advocate-agent** (`.claude/agents/devils-advocate-agent.md`) —
   attacks Interpret/Ground's assumptions across six angles (already fixed
   elsewhere? symptom vs. cause? hidden dependencies? blocked prerequisites?
