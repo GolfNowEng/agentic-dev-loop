@@ -34,11 +34,15 @@ const SKILL_MD_PATH = ".claude/skills/ticket-refine/SKILL.md";
 
 /**
  * --permission-mode acceptEdits only auto-approves file edits, not MCP
- * tool calls -- Atlassian MCP calls (getJiraIssue, etc.) still prompt for
- * approval, which hangs/fails in headless -p mode. Explicitly allow the
- * specific Atlassian MCP tools this skill actually uses (read + comment +
- * description writes -- ticket-refine never transitions status or moves
- * epics itself, the loop runner's REST client does that).
+ * tool calls or Bash -- Atlassian MCP calls (getJiraIssue, etc.) and every
+ * Bash invocation (git fetch/worktree, running the target repo's test
+ * suite, starting/stopping its dev server, throwaway repro scripts) still
+ * prompt for approval, which hangs/fails in headless -p mode. Explicitly
+ * allow the specific Atlassian MCP tools this skill actually uses (read +
+ * comment + description writes -- ticket-refine never transitions status
+ * or moves epics itself, the loop runner's REST client does that) plus
+ * Bash broadly, since Ground's whole design assumes real command
+ * execution inside the isolated per-run worktree.
  */
 const ALLOWED_TOOLS = [
   "mcp__atlassian__getAccessibleAtlassianResources",
@@ -46,6 +50,7 @@ const ALLOWED_TOOLS = [
   "mcp__atlassian__searchJiraIssuesUsingJql",
   "mcp__atlassian__addCommentToJiraIssue",
   "mcp__atlassian__editJiraIssue",
+  "Bash",
 ].join(",");
 
 function parseArgs(argv: string[]): { configPath: string; once: boolean } {
