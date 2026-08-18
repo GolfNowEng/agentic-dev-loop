@@ -13,6 +13,8 @@ function makeConfig(): Config {
         refine: 'epic in ({epics}) AND status = "Backlog" ORDER BY created ASC',
         dev: 'epic = {epic} AND status = "Backlog" ORDER BY created ASC',
       },
+      epicLinkField: "customfield_10014",
+      statusNames: { bounced: "Blocked", prOpen: "In Progress" },
     },
     ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
     autoPromoteLabel: "auto-promote",

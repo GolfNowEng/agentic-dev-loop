@@ -15,6 +15,7 @@ function makeConfig(overrides: Partial<Config["jira"]> = {}): Config {
       claimStatus: { from: "Backlog", to: "In Progress" },
       pollJql: { refine: "epic in ({epics})", dev: "epic = {epic}" },
       epicLinkField: "customfield_10014",
+      statusNames: { bounced: "Blocked", prOpen: "In Progress" },
       ...overrides,
     },
     ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },

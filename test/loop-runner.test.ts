@@ -16,6 +16,8 @@ function makeConfig(overrides: Partial<Config["ceilings"]> = {}): Config {
       readyEpic: "EPIC-READY",
       claimStatus: { from: "Backlog", to: "In Progress" },
       pollJql: { refine: "epic in ({epics})", dev: "epic = {epic}" },
+      epicLinkField: "customfield_10014",
+      statusNames: { bounced: "Blocked", prOpen: "In Progress" },
     },
     ceilings: {
       maxRunsPerDay: 100,

@@ -128,7 +128,7 @@ export async function runLoopIteration(
     const targetEpic = autoPromote ? config.jira.readyEpic : config.jira.reviewEpic;
     await jiraClient.moveToEpic(ticket.key, targetEpic);
   } else if (verdict.outcome === "bounced") {
-    await jiraClient.transitionStatus(ticket.key, "bounced");
+    await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
   }
 
   const logLine: RunLogLine = {
