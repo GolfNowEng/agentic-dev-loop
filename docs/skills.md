@@ -4,8 +4,10 @@
 
 `.claude/skills/ticket-to-pr/SKILL.md` — the executor. Invoked by the loop
 runner as `claude -p "/ticket-to-pr <TICKET-KEY>"`. Runs a fixed phase
-sequence against a persistent target-repo checkout at
-`.pipeline/<slug>/workdir/<slug>`:
+sequence against an isolated per-run `git worktree`, on its own branch, off
+the shared target-repo clone at `.pipeline/<slug>/repo` (see
+`docs/logging.md`) — never the shared clone directly, so a human working in
+it manually is never affected by a background run:
 
 1. **Intake** — confirm the ticket is actually ready (has the
    `research-loop` template sections populated); bounce immediately if not.
@@ -26,16 +28,30 @@ Core rule: this skill **never edits the spec**. Any ambiguity, contradiction,
 or oversized scope is `research-loop`'s problem to fix upstream — this skill
 bounces with evidence instead of guessing.
 
+**Cleanup is a hard gate, every run**: stop the dev server if one was
+started (by this skill or by `qa-agent`), and remove this run's worktree —
+with one exception. If the run **landed** or **bounced with everything
+already committed**, the worktree is removed unconditionally. If the run
+**bounces with uncommitted in-progress work** still in the working tree,
+the worktree is deliberately **kept** (and the bounce detail says so) so a
+human or `ticket-refine`'s revision pass can inspect exactly what was
+tried. That single case is the only conditional part of Cleanup — dev
+server shutdown is never conditional.
+
 ## qa-agent
 
 `.claude/agents/qa-agent.md` — a genuinely fresh-context subagent spawned
-during Verify. It sees only the ticket key and branch name — never the
-implementer's reasoning — and checks: AC satisfaction, scope discipline
-(no files touched beyond what Scope names), regressions, test quality, and
-unrelated diff noise. Not limited to static diff reading: for ACs that are
-visual, timing-sensitive, or otherwise hard to trust from a diff and its
-tests alone, it starts the app and exercises the behavior directly. Returns
-`pass`/`fail` plus concrete findings the implementer can act on.
+during Verify. It sees only the ticket key and the path to `ticket-to-pr`'s
+already-created run worktree (never the implementer's reasoning) — and
+checks: AC satisfaction, scope discipline (no files touched beyond what
+Scope names), regressions, test quality, and unrelated diff noise. Not
+limited to static diff reading: for ACs that are visual, timing-sensitive,
+or otherwise hard to trust from a diff and its tests alone, it starts the
+app and exercises the behavior directly — and if it does, stopping it is
+its own hard gate, independent of `ticket-to-pr`'s end-of-run Cleanup (it
+started it, it stops it). It never manages the worktree itself — that
+lifecycle belongs to `ticket-to-pr`. Returns `pass`/`fail` plus concrete
+findings the implementer can act on.
 
 ## Model policy
 

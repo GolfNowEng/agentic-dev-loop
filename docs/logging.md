@@ -14,8 +14,16 @@ verify_loops, retries, failure_category, detail, pr, cost_usd, tokens.
 
 ## .pipeline/&lt;slug&gt;/ — per-run scratch space
 
-- `.pipeline/<slug>/workdir/<slug>/` — the persistent target-repo checkout,
-  reset (`git fetch` + `git reset --hard`) at the start of each run.
+- `.pipeline/<slug>/repo/` — a shared `git clone` of the target repo, kept
+  current with `git fetch` **only**. No run ever checks out a branch or
+  resets this directory directly — a human can `cd` into it at any time
+  without a background run pulling the rug out from under them.
+- `.pipeline/<slug>/worktrees/<TICKET>-<RUN_ID>/` — this run's own isolated
+  `git worktree` off `repo/`, on its own branch (`<TICKET>-<slug>`). Removed
+  once the run's Cleanup runs — unconditionally if the run landed or
+  bounced with everything committed, but deliberately **kept** if the run
+  bounces with uncommitted in-progress work, so a human can inspect exactly
+  what was tried (see `docs/skills.md`).
 - `.pipeline/<slug>/runs/<TICKET>-<RUN_ID>/` — one directory per run:
   - `progress.jsonl` — append-only phase-transition log a skill writes
     *while running* (phase_start/phase_end/note events), so a future

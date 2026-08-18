@@ -90,31 +90,39 @@ branch `master`). This is **not** the `dev-loop` repo itself; `dev-loop` only
 orchestrates. Adding a second project later means adding a second
 `pipeline.<project>.config.json` — no code or skill changes.
 
-Working directory model: a **persistent checkout**, reset per run, at
-`.pipeline/<SLUG>/workdir/<SLUG>` (relative to `dev-loop/`'s root, `SLUG` as
-derived in "Setup" above — e.g. `.pipeline/webtarsthree/workdir/webtarsthree`).
-At the start of Phase 0:
+**Shared clone, per-run worktree — never work directly in the shared
+clone.** `.pipeline/<SLUG>/repo` (`SLUG` as derived in "Setup" above) is a
+`git clone` of `targetRepo.url` kept up to date with `git fetch` **only** —
+no run ever checks out a branch or resets *this* directory, because a human
+may `cd` into it, or be mid-inspection of a prior run's worktree, at any
+moment while this loop runs unattended in the background. Instead, at the
+start of Phase 0, create an isolated worktree for this run, on its own
+branch:
 
 ```bash
-mkdir -p .pipeline/<SLUG>/workdir
-if [ ! -d .pipeline/<SLUG>/workdir/<SLUG>/.git ]; then
-  git clone <targetRepo.url> .pipeline/<SLUG>/workdir/<SLUG>
+mkdir -p .pipeline/<SLUG>
+if [ ! -d .pipeline/<SLUG>/repo/.git ]; then
+  git clone <targetRepo.url> .pipeline/<SLUG>/repo
 fi
-cd .pipeline/<SLUG>/workdir/<SLUG>
-git fetch origin
-git checkout <targetRepo.defaultBranch>
-git reset --hard origin/<targetRepo.defaultBranch>
-git checkout -b <TICKET>-<slug>
+git -C .pipeline/<SLUG>/repo fetch origin
+git -C .pipeline/<SLUG>/repo worktree add \
+  .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID> \
+  -b <TICKET>-<slug> origin/<targetRepo.defaultBranch>
+cd .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>
 ```
 
-(Two different "slug"s here: `<SLUG>` uppercase is the *project* slug from
-the config path; `<slug>` lowercase in the branch name is the per-ticket
-kebab-case summary described next.)
+(Three distinct identifiers here: `<SLUG>` uppercase is the *project* slug
+from the config path; `<RUN_ID>` is this run's timestamp, keeping this run's
+worktree separate from any other run's, past or concurrent; `<slug>`
+lowercase in the branch name is the per-ticket kebab-case summary described
+next — the branch name itself has no `<RUN_ID>` in it, since it's what gets
+pushed and PR'd.)
 
 `<slug>` is a short kebab-case summary derived from the ticket's summary
 (lowercase, non-alphanumeric → `-`, truncate to a reasonable length — e.g.
 `TARS-1301-delete-tv-objects`). All subsequent phases operate with this
-directory as the working directory unless stated otherwise.
+worktree as the working directory unless stated otherwise. See "Cleanup"
+below for removing it once the run concludes.
 
 ## Phases
 
@@ -220,17 +228,46 @@ Commit once all Phase 2 tests pass
 3. Write `verdict.json` in `RUN_DIR` (see schema below) with
    `outcome: "landed"`, `phase_reached: "pr"`, the PR URL, and all recorded
    metrics.
-4. Emit the always-emitted result line (see above) and stop.
+4. Run Cleanup (see below), then emit the always-emitted result line and
+   stop.
+
+## Cleanup (hard gate, every run)
+
+Before this skill's final result line — regardless of outcome (landed,
+bounced at any phase, or error):
+
+1. **If you (or `qa-agent`) started the target repo's dev server, stop it.**
+   Confirm it's actually stopped (e.g. the port is free), not just that you
+   sent a stop signal.
+2. **Remove this run's worktree** — with one exception:
+   - If the run **landed** (branch pushed, PR open) or **bounced with all
+     in-progress work already committed** — remove it:
+     `git -C .pipeline/<SLUG>/repo worktree remove
+     .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>`. The branch itself lives
+     on in the remote (landed) or in `.pipeline/<SLUG>/repo`'s branch list
+     (bounced) either way — removing the worktree doesn't lose anything.
+   - If the run is **bouncing with uncommitted work still in the working
+     tree** (e.g. mid-Green, or Red confirmed but not yet fully
+     implemented) — **keep the worktree**, and say so explicitly in the
+     bounce `detail` / result line (e.g. "worktree left at
+     `.pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>` for inspection") so a
+     human or `ticket-refine`'s revision pass can inspect exactly what was
+     tried. This is the only case where cleanup is conditional — everything
+     else removes the worktree unconditionally.
+
+Both apply even if you never reached Phase 0's worktree setup (nothing to
+clean up, but check before assuming so) and even if the run is about to
+bounce or error out. Aside from the single uncommitted-work exception
+above, this is not conditional on how the run concludes.
 
 ## Bouncing (any phase)
 
 A bounce is a normal, successful exit of this skill — not a crash. On any
 bounce:
 
-1. Do not leave the target repo in a partially-committed, confusing state —
-   if implementation work was in progress and being abandoned, leave the
-   branch as-is (do not force-push over it, do not delete it) so a human or
-   `ticket-refine`'s revision pass can inspect exactly what was tried.
+1. Run Cleanup (see above) — it applies regardless of why this run is
+   ending; a bounce is not an exception to it, aside from the one
+   uncommitted-work case Cleanup itself carves out.
 2. Write `verdict.json` with `outcome: "bounced"`, the `phase_reached` you
    stopped at, a `failure_category` from the closed enum (see below), and a
    `detail` string with concrete evidence (file paths, test output excerpts,

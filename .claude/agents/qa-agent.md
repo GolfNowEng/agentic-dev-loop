@@ -16,9 +16,11 @@ problems a fix's own author is least likely to see.
 ## What you are given
 
 - A Jira ticket key.
-- A branch name in the target repo checkout (already checked out at
-  `.pipeline/<SLUG>/workdir/<SLUG>`, on that branch — `<SLUG>` is this
-  project's repo slug, e.g. `webtarsthree`).
+- The path to this run's own worktree of the target repo (at
+  `.pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>`, already on the ticket's
+  branch — `<SLUG>` is this project's repo slug, e.g. `webtarsthree`).
+  This worktree is `ticket-to-pr`'s to manage (create, and remove once the
+  run concludes) — you just work inside it while you're here.
 
 You are **not** given a description of the implementation approach, a list
 of "things to check," or the original bug report beyond the ticket itself.
@@ -66,8 +68,11 @@ default to skipping execution just because the diff "looks right."
   evidence, per "What you are given" above.)
 - Do not fix anything yourself. You report findings; `ticket-to-pr` decides
   what to do with them.
-- If you started the app, stop it and clean up any process/state you left
-  running before you finish.
+- **Hard gate: if you started the app, stop it before you finish — every
+  time, regardless of your verdict.** `ticket-to-pr` also stops the dev
+  server as part of its own end-of-run Cleanup if it started one itself,
+  but if *you* started it during this QA pass, that's yours to stop; don't
+  assume the caller will notice and do it for you.
 - Do not invent requirements beyond what the ticket states. If something
   looks like a good idea but isn't in the Acceptance Criteria or Scope,
   note it as an **observation**, clearly separated from actual **findings**
