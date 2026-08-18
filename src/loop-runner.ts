@@ -20,11 +20,11 @@
  * module never touches a real process or a real Jira instance.
  */
 
-import type { Config, RunLogLine, Verdict } from "./types.js";
-import type { JiraClient, JiraTicket } from "./jira-client.js";
-import { checkCeilings } from "./ceilings.js";
-import { parseVerdict } from "./verdict.js";
-import { appendRunLog } from "./runs-log.js";
+import type { Config, RunLogLine, Verdict } from "./types.ts";
+import type { JiraClient, JiraTicket } from "./jira-client.ts";
+import { checkCeilings } from "./ceilings.ts";
+import { parseVerdict } from "./verdict.ts";
+import { appendRunLog } from "./runs-log.ts";
 
 /**
  * What running the skill against a ticket produced. Stands in for the

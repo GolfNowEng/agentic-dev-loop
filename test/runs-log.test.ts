@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { appendRunLog, readRunLog, countRunsToday } from "../src/runs-log.js";
-import type { RunLogLine } from "../src/types.js";
+import { appendRunLog, readRunLog, countRunsToday } from "../src/runs-log.ts";
+import type { RunLogLine } from "../src/types.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";

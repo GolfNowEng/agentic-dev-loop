@@ -18,19 +18,35 @@ import {
   loadLoopConfig,
   assertNoPlaceholders,
   repoSlugFromUrl,
-} from "./config.js";
-import { credentialsFromEnv, RealJiraClient } from "./jira-client.js";
-import type { JiraTicket } from "./jira-client.js";
-import { runLoopIteration } from "./loop-runner.js";
-import type { RunSkillFn, RunSkillResult } from "./loop-runner.js";
-import { buildRefineJql } from "./jql.js";
-import { countRunsToday } from "./runs-log.js";
-import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.js";
-import { extractUsage } from "./claude-usage.js";
+} from "./config.ts";
+import { credentialsFromEnv, RealJiraClient } from "./jira-client.ts";
+import type { JiraTicket } from "./jira-client.ts";
+import { runLoopIteration } from "./loop-runner.ts";
+import type { RunSkillFn, RunSkillResult } from "./loop-runner.ts";
+import { buildRefineJql } from "./jql.ts";
+import { countRunsToday } from "./runs-log.ts";
+import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.ts";
+import { extractUsage } from "./claude-usage.ts";
 
 const SKILL_NAME = "ticket-refine";
 const MODEL = "opus";
 const SKILL_MD_PATH = ".claude/skills/ticket-refine/SKILL.md";
+
+/**
+ * --permission-mode acceptEdits only auto-approves file edits, not MCP
+ * tool calls -- Atlassian MCP calls (getJiraIssue, etc.) still prompt for
+ * approval, which hangs/fails in headless -p mode. Explicitly allow the
+ * specific Atlassian MCP tools this skill actually uses (read + comment +
+ * description writes -- ticket-refine never transitions status or moves
+ * epics itself, the loop runner's REST client does that).
+ */
+const ALLOWED_TOOLS = [
+  "mcp__atlassian__getAccessibleAtlassianResources",
+  "mcp__atlassian__getJiraIssue",
+  "mcp__atlassian__searchJiraIssuesUsingJql",
+  "mcp__atlassian__addCommentToJiraIssue",
+  "mcp__atlassian__editJiraIssue",
+].join(",");
 
 function parseArgs(argv: string[]): { configPath: string; once: boolean } {
   const configIndex = argv.indexOf("--config");
@@ -51,6 +67,58 @@ function gitFileSha(relativePath: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Polls a run's own progress.jsonl (which the skill writes to live, phase
+ * by phase, while it works) and prints each new line to the terminal as
+ * it appears -- so a human watching the foreground process sees
+ * triage/interpret/ground/... scroll by instead of a silent multi-minute
+ * gap between "claimed" and the final result. `before` is the run-dir
+ * snapshot taken just before spawning, same as run-dirs.ts's own
+ * before/after discovery -- this reuses it rather than re-snapshotting.
+ */
+function startProgressTail(
+  runsBaseDir: string,
+  ticketKey: string,
+  before: Set<string>,
+): { stop: () => Promise<void> } {
+  let runDirName: string | null = null;
+  let linesPrinted = 0;
+
+  async function poll(): Promise<void> {
+    if (!runDirName) {
+      runDirName = await findNewestRunDir(runsBaseDir, ticketKey, before);
+      if (!runDirName) return;
+    }
+    let raw: string;
+    try {
+      raw = await readFile(join(runsBaseDir, runDirName, "progress.jsonl"), "utf8");
+    } catch {
+      return;
+    }
+    const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+    for (const line of lines.slice(linesPrinted)) {
+      try {
+        const event = JSON.parse(line) as { phase: string; event: string; detail: string };
+        console.log(`[${SKILL_NAME}] ${ticketKey} ${event.phase} ${event.event}: ${event.detail}`);
+      } catch {
+        // Malformed progress line -- never let a logging glitch crash the loop.
+      }
+    }
+    linesPrinted = lines.length;
+  }
+
+  const interval = setInterval(() => {
+    poll().catch(() => {});
+  }, 2000);
+
+  return {
+    stop: async () => {
+      clearInterval(interval);
+      await poll().catch(() => {});
+    },
+  };
 }
 
 /** Spawns `claude` with the given args and resolves with its stdout. */
@@ -90,9 +158,16 @@ async function main(): Promise<void> {
   const skillVersion = gitFileSha(SKILL_MD_PATH);
   const jql = buildRefineJql(config);
 
+  console.log(
+    `[${SKILL_NAME}] loop started, polling every ${loopConfig.pollIntervalSec}s (project: ${slug})`,
+  );
+
   const runSkill: RunSkillFn = async (ticket: JiraTicket): Promise<RunSkillResult> => {
     const startedAt = new Date().toISOString();
     const before = await snapshotRunDirs(runsBaseDir, ticket.key);
+
+    console.log(`[${SKILL_NAME}] claimed ${ticket.key}, running...`);
+    const tail = startProgressTail(runsBaseDir, ticket.key, before);
 
     const stdout = await spawnClaude([
       "-p",
@@ -101,11 +176,14 @@ async function main(): Promise<void> {
       MODEL,
       "--permission-mode",
       "acceptEdits",
+      "--allowedTools",
+      ALLOWED_TOOLS,
       "--output-format",
       "json",
     ]);
 
     const endedAt = new Date().toISOString();
+    await tail.stop();
 
     let usageRaw: unknown = null;
     try {

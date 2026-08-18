@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseVerdict, readVerdict, errorVerdict } from "../src/verdict.js";
+import { parseVerdict, readVerdict, errorVerdict } from "../src/verdict.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";

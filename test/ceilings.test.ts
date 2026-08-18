@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { checkCeilings, assertWithinCeilings } from "../src/ceilings.js";
-import type { Config } from "../src/types.js";
+import { checkCeilings, assertWithinCeilings } from "../src/ceilings.ts";
+import type { Config } from "../src/types.ts";
 
 function makeConfig(overrides: Partial<Config["ceilings"]> = {}): Config {
   return {

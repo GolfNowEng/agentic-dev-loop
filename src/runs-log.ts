@@ -5,7 +5,7 @@
  */
 
 import { appendFile, readFile } from "node:fs/promises";
-import type { RunLogLine } from "./types.js";
+import type { RunLogLine } from "./types.ts";
 
 function utcDateKey(iso: string): string {
   return iso.slice(0, 10);

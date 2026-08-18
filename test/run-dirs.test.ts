@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { snapshotRunDirs, findNewestRunDir } from "../src/run-dirs.js";
+import { snapshotRunDirs, findNewestRunDir } from "../src/run-dirs.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";

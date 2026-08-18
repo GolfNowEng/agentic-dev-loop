@@ -5,8 +5,8 @@ import {
   findPlaceholders,
   assertNoPlaceholders,
   repoSlugFromUrl,
-} from "../src/config.js";
-import type { Config } from "../src/types.js";
+} from "../src/config.ts";
+import type { Config } from "../src/types.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";

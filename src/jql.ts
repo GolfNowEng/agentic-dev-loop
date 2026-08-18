@@ -7,7 +7,7 @@
  * epic (candidates for dev-loop to pick up).
  */
 
-import type { Config } from "./types.js";
+import type { Config } from "./types.ts";
 
 /**
  * Build the JQL for the research-loop's own (refine/skeptic) poll, using

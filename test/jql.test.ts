@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildRefineJql, buildDevJql } from "../src/jql.js";
-import type { Config } from "../src/types.js";
+import { buildRefineJql, buildDevJql } from "../src/jql.ts";
+import type { Config } from "../src/types.ts";
 
 function makeConfig(): Config {
   return {

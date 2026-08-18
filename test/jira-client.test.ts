@@ -3,8 +3,8 @@ import {
   RealJiraClient,
   credentialsFromEnv,
   type JiraCredentials,
-} from "../src/jira-client.js";
-import type { Config } from "../src/types.js";
+} from "../src/jira-client.ts";
+import type { Config } from "../src/types.ts";
 
 function makeConfig(overrides: Partial<Config["jira"]> = {}): Config {
   return {
@@ -93,7 +93,7 @@ describe("RealJiraClient", () => {
     });
 
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toBe("https://example.atlassian.net/rest/api/3/search");
+    expect(String(url)).toBe("https://example.atlassian.net/rest/api/3/search/jql");
     expect((init.headers as Record<string, string>).Authorization).toBe(
       `Basic ${Buffer.from("bot@example.com:fake-token").toString("base64")}`,
     );

@@ -6,7 +6,7 @@
  * reports a breach, rather than continuing to the next poll.
  */
 
-import type { Config } from "./types.js";
+import type { Config } from "./types.ts";
 
 /** Which ceiling was breached, if any. */
 export type CeilingBreachReason = "maxRunsPerDay" | "maxCostPerRunUsd" | "runTimeoutMin";

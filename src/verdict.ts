@@ -7,7 +7,7 @@
  */
 
 import { readFile } from "node:fs/promises";
-import type { VerdictOutcome, PhaseReached, Verdict } from "./types.js";
+import type { VerdictOutcome, PhaseReached, Verdict } from "./types.ts";
 
 const VALID_OUTCOMES: VerdictOutcome[] = ["landed", "ready", "bounced", "error", "killed"];
 const VALID_PHASES: PhaseReached[] = [

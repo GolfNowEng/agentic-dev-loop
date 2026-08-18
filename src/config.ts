@@ -6,7 +6,7 @@
 // for placeholder values themselves and failing loudly if any remain.
 
 import { readFile } from "node:fs/promises";
-import type { Config, LoopConfig } from "./types.js";
+import type { Config, LoopConfig } from "./types.ts";
 
 /**
  * Read and parse a pipeline config file at the given path. There is no

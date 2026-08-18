@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { runLoopIteration } from "../src/loop-runner.js";
-import type { RunSkillFn, RunSkillResult, RunLoopIterationDeps } from "../src/loop-runner.js";
-import type { JiraClient, JiraTicket } from "../src/jira-client.js";
-import type { Config } from "../src/types.js";
-import { readRunLog } from "../src/runs-log.js";
+import { runLoopIteration } from "../src/loop-runner.ts";
+import type { RunSkillFn, RunSkillResult, RunLoopIterationDeps } from "../src/loop-runner.ts";
+import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
+import type { Config } from "../src/types.ts";
+import { readRunLog } from "../src/runs-log.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
