@@ -172,26 +172,49 @@ whether it actually holds.
    If there's genuinely only one plausible explanation, that's fine — this
    is about not stopping at the first guess when there's real ambiguity,
    not manufacturing multiple hypotheses for their own sake.
-2. **Fan out one `recon-agent` per hypothesis, in parallel** (see
+2. **If any hypothesis needs a live API call to test** (not just reading
+   client code — actually seeing what an endpoint returns), start the
+   target repo's own dev server *once*, before spawning any `recon-agent`:
+   - Check whether it's already running first (e.g. hit its health-check
+     route) — don't start a second instance.
+   - Start it per the target repo's own dev script (e.g. `npm run dev` —
+     check its `package.json`/README, don't assume a command) and wait for
+     it to be ready.
+   - Note the local URL(s) it's serving on (e.g. `http://localhost:3000`
+     with `/api` proxied to a local API server) — this is what you pass to
+     each `recon-agent` that needs it.
+   - **Hard gate: you must stop the dev server yourself before this step
+     ends**, in every case — hypotheses confirmed, refuted, or the step
+     bouncing outright. This is not conditional on how Ground concludes. If
+     you started it, you own shutting it down; do not leave it running for
+     a later step to clean up, and do not skip this because a bounce is
+     about to happen.
+   - If it fails to start, or starts but can't reach whatever upstream
+     services it depends on (e.g. missing local credentials in a freshly
+     cloned checkout), live API verification is simply unavailable for this
+     run — `recon-agent` reports that plainly rather than guessing at a
+     response shape or treating static code-reading as equivalent evidence.
+3. **Fan out one `recon-agent` per hypothesis, in parallel** (see
    `.claude/agents/recon-agent.md`) — each spawned to confirm or refute one
-   specific hypothesis against the target repo checkout, not a generic
-   "does the described problem exist" pass. Parallel fan-out here is about
+   specific hypothesis against the target repo checkout (and, if you
+   started one, the running dev server's local URL), not a generic "does
+   the described problem exist" pass. Parallel fan-out here is about
    testing competing explanations at once, not increasing scrutiny of a
    single explanation.
-3. Each `recon-agent` should actually try to confirm its hypothesis, not
+4. Each `recon-agent` should actually try to confirm its hypothesis, not
    just read code and infer: run the existing test suite, write a
-   throwaway repro script, or — for a project with a configured
-   `targetRepo.stagingApiBaseUrl` — make live, read-only calls against that
-   staging environment to see what an endpoint actually returns (e.g.
-   search for an item to get its id, then call the real endpoint with that
-   id to reproduce the reported behavior). See `recon-agent.md` for the
-   staging-API rules; if no staging URL is configured, that path is simply
-   unavailable and recon-agent says so rather than substituting production
-   or guessing.
-4. Collect what each hypothesis's `recon-agent` found. If one is confirmed
+   throwaway repro script, or — if the dev server is running — make live,
+   read-only calls against its local proxy routes to see what an endpoint
+   actually returns (e.g. search for an item to get its id, then call the
+   real endpoint with that id to reproduce the reported behavior). See
+   `recon-agent.md` for the local-API rules.
+5. Collect what each hypothesis's `recon-agent` found. If one is confirmed
    with concrete evidence, that's your grounding. If more than one is
    confirmed, or none is, that's itself a finding — carry it into Attack
    (Step 3) rather than picking one to move forward with.
+6. If you started the dev server in step 2, stop it now — see the hard
+   gate above. Confirm it's actually stopped (e.g. the port is free)
+   before moving on to Step 3.
 
 If the codebase contradicts the ticket's claim (the described behavior
 doesn't happen, the referenced file/function doesn't exist, the bug is
@@ -294,17 +317,21 @@ produced the ticket rubber-stamping itself.
 
 A bounce is a normal, successful exit — not a crash. On any bounce:
 
-1. Write findings to a ticket comment (never the description) with concrete
+1. **If you started the target repo's dev server during Ground (Step 2)
+   and haven't stopped it yet, stop it now, before anything else below.**
+   The hard gate in Step 2 applies regardless of why this run is ending —
+   a bounce is not an exception to it.
+2. Write findings to a ticket comment (never the description) with concrete
    evidence — file paths, what was found vs. claimed, the specific
    ambiguous readings, the suggested split.
-2. Write `verdict.json` with `outcome: "bounced"`, the step you stopped at
+3. Write `verdict.json` with `outcome: "bounced"`, the step you stopped at
    as `phase_reached` (use the closest match: `triage`→`intake`,
    `interpret`/`ground`/`attack`→`plan`, `scope`/`blocked-check`→`plan`,
    `synthesize`→`red`, `verify`→`verify` — the loop's `PhaseReached` enum
    is shared across both skills, so map onto its nearest equivalent), a
    `failure_category` from the closed enum, and a `detail` string with the
    concrete evidence.
-3. Emit the always-emitted result line and stop.
+4. Emit the always-emitted result line and stop.
 
 **Closed failure_category enum**: `spec_ambiguous · spec_contradicted ·
 blocked · too_large · tests_flaky · env_setup · verify_rejected ·

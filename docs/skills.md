@@ -25,12 +25,18 @@ sequence against a **read-only** target-repo checkout at
    under-specified; the default is to investigate and bounce with
    evidence, not to bounce on input alone.
 2. **Ground** — pragmatic, hypothesis-driven investigation, not a lookup:
-   form 2-3 concrete competing explanations when the cause isn't obvious,
-   fan out one `recon-agent` per hypothesis in parallel (below) to confirm
-   or refute each against the target repo (and, if configured, a staging
-   API — see `docs/config.md`), and treat "more than one confirmed, or
-   none" as a finding to carry into Attack rather than picking one to move
-   forward with.
+   form 2-3 concrete competing explanations when the cause isn't obvious.
+   If any hypothesis needs a live API call to test (not just reading
+   client code), `ticket-refine` starts the target repo's own dev server
+   *once*, checking first whether one's already running — then fans out
+   one `recon-agent` per hypothesis in parallel (below), each testing its
+   own hypothesis against the target repo (and the running dev server's
+   local proxy routes, if relevant). **Hard gate: `ticket-refine` stops the
+   dev server itself before Ground ends, in every case — confirmed,
+   refuted, inconclusive, or bouncing outright** — it's the one thing in
+   this step that isn't conditional on the outcome. "More than one
+   confirmed, or none" is a finding to carry into Attack, not something to
+   silently resolve by picking one.
 3. **Attack** — spawn `devils-advocate-agent` (below) to try to break the
    working assumptions from Interpret/Ground.
 4. **Scope & sequence** — if oversized, draft (never create) a split as
@@ -53,16 +59,18 @@ review gate; once a ticket crosses into Review, `dev-loop` trusts it fully.
   explanation); each confirms or refutes only its own hypothesis, not a
   generic "does the ticket hold" pass. "Read-only" means no commits/
   branches, not no execution — it can run the test suite or a throwaway
-  repro script, and, when `targetRepo.stagingApiBaseUrl` is configured,
-  make live **read-only** calls against staging (never production) —
-  chained calls (e.g. search for an id, then fetch it) are expected when
-  that's what it takes to see an endpoint's real response. Trial and error
-  is expected: a first attempt not panning out isn't grounds to report
-  `inconclusive` without trying a different angle. For bugs, also
-  determines fault domain and, via `git log -p`/`git blame` on the
-  specific file(s), the regression window — while scanning that commit
-  history for Jira keys that lead to a prior ticket which touched the same
-  code. Never proposes a fix.
+  repro script, and, when `ticket-refine` handed it a running dev server's
+  local URL, make live **read-only** calls against that instance's own
+  proxy routes (never any other host, never a mutating call) — chained
+  calls (e.g. search for an id, then fetch it) are expected when that's
+  what it takes to see an endpoint's real response. It never starts, stops,
+  or manages the dev server itself — that lifecycle belongs to
+  `ticket-refine`. Trial and error is expected: a first attempt not
+  panning out isn't grounds to report `inconclusive` without trying a
+  different angle. For bugs, also determines fault domain and, via
+  `git log -p`/`git blame` on the specific file(s), the regression window —
+  while scanning that commit history for Jira keys that lead to a prior
+  ticket which touched the same code. Never proposes a fix.
 - **devils-advocate-agent** (`.claude/agents/devils-advocate-agent.md`) —
   attacks Interpret/Ground's assumptions across six angles (already fixed
   elsewhere? symptom vs. cause? hidden dependencies? blocked prerequisites?

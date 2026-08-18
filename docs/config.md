@@ -27,12 +27,15 @@
   human Review epic and go straight to Ready.
 - `targetRepo.{url,defaultBranch}` — the codebase `ticket-refine` grounds
   tickets against (not this pipeline repo itself). Read-only for this repo.
-- `targetRepo.stagingApiBaseUrl` — optional. When present, `recon-agent` may
-  make live, read-only calls against this URL (never production) to test a
-  hypothesis — e.g. search for an item's id, then call the real endpoint
-  with it to see the actual response shape. Omit entirely if no
-  staging/dev environment is reachable; `recon-agent` reports live
-  verification as unavailable rather than substituting production.
+
+There's no config field for live API testing. `ticket-refine` starts the
+target repo's *own* dev server (its own `npm run dev` or equivalent) when a
+hypothesis in Ground needs to see what an endpoint actually returns, and
+`recon-agent` calls that local instance's proxy routes directly — this
+exercises the target repo's real server-side logic, not a bypass, and needs
+no separate URL to configure or keep in sync. See `docs/skills.md` for the
+lifecycle (who starts/stops it, and the hard gate that it's always stopped
+before Ground ends).
 
 ## Appendix A (Jira wiring)
 

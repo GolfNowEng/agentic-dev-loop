@@ -73,29 +73,6 @@ describe("loadConfig", () => {
     expect(config.jira.reviewEpic).toBe("EPIC-REVIEW");
   });
 
-  it("round-trips an optional targetRepo.stagingApiBaseUrl when present", async () => {
-    const filePath = path.join(dir, "pipeline.webtarsthree.config.json");
-    const config = makeConfig({
-      targetRepo: {
-        url: "git@github.com:fandango/webtarsthree.git",
-        defaultBranch: "master",
-        stagingApiBaseUrl: "https://staging.webtarsthree.example.com",
-      },
-    });
-    await fs.writeFile(filePath, JSON.stringify(config), "utf8");
-    const loaded = await loadConfig(filePath);
-    expect(loaded.targetRepo.stagingApiBaseUrl).toBe(
-      "https://staging.webtarsthree.example.com",
-    );
-  });
-
-  it("leaves targetRepo.stagingApiBaseUrl undefined when absent from the config file", async () => {
-    const filePath = path.join(dir, "pipeline.webtarsthree.config.json");
-    await fs.writeFile(filePath, JSON.stringify(makeConfig()), "utf8");
-    const loaded = await loadConfig(filePath);
-    expect(loaded.targetRepo.stagingApiBaseUrl).toBeUndefined();
-  });
-
   it("throws if the file does not exist", async () => {
     await expect(loadConfig(path.join(dir, "does-not-exist.json"))).rejects.toThrow();
   });
