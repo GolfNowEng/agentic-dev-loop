@@ -1,0 +1,14 @@
+{
+  "name": "dev-loop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "@types/node": "^26.2.0"
+  }
+}
