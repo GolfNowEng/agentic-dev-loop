@@ -26,6 +26,13 @@
   human Review epic and go straight to Ready.
 - `targetRepo.{url,defaultBranch}` — the codebase this pipeline operates on
   (not this pipeline repo itself).
+- `targetRepo.path` (optional) — local filesystem path to an existing
+  checkout of `targetRepo.url` on this machine. When set, per-run worktrees
+  branch directly off it instead of a fresh clone into
+  `.pipeline/<slug>/repo` — faster, and its `origin` remote is already the
+  real one, so `ticket-to-pr`'s `git push`/`gh pr create` need no extra
+  setup. Omit on a machine with no local checkout yet; the clone-based flow
+  is used instead.
 
 ## Appendix A (Jira wiring)
 

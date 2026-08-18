@@ -147,6 +147,16 @@ export interface TargetRepoConfig {
   url: string;
   /** Branch new work branches from and PRs target, e.g. "master". */
   defaultBranch: string;
+  /**
+   * Local filesystem path to an existing checkout of `url`, if one exists
+   * on this machine (e.g. "/Users/me/Repos/webtarsthree"). When set,
+   * worktrees are created directly off this checkout instead of a fresh
+   * clone into `.pipeline/<slug>/repo` -- faster, and its "origin" remote
+   * is already the real one, so `ticket-to-pr`'s push/PR need no extra
+   * setup. Optional: omit on a machine with no local checkout yet, and the
+   * clone-based flow is used instead.
+   */
+  path?: string;
 }
 
 /**

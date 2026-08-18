@@ -90,14 +90,25 @@ branch `master`). This is **not** the `dev-loop` repo itself; `dev-loop` only
 orchestrates. Adding a second project later means adding a second
 `pipeline.<project>.config.json` — no code or skill changes.
 
-**Shared clone, per-run worktree — never work directly in the shared
-clone.** `.pipeline/<SLUG>/repo` (`SLUG` as derived in "Setup" above) is a
-`git clone` of `targetRepo.url` kept up to date with `git fetch` **only** —
-no run ever checks out a branch or resets *this* directory, because a human
-may `cd` into it, or be mid-inspection of a prior run's worktree, at any
-moment while this loop runs unattended in the background. Instead, at the
+**Per-run worktree, never work directly in a shared checkout.** At the
 start of Phase 0, create an isolated worktree for this run, on its own
-branch:
+branch. `targetRepo.path`, if set in config, is a local checkout that
+already exists on this machine (its `origin` remote is the real GitHub
+remote, so `git push`/`gh pr create` in Phase 5 need no extra setup) —
+branch worktrees off it directly, never inside it, since a human may `cd`
+into it or be mid-inspection of a prior run's worktree at any moment while
+this loop runs unattended in the background:
+
+```bash
+git -C <targetRepo.path> fetch origin
+git -C <targetRepo.path> worktree add \
+  <this-repo-root>/.pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID> \
+  -b <TICKET>-<slug> origin/<targetRepo.defaultBranch>
+cd .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>
+```
+
+If `targetRepo.path` is **not** set (no local checkout on this machine
+yet), fall back to a shared fetch-only clone instead:
 
 ```bash
 mkdir -p .pipeline/<SLUG>
@@ -242,10 +253,11 @@ bounced at any phase, or error):
 2. **Remove this run's worktree** — with one exception:
    - If the run **landed** (branch pushed, PR open) or **bounced with all
      in-progress work already committed** — remove it:
-     `git -C .pipeline/<SLUG>/repo worktree remove
+     `git -C <targetRepo.path or .pipeline/<SLUG>/repo, whichever it was
+     created from> worktree remove
      .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>`. The branch itself lives
-     on in the remote (landed) or in `.pipeline/<SLUG>/repo`'s branch list
-     (bounced) either way — removing the worktree doesn't lose anything.
+     on in the remote (landed) or in that checkout's branch list (bounced)
+     either way — removing the worktree doesn't lose anything.
    - If the run is **bouncing with uncommitted work still in the working
      tree** (e.g. mid-Green, or Red confirmed but not yet fully
      implemented) — **keep the worktree**, and say so explicitly in the

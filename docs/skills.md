@@ -4,10 +4,12 @@
 
 `.claude/skills/ticket-to-pr/SKILL.md` — the executor. Invoked by the loop
 runner as `claude -p "/ticket-to-pr <TICKET-KEY>"`. Runs a fixed phase
-sequence against an isolated per-run `git worktree`, on its own branch, off
-the shared target-repo clone at `.pipeline/<slug>/repo` (see
-`docs/logging.md`) — never the shared clone directly, so a human working in
-it manually is never affected by a background run:
+sequence against an isolated per-run `git worktree`, on its own branch,
+branched off `targetRepo.path` (a local checkout, if configured — its
+`origin` is already the real remote, so push/PR need no extra setup) or a
+shared fetch-only clone at `.pipeline/<slug>/repo` otherwise (see
+`docs/logging.md`) — never that source checkout directly, so a human
+working in it manually is never affected by a background run:
 
 1. **Intake** — confirm the ticket is actually ready (has the
    `research-loop` template sections populated); bounce immediately if not.

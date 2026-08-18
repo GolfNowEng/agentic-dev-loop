@@ -14,16 +14,20 @@ verify_loops, retries, failure_category, detail, pr, cost_usd, tokens.
 
 ## .pipeline/&lt;slug&gt;/ — per-run scratch space
 
-- `.pipeline/<slug>/repo/` — a shared `git clone` of the target repo, kept
-  current with `git fetch` **only**. No run ever checks out a branch or
-  resets this directory directly — a human can `cd` into it at any time
-  without a background run pulling the rug out from under them.
+- `.pipeline/<slug>/repo/` — used only when `targetRepo.path` is **not**
+  set in config: a shared `git clone` of the target repo, kept current with
+  `git fetch` **only**. No run ever checks out a branch or resets this
+  directory directly — a human can `cd` into it at any time without a
+  background run pulling the rug out from under them. When `targetRepo.path`
+  **is** set (a local checkout already exists on this machine, with its
+  real `origin` remote already in place for push/PR), worktrees branch
+  directly off that path instead and this directory is never created.
 - `.pipeline/<slug>/worktrees/<TICKET>-<RUN_ID>/` — this run's own isolated
-  `git worktree` off `repo/`, on its own branch (`<TICKET>-<slug>`). Removed
-  once the run's Cleanup runs — unconditionally if the run landed or
-  bounced with everything committed, but deliberately **kept** if the run
-  bounces with uncommitted in-progress work, so a human can inspect exactly
-  what was tried (see `docs/skills.md`).
+  `git worktree` off `targetRepo.path` (or `repo/` in the fallback case), on
+  its own branch (`<TICKET>-<slug>`). Removed once the run's Cleanup runs —
+  unconditionally if the run landed or bounced with everything committed,
+  but deliberately **kept** if the run bounces with uncommitted in-progress
+  work, so a human can inspect exactly what was tried (see `docs/skills.md`).
 - `.pipeline/<slug>/runs/<TICKET>-<RUN_ID>/` — one directory per run:
   - `progress.jsonl` — append-only phase-transition log a skill writes
     *while running* (phase_start/phase_end/note events), so a future
