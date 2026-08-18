@@ -52,11 +52,11 @@ Same discipline as `dev-loop`'s `ticket-to-pr`, for dashboard parity:
 3. `RUN_DIR` = `.pipeline/<SLUG>/runs/<TICKET>-<RUN_ID>/` (relative to this
    repo's root). Create it. Namespacing by `SLUG` lets multiple projects'
    runs coexist under one `research-loop` checkout without collision.
-3. Append one JSON line per phase transition to `RUN_DIR/progress.jsonl`:
+4. Append one JSON line per phase transition to `RUN_DIR/progress.jsonl`:
    ```json
    {"ts": "<ISO-8601 UTC>", "phase": "triage|interpret|ground|attack|scope|blocked-check|synthesize|verify", "event": "phase_start|phase_end|note", "detail": "one line"}
    ```
-4. The final event, always emitted regardless of outcome, is
+5. The final event, always emitted regardless of outcome, is
    `"event": "result"` — see "Always-emitted result line" below.
 
 ## Target repo (grounding)
@@ -114,10 +114,26 @@ much information the ticket arrived with.
 
 ### Step 1 — Interpret
 
-Restate what the ticket is actually asking, in your own words. If more than
-one reading is plausible, enumerate them explicitly. An unresolvable
-ambiguity here is an immediate bounce (`spec_ambiguous`, listing the
-readings) — not a coin flip, not "pick the most likely one and proceed."
+Before restating the ask, exhaust the context Jira itself already has —
+don't declare something ambiguous or under-specified until you've checked:
+
+1. **This ticket's own comment thread** (`getJiraIssue` with `comment` in
+   `fields`, or the equivalent comment-listing call) — read every comment,
+   not just the description. A prior discussion may already answer the
+   exact question you're about to flag as open.
+2. **Linked issues, one hop** — any ticket connected via `relates to` /
+   `blocks` / `is blocked by` / `duplicates` on this ticket (its own link
+   data, no further traversal from those tickets). Read their
+   summary/description/comments too. A linked ticket may contain the
+   missing fault-domain call, a prior decision, or evidence this exact
+   ambiguity was already resolved elsewhere.
+
+Only after checking both: restate what the ticket is actually asking, in
+your own words. If more than one reading is *still* plausible after that
+context, enumerate the readings explicitly. An unresolvable ambiguity here
+is an immediate bounce (`spec_ambiguous`, listing the readings and noting
+what the comment thread/linked tickets did or didn't resolve) — not a coin
+flip, not "pick the most likely one and proceed."
 
 ### Step 2 — Ground
 

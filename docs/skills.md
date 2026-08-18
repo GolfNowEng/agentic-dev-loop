@@ -11,8 +11,11 @@ sequence against a **read-only** target-repo checkout at
 0. **Triage & route** — pick a checklist by issue type (Bug vs Tech Story
    vs unknown); for bugs, determine fault domain (client-side vs upstream
    service) before anything else.
-1. **Interpret** — restate the ask; more than one plausible reading is an
-   immediate bounce (`spec_ambiguous`), never a coin flip.
+1. **Interpret** — first exhausts available Jira context (this ticket's own
+   comment thread, and linked issues one hop out) before concluding
+   anything is ambiguous; only then restates the ask. More than one
+   plausible reading *after* that context check is an immediate bounce
+   (`spec_ambiguous`), never a coin flip.
 2. **Ground** — spawn `recon-agent` (below) against the target repo to
    verify or contradict the ticket's factual claims.
 3. **Attack** — spawn `devils-advocate-agent` (below) to try to break the
@@ -34,8 +37,13 @@ review gate; once a ticket crosses into Review, `dev-loop` trusts it fully.
 
 - **recon-agent** (`.claude/agents/recon-agent.md`) — narrow codebase
   grounding: does the described problem/claim actually hold against the
-  code? For bugs, also determines fault domain and (if discoverable) the
-  regression window via git log/blame. Never proposes a fix.
+  code? "Read-only" means no commits/branches, not no execution — it can
+  run the test suite or a throwaway repro script to confirm a bug rather
+  than just inferring one from reading code. For bugs, also determines
+  fault domain and, via `git log -p`/`git blame` on the specific file(s),
+  the regression window — while scanning that commit history for Jira keys
+  that lead to a prior ticket which touched the same code. Never proposes a
+  fix.
 - **devils-advocate-agent** (`.claude/agents/devils-advocate-agent.md`) —
   attacks Interpret/Ground's assumptions across six angles (already fixed
   elsewhere? symptom vs. cause? hidden dependencies? blocked prerequisites?

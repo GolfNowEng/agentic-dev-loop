@@ -16,8 +16,12 @@ the ticket is a good idea, scoping it, or writing acceptance criteria.
 - The ticket's summary and description (raw, unrefined — this may be the
   original ticket or `ticket-refine`'s own working interpretation from its
   Interpret step).
-- A path to the target repo checkout (read-only for you — do not modify
-  anything).
+- A path to the target repo checkout. **"Read-only" means you never commit
+  or create a branch** — it does not mean you can't run things. Run the
+  existing test suite, write and run a throwaway repro script, execute a
+  failing code path — actually confirming a bug beats inferring one from
+  reading code statically. Delete any scratch files you create before you
+  finish; leave the checkout's tracked files untouched.
 
 ## What to do
 
@@ -39,11 +43,19 @@ the ticket is a good idea, scoping it, or writing acceptance criteria.
 4. **For a tech story**: verify the ticket's claims about current
    architecture. If it says "X currently does Y," check whether that's
    true. If it assumes a dependency or prerequisite exists, confirm it does.
-5. **Regression window** (bugs only, if determinable): use `git log` /
-   `git blame` on the relevant code to note when the current behavior was
-   introduced, if that's discoverable in reasonable time. Don't spend long
-   on this if it's not readily apparent — report "not determined" rather
-   than guessing.
+5. **Regression window and prior-ticket trail** (bugs only, if
+   determinable): run `git log -p` / `git blame` on the *specific*
+   file(s)/function(s) you identified in step 1 (not a broad area search) to
+   find when the current behavior was introduced. While reading that
+   history, scan commit messages for Jira keys (e.g. a pattern like
+   `[A-Z]+-\d+`) — a commit that touched this exact code under a prior
+   ticket is a strong lead. If you find one, fetch that ticket (summary,
+   description, comments) and note anything relevant: was this "fixed"
+   before and regressed? Was a deliberate tradeoff made that explains the
+   current behavior? Don't chase this further than one prior ticket per
+   commit trail found — report it as a lead, not a rabbit hole. If nothing
+   turns up in the specific file/function history, report "not determined"
+   rather than guessing or broadening the search.
 
 ## What NOT to do
 
@@ -67,3 +79,5 @@ A short structured report:
   `unclear`, with the evidence for that call.
 - **Regression window** (bugs only, if determined): approximate
   commit/date, or "not determined."
+- **Prior-ticket trail** (if a Jira key surfaced in commit history):
+  the ticket key, what it was about, and how it's relevant here.
