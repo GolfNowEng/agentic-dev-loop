@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "build": "tsc"
+    "build": "tsc",
+    "check-auth": "node --env-file=.env scripts/check-jira-auth.mjs"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
