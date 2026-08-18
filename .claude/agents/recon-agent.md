@@ -1,6 +1,7 @@
 ---
 name: recon-agent
 description: Codebase reconnaissance subagent (ticket-refine spec 5.1 step 2, "Ground") - checks whether a ticket's described problem exists as stated in the actual target-repo codebase.
+model: sonnet
 ---
 
 # recon-agent

@@ -15,7 +15,15 @@ sequence against a **read-only** target-repo checkout at
    comment thread, and linked issues one hop out) before concluding
    anything is ambiguous; only then restates the ask. More than one
    plausible reading *after* that context check is an immediate bounce
-   (`spec_ambiguous`), never a coin flip.
+   (`spec_ambiguous`), never a coin flip. A cheap pre-gate before Ground
+   catches only the zero-signal case (a bug with no repro/error/surface
+   named at all, or a story with no AC and no current-vs-desired
+   description) and bounces there without paying for subagent fan-out —
+   everything short of that (including ordinary thin tickets) proceeds to
+   Ground/Attack, and only bounces afterward if the investigation itself
+   can't resolve the gap. Tickets here vary a lot by author and are often
+   under-specified; the default is to investigate and bounce with
+   evidence, not to bounce on input alone.
 2. **Ground** — spawn `recon-agent` (below) against the target repo to
    verify or contradict the ticket's factual claims.
 3. **Attack** — spawn `devils-advocate-agent` (below) to try to break the
@@ -61,6 +69,18 @@ bounce: (0) template sections populated, (1) every AC testable, (2) files/
 modules named, (3) TDD-ready test expectations per AC, (4) small/medium size
 bound, (5) no open questions, (6) a literal-minded Sonnet-tier implementer
 could act on it without inferring anything.
+
+## Model policy
+
+`ticket-refine` itself runs on `--model opus` (pinned explicitly in the
+invocation command — not an ambient default). Every subagent it spawns
+(`recon-agent`, `devils-advocate-agent`, `verifier-agent`) pins `model:
+sonnet` in its own frontmatter and does **not** inherit Opus from the
+parent — a Step 2/3/7 fan-out does not multiply Opus cost. Opus is reserved
+for this skill's own judgment calls (Interpret, synthesizing Attack's
+findings, Scope, Synthesize); the subagents feed it evidence over
+already-narrowed inputs, they don't independently re-run the expensive
+reasoning.
 
 ## verdict.json contract
 

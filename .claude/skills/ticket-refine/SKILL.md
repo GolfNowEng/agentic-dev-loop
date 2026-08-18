@@ -135,6 +135,28 @@ is an immediate bounce (`spec_ambiguous`, listing the readings and noting
 what the comment thread/linked tickets did or didn't resolve) — not a coin
 flip, not "pick the most likely one and proceed."
 
+**Cheap pre-gate before Ground.** Tickets here vary widely in how much the
+reporter wrote — thin tickets are common and are not, by themselves, a
+reason to bounce; Ground/Attack below exist specifically to do the
+investigation a thin ticket didn't do for itself, and a bounce should
+normally come *after* that investigation fails to resolve the gap, with the
+investigation's own evidence attached. But before paying for subagent
+fan-out, check for the **zero-signal** case — nothing concrete enough for
+Ground to even locate code against:
+- Bug with no repro steps, no error text, and no named surface (page,
+  endpoint, component) — not even a vague one.
+- Tech Story / other with no acceptance criteria of any kind and no
+  described current-vs-desired behavior.
+
+If (and only if) this ticket is genuinely zero-signal after the comment
+thread and linked-issue check above — bounce now, `spec_ambiguous`, detail
+naming specifically what's missing (not "ticket is thin," which is
+everywhere; the *specific* absence — e.g. "no repro steps, no error
+message, no page/endpoint named"). This is a narrow gate: a thin-but-not-
+empty ticket ("the export button doesn't work") still has enough of a
+surface to Ground against and should proceed. Skip this gate entirely (go
+straight to Step 2) once there is *anything* concrete to investigate.
+
 ### Step 2 — Ground
 
 Spawn codebase reconnaissance subagents (see `.claude/agents/recon-agent.md`)
@@ -290,5 +312,13 @@ as `0`/zeros — the loop runner derives real values from `claude -p
 ## Invocation (for the loop runner)
 
 ```
-claude -p "/ticket-refine <TICKET-KEY>" --permission-mode acceptEdits --output-format json
+claude -p "/ticket-refine <TICKET-KEY>" --model opus --permission-mode acceptEdits --output-format json
 ```
+
+`--model opus` is explicit, not ambient-default: this skill's own judgment calls
+(Interpret, synthesizing Attack's findings, Scope, Synthesize) are exactly the
+reasoning this pipeline pays for higher-tier reasoning to get right. The
+subagents it spawns (`recon-agent`, `devils-advocate-agent`, `verifier-agent`)
+each pin their own model in their frontmatter — they do **not** inherit this
+`opus` invocation, so a Step 2/3/7 fan-out does not multiply Opus cost. See
+`docs/skills.md` for the per-subagent model rationale.

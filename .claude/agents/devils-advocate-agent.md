@@ -1,6 +1,7 @@
 ---
 name: devils-advocate-agent
 description: Adversarial subagent (ticket-refine spec 5.1 step 3, "Attack") - tries to break the working assumptions behind a ticket before it's synthesized into a refined spec.
+model: sonnet
 ---
 
 # devils-advocate-agent

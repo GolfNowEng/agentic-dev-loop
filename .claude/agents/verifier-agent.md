@@ -1,6 +1,7 @@
 ---
 name: verifier-agent
 description: Definition-of-ready verifier subagent (ticket-refine spec 5.1 step 7, "Verify") - independently checks a synthesized refined ticket against the definition-of-ready checklist before ticket-refine reports a passing verdict.
+model: sonnet
 ---
 
 # verifier-agent
