@@ -70,14 +70,24 @@ it) to verify or contradict the ticket's claims. Adding a second project
 later means adding a second `pipeline.<project>.config.json` — no code or
 skill changes.
 
-**Shared clone, per-run worktree — never work directly in the shared
-clone.** `.pipeline/<SLUG>/repo` (`SLUG` as derived in "Setup" above) is a
-`git clone` of `targetRepo.url` kept up to date with `git fetch`
-**only** — no run ever checks out a branch or resets *this* directory,
-because a human may `cd` into it, or be mid-inspection of a prior run's
-worktree, at any moment while this loop runs unattended in the background.
-Instead, at the start of Step 2 (Ground) — the only step that touches the
-target repo checkout — create an isolated, detached worktree for this run:
+**Per-run worktree, never work directly in a shared checkout.** At the
+start of Step 2 (Ground) — the only step that touches the target repo —
+create an isolated, detached worktree for this run. `targetRepo.path`, if
+set in config, is a local checkout that already exists on this machine
+(its `origin` remote is the real one) — branch worktrees off it directly,
+never inside it, since a human may `cd` into it or be mid-inspection of a
+prior run's worktree at any moment while this loop runs unattended in the
+background:
+
+```bash
+git -C <targetRepo.path> fetch origin
+git -C <targetRepo.path> worktree add --detach \
+  <this-repo-root>/.pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>-ground \
+  origin/<targetRepo.defaultBranch>
+```
+
+If `targetRepo.path` is **not** set (no local checkout on this machine
+yet), fall back to a shared fetch-only clone instead:
 
 ```bash
 mkdir -p .pipeline/<SLUG>
@@ -92,8 +102,11 @@ git -C .pipeline/<SLUG>/repo worktree add --detach \
 
 Ground, and every `recon-agent` it spawns, reads and executes only inside
 `.pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>-ground` — never in
-`.pipeline/<SLUG>/repo` itself. See "Cleanup" below for removing this
-worktree once Ground (and the rest of the run) concludes.
+`targetRepo.path` or `.pipeline/<SLUG>/repo` themselves. See "Cleanup"
+below for removing this worktree once Ground (and the rest of the run)
+concludes — the `git worktree remove` target is whichever checkout
+(`targetRepo.path` or `.pipeline/<SLUG>/repo`) the worktree was created
+from.
 
 ## Always-emitted result line
 
@@ -292,7 +305,8 @@ bounced at any step, or error):
    Confirm it's actually stopped (e.g. the port is free), not just that you
    sent a stop signal.
 2. **Remove this run's worktree**:
-   `git -C .pipeline/<SLUG>/repo worktree remove
+   `git -C <targetRepo.path or .pipeline/<SLUG>/repo, whichever it was
+   created from> worktree remove
    .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>-ground`. Since this skill
    never commits, there is no "uncommitted work worth keeping" exception
    here (unlike `ticket-to-pr` — see its own Cleanup section) — always

@@ -27,6 +27,12 @@
   human Review epic and go straight to Ready.
 - `targetRepo.{url,defaultBranch}` — the codebase `ticket-refine` grounds
   tickets against (not this pipeline repo itself). Read-only for this repo.
+- `targetRepo.path` (optional) — local filesystem path to an existing
+  checkout of `targetRepo.url` on this machine. When set, per-run worktrees
+  branch directly off it instead of a fresh clone into
+  `.pipeline/<slug>/repo` — faster, and skips a redundant clone since the
+  checkout's `origin` is already the real remote. Omit on a machine with no
+  local checkout yet; the clone-based flow is used instead.
 
 There's no config field for live API testing. `ticket-refine` starts the
 target repo's *own* dev server (its own `npm run dev` or equivalent) when a

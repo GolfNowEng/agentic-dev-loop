@@ -5,10 +5,11 @@
 `.claude/skills/ticket-refine/SKILL.md` — the skeptic. Invoked by the loop
 runner as `claude -p "/ticket-refine <TICKET-KEY>"`. Treats the raw ticket
 as an unverified claim, not an instruction to execute, and runs a fixed
-sequence against an isolated per-run `git worktree` off the shared target-
-repo clone at `.pipeline/<slug>/repo` (see `docs/logging.md`) — never the
-shared clone directly, so a human working in it manually is never affected
-by a background run:
+sequence against an isolated per-run `git worktree` branched off
+`targetRepo.path` (a local checkout, if configured) or a shared fetch-only
+clone at `.pipeline/<slug>/repo` otherwise (see `docs/logging.md`) — never
+that source checkout directly, so a human working in it manually is never
+affected by a background run:
 
 0. **Triage & route** — pick a checklist by issue type (Bug vs Tech Story
    vs unknown); for bugs, determine fault domain (client-side vs upstream
@@ -64,8 +65,8 @@ which has one for uncommitted work — see dev-loop's `docs/skills.md`).
   hypothesis (spawned in parallel when Ground has more than one candidate
   explanation); each confirms or refutes only its own hypothesis, not a
   generic "does the ticket hold" pass. Works inside `ticket-refine`'s
-  per-run worktree — never the shared clone — and can run the test suite
-  or a throwaway repro script there, and, when `ticket-refine` handed it a
+  per-run worktree — never the checkout it was branched from — and can run
+  the test suite or a throwaway repro script there, and, when `ticket-refine` handed it a
   running dev server's local URL, make live **read-only** calls against
   that instance's own proxy routes (never any other host, never a mutating
   call) — chained calls (e.g. search for an id, then fetch it) are expected

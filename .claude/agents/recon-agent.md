@@ -30,8 +30,10 @@ hypothesis doesn't pan out, try a different angle before reporting
   more than one of you in parallel, each gets a different one — stay
   scoped to yours).
 - A path to this run's own isolated git worktree of the target repo (created
-  by `ticket-refine`, one per run — not the shared clone at
-  `.pipeline/<SLUG>/repo`, which you should never touch directly). You may
+  by `ticket-refine`, one per run — never the checkout it was branched from,
+  whether that's `targetRepo.path` or the shared clone at
+  `.pipeline/<SLUG>/repo`; you should never touch either of those directly).
+  You may
   freely run things inside your worktree — the existing test suite, a
   throwaway repro script, executing a failing code path — actually
   confirming a bug beats inferring one from reading code statically. You

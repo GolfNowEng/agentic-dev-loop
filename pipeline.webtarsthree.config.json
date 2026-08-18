@@ -15,6 +15,7 @@
   "autoPromoteLabel": "auto-promote",
   "targetRepo": {
     "url": "git@github.com:fandango/webtarsthree.git",
-    "defaultBranch": "master"
+    "defaultBranch": "master",
+    "path": "/Users/206618626@bwt3.com/Desktop/Repos/webtarsthree"
   }
 }
