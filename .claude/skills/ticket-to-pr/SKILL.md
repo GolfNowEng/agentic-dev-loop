@@ -1,45 +1,259 @@
 ---
 name: ticket-to-pr
-description: Turns a ready Jira ticket into a PR (the executor role, spec section 5.0/5.2) - trusts the refined ticket completely, writes failing tests first, implements to green, verifies, then opens a PR.
+description: Turn a single ready Jira ticket into a PR against the target repo (webtarsthree) using strict TDD phases. The executor role (spec section 5.0/5.2) - trusts the refined ticket completely, never relitigates the spec, bounces with evidence instead of guessing.
 ---
 
-## Status
+# ticket-to-pr
 
-NOT YET IMPLEMENTED - this file is a placeholder scaffold only. No real
-orchestration logic exists here yet.
+## Arguments
 
-## Intended behavior
+`$ARGUMENTS` — a single Jira ticket key, e.g. `TARS-1301`. Required.
 
-This skill drives a single ticket through the dev-loop's TDD-ordered
-phases, matching the phase list tracked on a run's verdict
-(`intake -> plan -> red -> green -> verify -> pr`):
+## Role: the executor
 
-1. **Intake** - accept a ticket key, read its description (the work order)
-   and comments (extra context / human steering), and confirm the ticket
-   is actually ready to work. No guessing: if a decision can't be reasoned
-   to from the description + comments, bounce early rather than improvise.
-2. **Plan** - break the acceptance criteria into an ordered list of
-   concrete, testable steps before touching any code.
-3. **Red** - for each acceptance criterion, write a failing test first and
-   confirm it fails for the expected reason before writing implementation
-   code. Record `red_confirmed: true` in the verdict.
-4. **Green** - implement just enough to make the failing test(s) pass,
-   touching only the files enumerated in the ticket, without silently
-   reinterpreting the spec.
-5. **Verify** - run the full existing suite (must stay green), confirm the
-   new tests pass and are committed, then have a fresh-context QA agent
-   attack the change.
-6. **PR** - push the branch, open the pull request, and write
-   `verdict.json` with the final outcome, failure category (if any), and
-   run metadata.
+Per spec section 5.0, this skill runs **downstream of the human review gate**
+and operates under full trust of the refined ticket:
 
-Spec problems discovered mid-run (an AC is unimplementable, an enumerated
-file doesn't exist, the described bug isn't reproducible) are never
-patched over - the skill bounces with evidence, routing doubt back
-upstream to `ticket-refine`.
+- The ticket's **description** is the work order. Treat it as near-perfect —
+  do not renegotiate acceptance criteria, scope, or the stated fault domain.
+- The ticket's **comments** hold extra context (original raw description,
+  research-loop's recon findings, human steering notes at the review gate).
+  Consult them when the description alone leaves a judgment call, but the
+  description remains authoritative.
+- **No guessing.** If an implementation decision can't be *reasoned to* from
+  the description + comments, or the described work turns out to be larger
+  than stated, stop and bounce with exactly what was missing. A ticket is
+  never edited by this skill — if the spec is wrong, ambiguous, or
+  unimplementable as written, that is `ticket-refine`'s problem to fix
+  upstream, not this skill's to patch over.
 
-## Deferred
+A stated "I stopped because X" is a success mode of this pipeline. A guessed
+implementation is its worst failure mode.
 
-Full authorship of this skill - the actual prompts, tool usage, and
-step-by-step instructions - is deferred to a follow-up task. This scaffold
-only establishes that the skill directory and frontmatter exist.
+## Setup: run directories and progress logging
+
+Before phase 0, establish:
+
+1. `RUN_ID` = current UTC timestamp as `YYYYMMDDTHHMMSSZ`.
+2. `RUN_DIR` = `.pipeline/runs/<TICKET>-<RUN_ID>/` (relative to this repo's
+   root, i.e. `dev-loop/`, NOT the target repo checkout). Create it.
+3. Every phase transition appends one JSON line to `RUN_DIR/progress.jsonl`
+   (create the file with the first append). Never rewrite or delete existing
+   lines — append-only, same discipline as `runs.jsonl`. Each line:
+   ```json
+   {"ts": "<ISO-8601 UTC>", "phase": "intake|plan|red|green|verify|pr", "event": "phase_start|phase_end|note", "detail": "one line"}
+   ```
+   - Emit `phase_start` when beginning a phase, `phase_end` when leaving it
+     (whether it succeeded or the run is about to bounce from within it).
+   - Emit a `note` event for anything worth surfacing mid-phase (e.g. "wrote
+     3 failing tests", "existing suite has 412 tests, 0 failing before
+     changes", "QA subagent flagged a null-check gap").
+4. At the very end of the run — success or bounce, no exceptions — emit one
+   final `progress.jsonl` line with `"event": "result"` whose `detail` is the
+   same human-readable summary described in "Always-emitted result line"
+   below, then print that same line to stdout as the last thing this skill
+   does.
+
+This progress log is deliberately separate from `verdict.json`: it exists so
+a dashboard (built separately, not by this skill) can show what happened
+inside a run while or after it happened, without needing to parse model
+output. Only append to it — never read it back to make decisions; all
+decision-relevant state lives in the ticket, the target repo, and this
+skill's own working context.
+
+## Always-emitted result line
+
+Whatever phase the run ends at, the last thing this skill does is emit one
+line, to stdout and as the final `progress.jsonl` event and as
+`verdict.json`'s `detail` field, in one of these forms:
+
+- `RESULT: landed — PR opened at <url>`
+- `RESULT: bounced (<failure_category>) — <one-line reason with concrete evidence>`
+- `RESULT: error — <what went wrong>` (only for genuine tooling/environment
+  failures, not spec problems — spec problems are always `bounced`)
+
+This is the single line a human skimming a terminal or a future dashboard
+should be able to read to know what happened, without opening any other
+file.
+
+## Target repo
+
+`pipeline.config.json`'s `targetRepo` field names the codebase this skill
+operates on — currently `webtarsthree` (`git@github.com:fandango/webtarsthree.git`,
+default branch `master`). This is **not** the `dev-loop` repo itself;
+`dev-loop` only orchestrates.
+
+Working directory model: a **persistent checkout**, reset per run, at
+`.pipeline/workdir/webtarsthree` (relative to `dev-loop/`'s root). At the
+start of Phase 0:
+
+```bash
+mkdir -p .pipeline/workdir
+if [ ! -d .pipeline/workdir/webtarsthree/.git ]; then
+  git clone <targetRepo.url> .pipeline/workdir/webtarsthree
+fi
+cd .pipeline/workdir/webtarsthree
+git fetch origin
+git checkout <targetRepo.defaultBranch>
+git reset --hard origin/<targetRepo.defaultBranch>
+git checkout -b <TICKET>-<slug>
+```
+
+`<slug>` is a short kebab-case summary derived from the ticket's summary
+(lowercase, non-alphanumeric → `-`, truncate to a reasonable length — e.g.
+`TARS-1301-delete-tv-objects`). All subsequent phases operate with this
+directory as the working directory unless stated otherwise.
+
+## Phases
+
+Each phase's `progress.jsonl` events use the phase name shown.
+
+### Phase 0 — Intake
+
+1. Fetch the ticket (`getJiraIssue`, fields: summary, description, comments,
+   status) for `$ARGUMENTS`.
+2. Confirm the description follows the definition-of-ready template from
+   `ticket-refine` (`### Overview`, `### Acceptance Criteria`, `### Scope`).
+   If it doesn't — this ticket should never have reached the Ready epic —
+   bounce immediately with `failure_category: "spec_ambiguous"` and detail
+   noting the missing sections. Do not attempt to proceed on an unreadied
+   ticket.
+3. Read every Acceptance Criterion and the Scope section's enumerated
+   files/modules.
+4. **Early fail-exit check**: if the enumerated scope is clearly larger than
+   a single ticket's worth of work (spans many unrelated modules, requires
+   architectural changes not described, etc.), bounce now with
+   `failure_category: "too_large"` before doing any further work. Better to
+   stop here than after writing code.
+5. Set up the target repo working directory as described above.
+
+### Phase 1 — Plan
+
+Break the Acceptance Criteria into an ordered list of concrete steps. For
+each AC, from the ticket's own TDD-ready description, note: the test name,
+what it asserts, and why it currently fails. Write this plan as a single
+note in `progress.jsonl` (not a separate file) — it exists to keep this run
+honest about scope, not as a deliverable.
+
+If, while planning, any AC cannot be translated into a concrete step without
+inferring something the ticket didn't state — bounce now with
+`spec_ambiguous`, naming exactly which AC and what's missing. Do this before
+touching any code.
+
+### Phase 2 — Red
+
+For each Acceptance Criterion, in order:
+
+1. Write the failing test named in that AC (per the ticket's TDD-ready
+   description of test name / assertion / why it fails).
+2. Run it. Confirm it actually fails, **and fails for the expected reason**
+   (not e.g. a typo or missing import producing an unrelated error).
+3. If a test passes against unmodified code, the AC doesn't describe a real
+   change — bounce with `spec_ambiguous`, stating which AC and that its test
+   passed on baseline code.
+
+Once every AC's test is written and confirmed failing for the right reason,
+record `red_confirmed: true` (this goes into `verdict.json` later) and
+commit the tests alone, before any implementation code
+(`git commit -m "test(<TICKET>): add failing tests for ACs"`).
+
+### Phase 3 — Green
+
+Implement the minimum change to make the Phase 2 tests pass. Touch **only**
+the files enumerated in the ticket's Scope section. If implementing
+correctly requires touching a file not enumerated, or reveals the described
+bug isn't reproducible, or an AC turns out unimplementable as written — stop
+and bounce with `spec_contradicted` (codebase evidence contradicts the
+ticket's claim) or `spec_ambiguous`, citing the specific contradiction.
+
+Commit once all Phase 2 tests pass
+(`git commit -m "feat(<TICKET>): implement <summary>"`).
+
+### Phase 4 — Verify
+
+1. Run the full existing test suite. It must be 100% green. If it's not,
+   and the failure is unrelated to this change, bounce with `tests_flaky`
+   naming the failing test(s); if the failure is caused by this change,
+   that's a Green-phase defect — go back and fix it, do not proceed to PR
+   with a broken suite.
+2. Confirm the new tests from Phase 2 are present and passing, and that
+   TDD order is real in git history (test commit before implementation
+   commit — already true if Phase 2/3 were followed in order).
+3. Spawn `qa-agent` (see `.claude/agents/qa-agent.md`) as a genuine
+   fresh-context subagent — it must not be told how the fix was
+   implemented, only given the ticket and the diff. Pass it the ticket key
+   and the branch name. If it reports issues, address them and re-run this
+   phase (increment a `verify_loops` counter each time); do not paper over
+   a real finding. If after 3 verify loops issues persist, bounce with
+   `verify_rejected` and the QA agent's findings.
+4. Record `verify_loops` (final count) for `verdict.json`.
+
+### Phase 5 — PR
+
+1. Push the branch: `git push -u origin <TICKET>-<slug>`.
+2. Open the PR (via `gh pr create` or equivalent) against
+   `targetRepo.defaultBranch`, title `<TICKET>: <ticket summary>`, body
+   summarizing what changed, which tests were added, and verification
+   results (existing suite status, QA agent outcome).
+3. Write `verdict.json` in `RUN_DIR` (see schema below) with
+   `outcome: "landed"`, `phase_reached: "pr"`, the PR URL, and all recorded
+   metrics.
+4. Emit the always-emitted result line (see above) and stop.
+
+## Bouncing (any phase)
+
+A bounce is a normal, successful exit of this skill — not a crash. On any
+bounce:
+
+1. Do not leave the target repo in a partially-committed, confusing state —
+   if implementation work was in progress and being abandoned, leave the
+   branch as-is (do not force-push over it, do not delete it) so a human or
+   `ticket-refine`'s revision pass can inspect exactly what was tried.
+2. Write `verdict.json` with `outcome: "bounced"`, the `phase_reached` you
+   stopped at, a `failure_category` from the closed enum (see below), and a
+   `detail` string with concrete evidence (file paths, test output excerpts,
+   the specific AC or scope line that's the problem) — never a vague "this
+   was unclear."
+3. Emit the always-emitted result line and stop. Do not attempt any further
+   phases.
+
+**Closed failure_category enum** (never invent new values):
+`spec_ambiguous · spec_contradicted · blocked · too_large · tests_flaky · env_setup · verify_rejected · subagent_stall · merge_conflict · agent_error · killed_ceiling`
+
+This skill will only ever self-report `spec_ambiguous`, `spec_contradicted`,
+`too_large`, `tests_flaky`, `verify_rejected`, `env_setup`, `merge_conflict`,
+or `blocked` — the remaining categories (`subagent_stall`, `agent_error`,
+`killed_ceiling`) are the loop runner's own failure modes, not this skill's.
+
+## verdict.json schema
+
+Write to `RUN_DIR/verdict.json` (never elsewhere — the loop runner reads it
+from this exact path):
+
+```json
+{
+  "outcome": "landed | bounced | error",
+  "phase_reached": "intake | plan | red | green | verify | pr",
+  "failure_category": null,
+  "detail": "the always-emitted result line's content, without the RESULT: prefix",
+  "red_confirmed": true,
+  "verify_loops": 1,
+  "retries": 0,
+  "skill_version": "<git SHA of this SKILL.md's commit in dev-loop>",
+  "model": "sonnet",
+  "pr": "https://github.com/fandango/webtarsthree/pull/123",
+  "cost_usd": 0,
+  "tokens": { "in": 0, "out": 0 }
+}
+```
+
+`cost_usd` and `tokens` are left as `0`/zeros by this skill — the loop
+runner derives the real values from `claude -p --output-format json`'s own
+usage report, not from anything this skill self-reports (a skill cannot
+reliably know its own total cost from inside the run).
+
+## Invocation (for the loop runner)
+
+```
+claude -p "/ticket-to-pr <TICKET-KEY>" --permission-mode acceptEdits --output-format json
+```

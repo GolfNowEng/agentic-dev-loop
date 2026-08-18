@@ -138,10 +138,23 @@ export interface CeilingsConfig {
 }
 
 /**
+ * The codebase both skills operate against -- separate from this pipeline
+ * repo itself, which only orchestrates. Kept in config (not hardcoded) so
+ * the same pipeline repos can be pointed at a different project later.
+ */
+export interface TargetRepoConfig {
+  /** git remote URL, e.g. "git@github.com:org/repo.git". */
+  url: string;
+  /** Branch new work branches from and PRs target, e.g. "master". */
+  defaultBranch: string;
+}
+
+/**
  * Shape of pipeline.config.json.
  */
 export interface Config {
   jira: JiraConfig;
   ceilings: CeilingsConfig;
   autoPromoteLabel: string;
+  targetRepo: TargetRepoConfig;
 }

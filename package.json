@@ -5,7 +5,8 @@
   "scripts": {
     "test": "vitest run",
     "build": "tsc",
-    "check-auth": "node --env-file=.env scripts/check-jira-auth.mjs"
+    "check-auth": "node --env-file=.env scripts/check-jira-auth.mjs",
+    "stats": "node scripts/stats.mjs"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
