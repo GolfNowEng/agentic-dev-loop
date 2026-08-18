@@ -6,7 +6,7 @@
 // for placeholder values themselves and failing loudly if any remain.
 
 import { readFile } from "node:fs/promises";
-import type { Config } from "./types.js";
+import type { Config, LoopConfig } from "./types.js";
 
 /**
  * Read and parse a pipeline config file at the given path. There is no
@@ -19,6 +19,19 @@ import type { Config } from "./types.js";
 export async function loadConfig(path: string): Promise<Config> {
   const raw = await readFile(path, "utf8");
   return JSON.parse(raw) as Config;
+}
+
+/**
+ * Read and parse pipeline.loop.config.json -- loop-mechanics settings, not
+ * project wiring, so (unlike loadConfig) there's no multi-project ambiguity
+ * to guard against: a plain default path is fine. `path` defaults to
+ * "pipeline.loop.config.json" in the current working directory.
+ */
+export async function loadLoopConfig(
+  path: string = "pipeline.loop.config.json",
+): Promise<LoopConfig> {
+  const raw = await readFile(path, "utf8");
+  return JSON.parse(raw) as LoopConfig;
 }
 
 /**

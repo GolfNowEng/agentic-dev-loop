@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { appendRunLog, readRunLog } from "../src/runs-log.js";
+import { appendRunLog, readRunLog, countRunsToday } from "../src/runs-log.js";
 import type { RunLogLine } from "../src/types.js";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -84,5 +84,40 @@ describe("appendRunLog", () => {
     await appendRunLog(filePath, makeLine({ ticket: "PROJ-2", cost_usd: 2.0 }));
     const contentAfterSecond = await fs.readFile(filePath, "utf8");
     expect(contentAfterSecond.startsWith(contentAfterFirst)).toBe(true);
+  });
+});
+
+describe("countRunsToday", () => {
+  let dir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "runs-log-count-test-"));
+    filePath = path.join(dir, "runs.jsonl");
+  });
+
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("returns 0 when the file does not exist yet", async () => {
+    const count = await countRunsToday(filePath, new Date("2026-08-16T12:00:00Z"));
+    expect(count).toBe(0);
+  });
+
+  it("counts only lines whose started falls on the same UTC calendar day as now", async () => {
+    await appendRunLog(filePath, makeLine({ ticket: "PROJ-1", started: "2026-08-16T00:00:01Z" }));
+    await appendRunLog(filePath, makeLine({ ticket: "PROJ-2", started: "2026-08-16T23:59:59Z" }));
+    await appendRunLog(filePath, makeLine({ ticket: "PROJ-3", started: "2026-08-15T23:59:59Z" }));
+    await appendRunLog(filePath, makeLine({ ticket: "PROJ-4", started: "2026-08-17T00:00:00Z" }));
+
+    const count = await countRunsToday(filePath, new Date("2026-08-16T12:00:00Z"));
+    expect(count).toBe(2);
+  });
+
+  it("returns 0 when no lines match the given day", async () => {
+    await appendRunLog(filePath, makeLine({ ticket: "PROJ-1", started: "2026-08-15T12:00:00Z" }));
+    const count = await countRunsToday(filePath, new Date("2026-08-16T12:00:00Z"));
+    expect(count).toBe(0);
   });
 });

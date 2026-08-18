@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   loadConfig,
+  loadLoopConfig,
   findPlaceholders,
   assertNoPlaceholders,
   repoSlugFromUrl,
@@ -80,6 +81,43 @@ describe("loadConfig", () => {
   it("requires an explicit path -- there is no implicit default config file", async () => {
     // @ts-expect-error -- path is a required argument, not optional
     await expect(loadConfig()).rejects.toThrow();
+  });
+});
+
+describe("loadLoopConfig", () => {
+  let dir: string;
+  let originalCwd: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "loop-config-test-"));
+    originalCwd = process.cwd();
+    process.chdir(dir);
+  });
+
+  afterEach(async () => {
+    process.chdir(originalCwd);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("reads and parses pipeline.loop.config.json from the current directory by default", async () => {
+    await fs.writeFile(
+      path.join(dir, "pipeline.loop.config.json"),
+      JSON.stringify({ pollIntervalSec: 60 }),
+      "utf8",
+    );
+    const loopConfig = await loadLoopConfig();
+    expect(loopConfig.pollIntervalSec).toBe(60);
+  });
+
+  it("reads from an explicit path when given one", async () => {
+    const filePath = path.join(dir, "custom.loop.config.json");
+    await fs.writeFile(filePath, JSON.stringify({ pollIntervalSec: 30 }), "utf8");
+    const loopConfig = await loadLoopConfig(filePath);
+    expect(loopConfig.pollIntervalSec).toBe(30);
+  });
+
+  it("throws if the file does not exist", async () => {
+    await expect(loadLoopConfig()).rejects.toThrow();
   });
 });
 

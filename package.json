@@ -6,7 +6,8 @@
     "test": "vitest run",
     "build": "tsc",
     "check-auth": "node --env-file=.env scripts/check-jira-auth.mjs",
-    "stats": "node scripts/stats.mjs"
+    "stats": "node scripts/stats.mjs",
+    "loop": "node --env-file=.env src/main.ts --config pipeline.webtarsthree.config.json"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
