@@ -1,0 +1,14 @@
+{
+  "jira": {
+    "intakeEpics": ["___"],
+    "reviewEpic": "___",
+    "readyEpic": "___",
+    "claimStatus": { "from": "___", "to": "___" },
+    "pollJql": {
+      "refine": "___",
+      "dev": "___"
+    }
+  },
+  "ceilings": { "maxRunsPerDay": "___", "maxCostPerRunUsd": "___", "runTimeoutMin": "___" },
+  "autoPromoteLabel": "___"
+}
