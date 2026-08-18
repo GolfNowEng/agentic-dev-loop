@@ -28,6 +28,8 @@ const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
   ["jira.pollJql.refine", (c) => c.jira.pollJql.refine],
   ["jira.pollJql.dev", (c) => c.jira.pollJql.dev],
   ["jira.epicLinkField", (c) => c.jira.epicLinkField],
+  ["jira.statusNames.bounced", (c) => c.jira.statusNames.bounced],
+  ["jira.statusNames.prOpen", (c) => c.jira.statusNames.prOpen],
   ["autoPromoteLabel", (c) => c.autoPromoteLabel],
 ];
 

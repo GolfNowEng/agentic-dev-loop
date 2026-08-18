@@ -118,6 +118,8 @@ export async function runLoopIteration(
   const epic = decideEpicMove(verdict, loopKind, config);
   if (epic) {
     await jiraClient.moveToEpic(ticket.key, epic);
+  } else if (verdict.outcome === "bounced") {
+    await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
   }
 
   const logLine = buildRunLogLine(ticket.key, verdict, started, ended);

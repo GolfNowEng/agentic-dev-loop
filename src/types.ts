@@ -118,6 +118,17 @@ export interface JiraConfig {
    * "___" until Appendix A of the pipeline spec is filled in.
    */
   epicLinkField: string;
+  /**
+   * Which existing Jira status names the loop runner's terminal outcomes
+   * map onto -- this Jira instance has no literal "bounced" or "pr-open"
+   * status, so these must be bound to whatever statuses actually exist in
+   * the ticket's workflow (e.g. "Blocked" for bounced, "In Progress" for
+   * pr-open).
+   */
+  statusNames: {
+    bounced: string;
+    prOpen: string;
+  };
 }
 
 export interface CeilingsConfig {

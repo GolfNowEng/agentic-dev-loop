@@ -1,15 +1,16 @@
 {
   "jira": {
-    "intakeEpics": ["___"],
-    "reviewEpic": "___",
-    "readyEpic": "___",
-    "claimStatus": { "from": "___", "to": "___" },
+    "intakeEpics": ["TARS-1350"],
+    "reviewEpic": "TARS-1383",
+    "readyEpic": "TARS-1384",
+    "claimStatus": { "from": "To Do", "to": "In Progress" },
     "pollJql": {
-      "refine": "___",
-      "dev": "___"
+      "refine": "\"parent\" in ({epics}) AND status = \"To Do\" ORDER BY created ASC",
+      "dev": "\"parent\" = {readyEpic} AND status = \"To Do\" ORDER BY created ASC"
     },
-    "epicLinkField": "___"
+    "epicLinkField": "parent",
+    "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" }
   },
-  "ceilings": { "maxRunsPerDay": "___", "maxCostPerRunUsd": "___", "runTimeoutMin": "___" },
-  "autoPromoteLabel": "___"
+  "ceilings": { "maxRunsPerDay": 10, "maxCostPerRunUsd": 5, "runTimeoutMin": 45 },
+  "autoPromoteLabel": "auto-promote"
 }

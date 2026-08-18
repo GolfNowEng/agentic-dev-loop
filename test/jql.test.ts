@@ -12,6 +12,8 @@ const config: Config = {
       refine: 'epic in ({epics}) AND status = "To Refine" ORDER BY created ASC',
       dev: 'epic = {readyEpic} AND status = "Ready" ORDER BY created ASC',
     },
+    epicLinkField: "customfield_10014",
+    statusNames: { bounced: "Blocked", prOpen: "In Progress" },
   },
   ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
   autoPromoteLabel: "auto-promote",
