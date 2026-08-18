@@ -15,8 +15,11 @@ sequence against a persistent target-repo checkout at
    reason, commit tests before any implementation.
 4. **Green** — implement the minimum change to pass, touching only the
    files the ticket's Scope section names.
-5. **Verify** — full suite must be green; spawns `qa-agent` (see below) for
-   a fresh-context adversarial pass, up to 3 retry loops.
+5. **Verify** — full suite must be green; also runs whatever the target
+   repo's own CI runs beyond tests (lint, typecheck, build) so a
+   lint/build failure is caught here, not after the PR is already open;
+   spawns `qa-agent` (see below) for a fresh-context adversarial pass, up
+   to 3 retry loops.
 6. **PR** — push the branch, open the PR, write `verdict.json`.
 
 Core rule: this skill **never edits the spec**. Any ambiguity, contradiction,
@@ -29,8 +32,10 @@ bounces with evidence instead of guessing.
 during Verify. It sees only the ticket key and branch name — never the
 implementer's reasoning — and checks: AC satisfaction, scope discipline
 (no files touched beyond what Scope names), regressions, test quality, and
-unrelated diff noise. Returns `pass`/`fail` plus concrete findings the
-implementer can act on.
+unrelated diff noise. Not limited to static diff reading: for ACs that are
+visual, timing-sensitive, or otherwise hard to trust from a diff and its
+tests alone, it starts the app and exercises the behavior directly. Returns
+`pass`/`fail` plus concrete findings the implementer can act on.
 
 ## verdict.json contract
 

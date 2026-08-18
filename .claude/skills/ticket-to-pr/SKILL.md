@@ -42,7 +42,7 @@ Before phase 0, establish:
    repo's root, i.e. `dev-loop/`, NOT the target repo checkout). Create it.
    Namespacing by `SLUG` lets multiple projects' runs coexist under one
    `dev-loop` checkout without collision.
-3. Every phase transition appends one JSON line to `RUN_DIR/progress.jsonl`
+4. Every phase transition appends one JSON line to `RUN_DIR/progress.jsonl`
    (create the file with the first append). Never rewrite or delete existing
    lines — append-only, same discipline as `runs/<SLUG>.jsonl`. Each line:
    ```json
@@ -53,7 +53,7 @@ Before phase 0, establish:
    - Emit a `note` event for anything worth surfacing mid-phase (e.g. "wrote
      3 failing tests", "existing suite has 412 tests, 0 failing before
      changes", "QA subagent flagged a null-check gap").
-4. At the very end of the run — success or bounce, no exceptions — emit one
+5. At the very end of the run — success or bounce, no exceptions — emit one
    final `progress.jsonl` line with `"event": "result"` whose `detail` is the
    same human-readable summary described in "Always-emitted result line"
    below, then print that same line to stdout as the last thing this skill
@@ -188,17 +188,26 @@ Commit once all Phase 2 tests pass
    naming the failing test(s); if the failure is caused by this change,
    that's a Green-phase defect — go back and fix it, do not proceed to PR
    with a broken suite.
-2. Confirm the new tests from Phase 2 are present and passing, and that
+2. Run whatever the target repo's own CI would run beyond tests — lint,
+   typecheck, and build, at minimum (check the target repo's own CI config
+   or `package.json` scripts for the actual commands; don't assume names).
+   A PR that passes tests but fails lint/typecheck/build on push is not a
+   `landed` success, it's a deferred bounce — catch it here, not after
+   opening the PR. Treat a failure here the same as a test failure: fix it
+   if it's caused by this change, or bounce `tests_flaky`/`env_setup` (pick
+   whichever fits) with the concrete output if it's pre-existing and
+   unrelated.
+3. Confirm the new tests from Phase 2 are present and passing, and that
    TDD order is real in git history (test commit before implementation
    commit — already true if Phase 2/3 were followed in order).
-3. Spawn `qa-agent` (see `.claude/agents/qa-agent.md`) as a genuine
+4. Spawn `qa-agent` (see `.claude/agents/qa-agent.md`) as a genuine
    fresh-context subagent — it must not be told how the fix was
    implemented, only given the ticket and the diff. Pass it the ticket key
    and the branch name. If it reports issues, address them and re-run this
    phase (increment a `verify_loops` counter each time); do not paper over
    a real finding. If after 3 verify loops issues persist, bounce with
    `verify_rejected` and the QA agent's findings.
-4. Record `verify_loops` (final count) for `verdict.json`.
+5. Record `verify_loops` (final count) for `verdict.json`.
 
 ### Phase 5 — PR
 
@@ -206,7 +215,8 @@ Commit once all Phase 2 tests pass
 2. Open the PR (via `gh pr create` or equivalent) against
    `targetRepo.defaultBranch`, title `<TICKET>: <ticket summary>`, body
    summarizing what changed, which tests were added, and verification
-   results (existing suite status, QA agent outcome).
+   results (existing suite status, lint/typecheck/build status, QA agent
+   outcome).
 3. Write `verdict.json` in `RUN_DIR` (see schema below) with
    `outcome: "landed"`, `phase_reached: "pr"`, the PR URL, and all recorded
    metrics.

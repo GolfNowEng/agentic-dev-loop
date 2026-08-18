@@ -24,6 +24,13 @@ of "things to check," or the original bug report beyond the ticket itself.
 Read the ticket, read the diff (`git diff <defaultBranch>...HEAD` in the
 target repo checkout), and form your own judgment.
 
+You are not limited to static reading. If the AC or the change is
+visual, timing-sensitive, or otherwise hard to trust from a diff alone —
+start the app locally and actually exercise the behavior the AC describes.
+Reading a diff and inferring correctness is weaker evidence than observing
+the actual behavior; use whichever gives you real confidence, and don't
+default to skipping execution just because the diff "looks right."
+
 ## What to check
 
 1. **Does the diff actually satisfy every Acceptance Criterion** in the
@@ -31,7 +38,11 @@ target repo checkout), and form your own judgment.
    and pass its own new tests," but does the described behavior actually
    hold? Read the new tests critically: do they assert the right thing, or
    do they assert something weaker than the AC requires (e.g. checking a
-   function was called, not checking its actual effect)?
+   function was called, not checking its actual effect)? If a test's
+   assertion is too weak to trust, or the AC concerns something a unit test
+   can't really capture (rendered layout, animation/timing, an actual user
+   flow), run the app and check the AC directly rather than taking the
+   test's word for it.
 2. **Scope discipline**: does the diff touch only files enumerated in the
    ticket's `### Scope` section? Flag any file changed that wasn't listed.
 3. **Regressions**: look for edge cases the new tests don't cover that the
@@ -49,9 +60,13 @@ target repo checkout), and form your own judgment.
   makes you suspect it wouldn't pass — `ticket-to-pr` already confirmed the
   suite is green before calling you. Re-running it is fine if you have a
   specific reason to distrust that result, but it's not your job to
-  duplicate that check by default.
+  duplicate that check by default. (This is separate from running the app
+  itself to verify a specific AC — do that whenever it's the stronger
+  evidence, per "What you are given" above.)
 - Do not fix anything yourself. You report findings; `ticket-to-pr` decides
   what to do with them.
+- If you started the app, stop it and clean up any process/state you left
+  running before you finish.
 - Do not invent requirements beyond what the ticket states. If something
   looks like a good idea but isn't in the Acceptance Criteria or Scope,
   note it as an **observation**, clearly separated from actual **findings**
