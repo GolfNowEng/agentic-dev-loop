@@ -9,14 +9,32 @@ import { readFile } from "node:fs/promises";
 import type { Config } from "./types.js";
 
 /**
- * Read and parse pipeline.config.json from the given path (defaults to
- * "./pipeline.config.json" relative to cwd). Throws if the file is
- * missing or not valid JSON -- a broken config file should fail loudly at
- * startup, not be silently tolerated.
+ * Read and parse a pipeline config file at the given path. There is no
+ * default path: with multiple projects (each its own
+ * "pipeline.<repo-slug>.config.json"), an implicit default would silently
+ * couple this loader to one project. Throws if the file is missing or not
+ * valid JSON -- a broken config file should fail loudly at startup, not be
+ * silently tolerated.
  */
-export async function loadConfig(path = "./pipeline.config.json"): Promise<Config> {
+export async function loadConfig(path: string): Promise<Config> {
   const raw = await readFile(path, "utf8");
   return JSON.parse(raw) as Config;
+}
+
+/**
+ * Derive a filesystem-safe project slug from a target repo's git remote
+ * URL, e.g. "webtarsthree" from "git@github.com:fandango/webtarsthree.git"
+ * or "https://github.com/fandango/webtarsthree". Used to namespace
+ * per-project paths (runs log, `.pipeline/` workdir) so multiple projects'
+ * configs can coexist in one pipeline repo without collisions.
+ */
+export function repoSlugFromUrl(url: string): string {
+  const withoutGitSuffix = url.replace(/\.git$/, "");
+  const lastSegment = withoutGitSuffix.split(/[/:]/).pop();
+  if (!lastSegment) {
+    throw new Error(`repoSlugFromUrl: could not derive a slug from "${url}".`);
+  }
+  return lastSegment;
 }
 
 /** Field paths (dot-notation) worth checking for leftover "___" placeholders. */

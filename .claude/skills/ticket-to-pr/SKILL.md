@@ -35,11 +35,16 @@ implementation is its worst failure mode.
 Before phase 0, establish:
 
 1. `RUN_ID` = current UTC timestamp as `YYYYMMDDTHHMMSSZ`.
-2. `RUN_DIR` = `.pipeline/runs/<TICKET>-<RUN_ID>/` (relative to this repo's
-   root, i.e. `dev-loop/`, NOT the target repo checkout). Create it.
+2. `SLUG` = the project slug derived from `pipeline.<project>.config.json`'s
+   `targetRepo.url` (same derivation as `repoSlugFromUrl` in `src/config.ts`
+   — the last path segment, minus a trailing `.git`), e.g. `webtarsthree`.
+3. `RUN_DIR` = `.pipeline/<SLUG>/runs/<TICKET>-<RUN_ID>/` (relative to this
+   repo's root, i.e. `dev-loop/`, NOT the target repo checkout). Create it.
+   Namespacing by `SLUG` lets multiple projects' runs coexist under one
+   `dev-loop` checkout without collision.
 3. Every phase transition appends one JSON line to `RUN_DIR/progress.jsonl`
    (create the file with the first append). Never rewrite or delete existing
-   lines — append-only, same discipline as `runs.jsonl`. Each line:
+   lines — append-only, same discipline as `runs/<SLUG>.jsonl`. Each line:
    ```json
    {"ts": "<ISO-8601 UTC>", "phase": "intake|plan|red|green|verify|pr", "event": "phase_start|phase_end|note", "detail": "one line"}
    ```
@@ -78,26 +83,33 @@ file.
 
 ## Target repo
 
-`pipeline.config.json`'s `targetRepo` field names the codebase this skill
-operates on — currently `webtarsthree` (`git@github.com:fandango/webtarsthree.git`,
-default branch `master`). This is **not** the `dev-loop` repo itself;
-`dev-loop` only orchestrates.
+This repo's `pipeline.<project>.config.json`'s `targetRepo` field names the
+codebase this skill operates on — currently `pipeline.webtarsthree.config.json`
+points at `webtarsthree` (`git@github.com:fandango/webtarsthree.git`, default
+branch `master`). This is **not** the `dev-loop` repo itself; `dev-loop` only
+orchestrates. Adding a second project later means adding a second
+`pipeline.<project>.config.json` — no code or skill changes.
 
 Working directory model: a **persistent checkout**, reset per run, at
-`.pipeline/workdir/webtarsthree` (relative to `dev-loop/`'s root). At the
-start of Phase 0:
+`.pipeline/<SLUG>/workdir/<SLUG>` (relative to `dev-loop/`'s root, `SLUG` as
+derived in "Setup" above — e.g. `.pipeline/webtarsthree/workdir/webtarsthree`).
+At the start of Phase 0:
 
 ```bash
-mkdir -p .pipeline/workdir
-if [ ! -d .pipeline/workdir/webtarsthree/.git ]; then
-  git clone <targetRepo.url> .pipeline/workdir/webtarsthree
+mkdir -p .pipeline/<SLUG>/workdir
+if [ ! -d .pipeline/<SLUG>/workdir/<SLUG>/.git ]; then
+  git clone <targetRepo.url> .pipeline/<SLUG>/workdir/<SLUG>
 fi
-cd .pipeline/workdir/webtarsthree
+cd .pipeline/<SLUG>/workdir/<SLUG>
 git fetch origin
 git checkout <targetRepo.defaultBranch>
 git reset --hard origin/<targetRepo.defaultBranch>
 git checkout -b <TICKET>-<slug>
 ```
+
+(Two different "slug"s here: `<SLUG>` uppercase is the *project* slug from
+the config path; `<slug>` lowercase in the branch name is the per-ticket
+kebab-case summary described next.)
 
 `<slug>` is a short kebab-case summary derived from the ticket's summary
 (lowercase, non-alphanumeric → `-`, truncate to a reasonable length — e.g.

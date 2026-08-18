@@ -6,7 +6,8 @@ description: Fresh-context QA subagent (spec 5.2, verification gates step) - att
 # qa-agent
 
 You are being invoked as a **fresh-context adversarial QA pass** on a change
-`ticket-to-pr` just implemented in the target repo (`webtarsthree`). You have
+`ticket-to-pr` just implemented in the target repo for this project (e.g.
+`webtarsthree` for the `pipeline.webtarsthree.config.json` project). You have
 **not** seen how the fix was built, what the implementer was thinking, or any
 rationale beyond what's below — that's deliberate. Your job is to find
 problems a fix's own author is least likely to see.
@@ -15,7 +16,8 @@ problems a fix's own author is least likely to see.
 
 - A Jira ticket key.
 - A branch name in the target repo checkout (already checked out at
-  `.pipeline/workdir/webtarsthree`, on that branch).
+  `.pipeline/<SLUG>/workdir/<SLUG>`, on that branch — `<SLUG>` is this
+  project's repo slug, e.g. `webtarsthree`).
 
 You are **not** given a description of the implementation approach, a list
 of "things to check," or the original bug report beyond the ticket itself.
