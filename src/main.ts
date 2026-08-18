@@ -180,9 +180,33 @@ async function main(): Promise<void> {
     const usage = extractUsage(usageRaw);
 
     const runDirName = await findNewestRunDir(runsBaseDir, ticketKey, before);
-    const verdict = runDirName
-      ? await readVerdictFile(join(runsBaseDir, runDirName, "verdict.json"))
-      : agentErrorVerdict("no run directory appeared for this ticket");
+    let verdict;
+    if (runDirName) {
+      verdict = await readVerdictFile(join(runsBaseDir, runDirName, "verdict.json"));
+    } else {
+      verdict = agentErrorVerdict("no run directory appeared for this ticket");
+    }
+
+    if (!runDirName || verdict.failure_category === "agent_error") {
+      // No verdict.json (or a malformed one) means the skill stopped
+      // before writing one -- print whatever claude -p itself reported so
+      // a human can see why, instead of just "agent_error" with no clue.
+      try {
+        const parsed = usageRaw as {
+          result?: string;
+          permission_denials?: Array<{ tool_name: string }>;
+        } | null;
+        if (parsed?.result) {
+          console.error(`[${SKILL_NAME}] ${ticketKey}: claude's own result text: ${parsed.result}`);
+        }
+        if (parsed?.permission_denials?.length) {
+          const denied = parsed.permission_denials.map((d) => d.tool_name).join(", ");
+          console.error(`[${SKILL_NAME}] ${ticketKey}: permission denials: ${denied}`);
+        }
+      } catch {
+        // Diagnostic logging must never itself crash the loop.
+      }
+    }
 
     return { verdict, started, ended, costUsd: usage.costUsd };
   };
