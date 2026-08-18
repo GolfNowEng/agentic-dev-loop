@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { runLoopIteration } from "../src/loop-runner.js";
-import type { RunSkillFn, LoopIterationDeps } from "../src/loop-runner.js";
-import type { JiraClient, JiraTicket } from "../src/jira-client.js";
-import type { Config, Verdict } from "../src/types.js";
+import { runLoopIteration } from "../src/loop-runner.ts";
+import type { RunSkillFn, LoopIterationDeps } from "../src/loop-runner.ts";
+import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
+import type { Config, Verdict } from "../src/types.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

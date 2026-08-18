@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { checkCeilings, hasReachedMaxRunsPerDay } from "../src/ceilings.js";
-import type { CeilingsConfig } from "../src/types.js";
+import { checkCeilings, hasReachedMaxRunsPerDay } from "../src/ceilings.ts";
+import type { CeilingsConfig } from "../src/types.ts";
 
 const config: CeilingsConfig = {
   maxRunsPerDay: 10,

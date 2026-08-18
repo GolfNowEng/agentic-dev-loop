@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildDevJql, buildRefineJql } from "../src/jql.js";
-import type { Config } from "../src/types.js";
+import { buildDevJql, buildRefineJql } from "../src/jql.ts";
+import type { Config } from "../src/types.ts";
 
 const config: Config = {
   jira: {

@@ -5,7 +5,7 @@
 // returns a signal; it does not know how to actually stop the loop (that's
 // loop-runner's job).
 
-import type { CeilingsConfig, FailureCategory } from "./types.js";
+import type { CeilingsConfig, FailureCategory } from "./types.ts";
 
 /**
  * Result of a ceiling check. When shouldPause is true, the caller (the

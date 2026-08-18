@@ -11,24 +11,37 @@
  */
 
 import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   loadConfig,
   loadLoopConfig,
   assertNoPlaceholders,
   repoSlugFromUrl,
-} from "./config.js";
-import { credentialsFromEnv, RealJiraClient } from "./jira-client.js";
-import { runLoopIteration } from "./loop-runner.js";
-import type { RunSkillFn } from "./loop-runner.js";
-import { countRunsToday } from "./runs-log.js";
-import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.js";
-import { extractUsage } from "./claude-usage.js";
-import { readVerdictFile, agentErrorVerdict } from "./verdict.js";
+} from "./config.ts";
+import { credentialsFromEnv, RealJiraClient } from "./jira-client.ts";
+import { runLoopIteration } from "./loop-runner.ts";
+import type { RunSkillFn } from "./loop-runner.ts";
+import { countRunsToday } from "./runs-log.ts";
+import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.ts";
+import { extractUsage } from "./claude-usage.ts";
+import { readVerdictFile, agentErrorVerdict } from "./verdict.ts";
 
 const SKILL_NAME = "ticket-to-pr";
 const MODEL = "sonnet";
+
+/**
+ * --permission-mode acceptEdits only auto-approves file edits, not MCP
+ * tool calls -- Atlassian MCP calls (getJiraIssue, etc.) still prompt for
+ * approval, which hangs/fails in headless -p mode. ticket-to-pr only ever
+ * reads the ticket itself (fetches summary/description/comments/status);
+ * it never transitions status, moves epics, or writes comments -- the
+ * loop runner's REST client handles all of that.
+ */
+const ALLOWED_TOOLS = [
+  "mcp__atlassian__getAccessibleAtlassianResources",
+  "mcp__atlassian__getJiraIssue",
+].join(",");
 
 function parseArgs(argv: string[]): { configPath: string; once: boolean } {
   const configIndex = argv.indexOf("--config");
@@ -43,6 +56,58 @@ function parseArgs(argv: string[]): { configPath: string; once: boolean } {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Polls a run's own progress.jsonl (which the skill writes to live, phase
+ * by phase, while it works) and prints each new line to the terminal as
+ * it appears -- so a human watching the foreground process sees
+ * intake/plan/red/green/verify/pr scroll by instead of a silent
+ * multi-minute gap between "claimed" and the final result. `before` is
+ * the run-dir snapshot taken just before spawning, same as run-dirs.ts's
+ * own before/after discovery -- this reuses it rather than re-snapshotting.
+ */
+function startProgressTail(
+  runsBaseDir: string,
+  ticketKey: string,
+  before: Set<string>,
+): { stop: () => Promise<void> } {
+  let runDirName: string | null = null;
+  let linesPrinted = 0;
+
+  async function poll(): Promise<void> {
+    if (!runDirName) {
+      runDirName = await findNewestRunDir(runsBaseDir, ticketKey, before);
+      if (!runDirName) return;
+    }
+    let raw: string;
+    try {
+      raw = await readFile(join(runsBaseDir, runDirName, "progress.jsonl"), "utf8");
+    } catch {
+      return;
+    }
+    const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+    for (const line of lines.slice(linesPrinted)) {
+      try {
+        const event = JSON.parse(line) as { phase: string; event: string; detail: string };
+        console.log(`[${SKILL_NAME}] ${ticketKey} ${event.phase} ${event.event}: ${event.detail}`);
+      } catch {
+        // Malformed progress line -- never let a logging glitch crash the loop.
+      }
+    }
+    linesPrinted = lines.length;
+  }
+
+  const interval = setInterval(() => {
+    poll().catch(() => {});
+  }, 2000);
+
+  return {
+    stop: async () => {
+      clearInterval(interval);
+      await poll().catch(() => {});
+    },
+  };
 }
 
 /** Spawns `claude` with the given args and resolves with its stdout. */
@@ -79,9 +144,16 @@ async function main(): Promise<void> {
   const runsLogPath = join("runs", `${slug}.jsonl`);
   const runsBaseDir = join(".pipeline", slug, "runs");
 
+  console.log(
+    `[${SKILL_NAME}] loop started, polling every ${loopConfig.pollIntervalSec}s (project: ${slug})`,
+  );
+
   const runSkill: RunSkillFn = async (ticketKey: string) => {
     const started = new Date().toISOString();
     const before = await snapshotRunDirs(runsBaseDir, ticketKey);
+
+    console.log(`[${SKILL_NAME}] claimed ${ticketKey}, running...`);
+    const tail = startProgressTail(runsBaseDir, ticketKey, before);
 
     const stdout = await spawnClaude([
       "-p",
@@ -90,11 +162,14 @@ async function main(): Promise<void> {
       MODEL,
       "--permission-mode",
       "acceptEdits",
+      "--allowedTools",
+      ALLOWED_TOOLS,
       "--output-format",
       "json",
     ]);
 
     const ended = new Date().toISOString();
+    await tail.stop();
 
     let usageRaw: unknown = null;
     try {

@@ -5,11 +5,11 @@
 // injected so this module and its tests never touch a real process or a
 // real Jira instance.
 
-import type { JiraClient } from "./jira-client.js";
-import type { Config, RunLogLine, Verdict } from "./types.js";
-import { buildDevJql, buildRefineJql } from "./jql.js";
-import { checkCeilings, hasReachedMaxRunsPerDay } from "./ceilings.js";
-import { appendRunLog } from "./runs-log.js";
+import type { JiraClient } from "./jira-client.ts";
+import type { Config, RunLogLine, Verdict } from "./types.ts";
+import { buildDevJql, buildRefineJql } from "./jql.ts";
+import { checkCeilings, hasReachedMaxRunsPerDay } from "./ceilings.ts";
+import { appendRunLog } from "./runs-log.ts";
 
 /**
  * Injected stand-in for spawning "claude -p" headless with the skill.

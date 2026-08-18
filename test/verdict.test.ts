@@ -3,7 +3,7 @@ import {
   agentErrorVerdict,
   parseVerdict,
   readVerdictFile,
-} from "../src/verdict.js";
+} from "../src/verdict.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

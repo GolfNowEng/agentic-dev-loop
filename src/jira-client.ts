@@ -7,7 +7,7 @@
 // string "___". Until that's filled in there is no real Jira to bind to,
 // so StubJiraClient throws on every call.
 
-import type { Config } from "./types.js";
+import type { Config } from "./types.ts";
 
 export interface JiraTicket {
   key: string;
@@ -132,10 +132,16 @@ interface JiraTransitionsResponse {
  * custom field id such as "customfield_10014" (company-managed projects).
  */
 export class RealJiraClient implements JiraClient {
-  constructor(
-    private readonly credentials: JiraCredentials,
-    private readonly config: Config,
-  ) {}
+  private readonly credentials: JiraCredentials;
+  private readonly config: Config;
+
+  // Explicit fields, not TS parameter-property shorthand -- Node's
+  // type-stripping mode (used to run src/*.ts directly without a build
+  // step) does not support parameter properties.
+  constructor(credentials: JiraCredentials, config: Config) {
+    this.credentials = credentials;
+    this.config = config;
+  }
 
   private authHeader(): string {
     const { email, apiToken } = this.credentials;
@@ -175,7 +181,7 @@ export class RealJiraClient implements JiraClient {
   }
 
   async pollOldestMatching(jql: string): Promise<JiraTicket | null> {
-    const response = await this.request("/rest/api/3/search", {
+    const response = await this.request("/rest/api/3/search/jql", {
       method: "POST",
       body: JSON.stringify({
         jql,

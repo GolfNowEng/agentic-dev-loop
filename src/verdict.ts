@@ -5,7 +5,7 @@
 // not as an exception that takes down the loop.
 
 import { readFile } from "node:fs/promises";
-import type { RunOutcome, RunPhase, Verdict } from "./types.js";
+import type { RunOutcome, RunPhase, Verdict } from "./types.ts";
 
 const VALID_OUTCOMES: RunOutcome[] = ["landed", "bounced", "error", "killed"];
 const VALID_PHASES: RunPhase[] = [

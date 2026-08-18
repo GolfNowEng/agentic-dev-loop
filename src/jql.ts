@@ -1,7 +1,7 @@
 // Builds resolved JQL strings from a Config's pollJql templates plus the
 // intake/ready epic lists. Pure string-building - no Jira calls here.
 
-import type { Config } from "./types.js";
+import type { Config } from "./types.ts";
 
 /**
  * Build the JQL used by the refine loop (Terminal A) to poll for tickets
