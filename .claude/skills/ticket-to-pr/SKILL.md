@@ -277,5 +277,10 @@ reliably know its own total cost from inside the run).
 ## Invocation (for the loop runner)
 
 ```
-claude -p "/ticket-to-pr <TICKET-KEY>" --permission-mode acceptEdits --output-format json
+claude -p "/ticket-to-pr <TICKET-KEY>" --model sonnet --permission-mode acceptEdits --output-format json
 ```
+
+`--model sonnet` is explicit, not ambient-default — this skill is the
+literal-minded executor tier per the spec (§5.0), never the tier that
+questions the spec. `qa-agent` pins its own model in its frontmatter and does
+not inherit this invocation.

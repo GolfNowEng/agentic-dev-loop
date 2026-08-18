@@ -37,6 +37,14 @@ visual, timing-sensitive, or otherwise hard to trust from a diff and its
 tests alone, it starts the app and exercises the behavior directly. Returns
 `pass`/`fail` plus concrete findings the implementer can act on.
 
+## Model policy
+
+`ticket-to-pr` runs on `--model sonnet` (pinned explicitly in the invocation
+command, not an ambient default) — it's the literal-minded executor tier per
+the spec, never the tier that questions the spec. `qa-agent` pins `model:
+sonnet` in its own frontmatter too, so it doesn't inherit a different model
+from whatever spawned it.
+
 ## verdict.json contract
 
 Every skill run writes `RUN_DIR/verdict.json` (schema in the SKILL.md file

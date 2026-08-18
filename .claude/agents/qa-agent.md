@@ -1,6 +1,7 @@
 ---
 name: qa-agent
 description: Fresh-context QA subagent (spec 5.2, verification gates step) - attacks an implemented change with no prior knowledge of how it was built, after the new tests pass and the existing suite is green.
+model: sonnet
 ---
 
 # qa-agent
