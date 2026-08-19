@@ -48,7 +48,9 @@ const ALLOWED_TOOLS = [
   "Bash",
 ].join(",");
 
-function parseArgs(argv: string[]): { configPath: string; once: boolean } {
+function parseArgs(
+  argv: string[],
+): { configPath: string; once: boolean; stream: boolean } {
   const configIndex = argv.indexOf("--config");
   const configPath = configIndex !== -1 ? argv[configIndex + 1] : undefined;
   if (!configPath) {
@@ -56,7 +58,11 @@ function parseArgs(argv: string[]): { configPath: string; once: boolean } {
       "main.ts requires --config <path-to-pipeline.<project>.config.json>",
     );
   }
-  return { configPath, once: argv.includes("--once") };
+  return {
+    configPath,
+    once: argv.includes("--once"),
+    stream: argv.includes("--stream"),
+  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -116,9 +122,9 @@ function startProgressTail(
 }
 
 /** Spawns `claude` with the given args and resolves with its stdout. */
-function spawnClaude(args: string[]): Promise<string> {
+function spawnClaude(args: string[], env: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn("claude", args, { stdio: ["ignore", "pipe", "inherit"] });
+    const child = spawn("claude", args, { stdio: ["ignore", "pipe", "inherit"], env });
     let stdout = "";
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
@@ -126,7 +132,7 @@ function spawnClaude(args: string[]): Promise<string> {
     child.on("error", reject);
     child.on("close", (code) => {
       if (code !== 0) {
-        reject(new Error(`claude exited with code ${code}`));
+        reject(new Error(`claude exited with code ${code}. Output: ${stdout.slice(-2000)}`));
         return;
       }
       resolve(stdout);
@@ -134,8 +140,101 @@ function spawnClaude(args: string[]): Promise<string> {
   });
 }
 
+/**
+ * Prints one line per interesting `stream-json` event -- tool calls and
+ * their results -- so a human watching `--stream` sees live activity
+ * instead of a silent multi-minute gap. Skips system/hook noise and raw
+ * thinking blocks (too verbose to be useful live). Truncates any printed
+ * input/content so a large file read/write doesn't flood the terminal.
+ */
+function printStreamEvent(parsed: unknown, ticketKey: string): void {
+  const truncate = (value: unknown): string => {
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    return text.length > 200 ? `${text.slice(0, 200)}...` : text;
+  };
+
+  if (typeof parsed !== "object" || parsed === null) return;
+  const event = parsed as Record<string, unknown>;
+
+  if (event.type === "assistant") {
+    const content = (event.message as Record<string, unknown> | undefined)?.content;
+    if (!Array.isArray(content)) return;
+    for (const item of content) {
+      if (item?.type === "tool_use") {
+        console.log(
+          `[${SKILL_NAME}] ${ticketKey} tool_use: ${item.name} ${truncate(item.input)}`,
+        );
+      }
+    }
+  } else if (event.type === "user") {
+    const content = (event.message as Record<string, unknown> | undefined)?.content;
+    if (!Array.isArray(content)) return;
+    for (const item of content) {
+      if (item?.type === "tool_result") {
+        console.log(
+          `[${SKILL_NAME}] ${ticketKey} tool_result: ${truncate(item.content)}`,
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Streaming counterpart to spawnClaude: appends --output-format stream-json
+ * --verbose, calls onEvent(parsedLine) per line for live printing, and
+ * returns just the final result line's raw text -- so the return contract
+ * matches spawnClaude's (a JSON string extractUsage() can parse unchanged),
+ * even though many lines were read along the way. Falls back to the last
+ * line seen if no "result"-typed line ever appeared (e.g. the process was
+ * killed mid-stream).
+ */
+function spawnClaudeStreaming(
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  onEvent: (parsed: unknown) => void,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "claude",
+      [...args, "--output-format", "stream-json", "--verbose"],
+      { stdio: ["ignore", "pipe", "inherit"], env },
+    );
+    let buffered = "";
+    let lastLine = "";
+    let resultLine: string | null = null;
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      buffered += chunk.toString("utf8");
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.trim().length === 0) continue;
+        lastLine = line;
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed?.type === "result") {
+            resultLine = line;
+          }
+          onEvent(parsed);
+        } catch {
+          // Malformed stream line -- skip it, never let it crash the loop.
+        }
+      }
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      const finalLine = resultLine ?? lastLine;
+      if (code !== 0) {
+        reject(new Error(`claude exited with code ${code}. Last line: ${finalLine.slice(-2000)}`));
+        return;
+      }
+      resolve(finalLine);
+    });
+  });
+}
+
 async function main(): Promise<void> {
-  const { configPath, once } = parseArgs(process.argv.slice(2));
+  const { configPath, once, stream } = parseArgs(process.argv.slice(2));
 
   const config = await loadConfig(configPath);
   assertNoPlaceholders(config);
@@ -160,7 +259,7 @@ async function main(): Promise<void> {
     console.log(`[${SKILL_NAME}] claimed ${ticketKey}, running...`);
     const tail = startProgressTail(runsBaseDir, ticketKey, before);
 
-    const stdout = await spawnClaude([
+    const claudeArgs = [
       "-p",
       `/${SKILL_NAME} ${ticketKey}`,
       "--model",
@@ -171,7 +270,42 @@ async function main(): Promise<void> {
       ALLOWED_TOOLS,
       "--output-format",
       "json",
-    ]);
+    ];
+    // Align the CLI's own internal background-task wait ceiling with this
+    // project's own runTimeoutMin ceiling, computed from config so the two
+    // can never drift out of sync -- without this, a subagent that
+    // legitimately runs long gets its whole headless session killed at
+    // the CLI's 600s default, well before this project's own timeout
+    // would have caught it.
+    const claudeEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(config.ceilings.runTimeoutMin * 60_000),
+    };
+
+    let stdout: string;
+    try {
+      stdout = stream
+        ? await spawnClaudeStreaming(claudeArgs, claudeEnv, (line) =>
+            printStreamEvent(line, ticketKey),
+          )
+        : await spawnClaude(claudeArgs, claudeEnv);
+    } catch (err) {
+      // A spawn failure (nonzero exit, transient auth/network error, etc.)
+      // must never throw out of runSkill -- that would propagate out of
+      // the for(;;) loop in main() and kill the entire unattended process
+      // over what should be just one failed run. Treat it the same as a
+      // missing verdict.json: log it, let the loop record an agent_error
+      // and keep polling.
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[${SKILL_NAME}] ${ticketKey}: spawn failed: ${message}`);
+      await tail.stop();
+      return {
+        verdict: agentErrorVerdict(message),
+        started,
+        ended: new Date().toISOString(),
+        costUsd: 0,
+      };
+    }
 
     const ended = new Date().toISOString();
     await tail.stop();
