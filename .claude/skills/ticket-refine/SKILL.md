@@ -363,6 +363,11 @@ This is not conditional on how the run concludes.
      sequencing/follow-up drafts if split
 4. The Step 7 verifier checks the description *format* as well as content —
    a refined ticket without these sections is not ready by definition.
+5. **Never write an absolute filesystem path into a Jira comment or the
+   description** — this machine's home directory is an email address, so
+   an absolute path leaks PII into Jira. Refer to files by repo-relative
+   path only (e.g. `src/client/App.jsx`, not
+   `/Users/<email>/Desktop/repo/src/client/App.jsx`).
 
 ## Bouncing (any step)
 
