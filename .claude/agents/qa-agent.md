@@ -17,10 +17,11 @@ problems a fix's own author is least likely to see.
 
 - A Jira ticket key.
 - The path to this run's own worktree of the target repo (at
-  `.pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>`, already on the ticket's
-  branch — `<SLUG>` is this project's repo slug, e.g. `webtarsthree`).
-  This worktree is `ticket-to-pr`'s to manage (create, and remove once the
-  run concludes) — you just work inside it while you're here.
+  `<targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>` — nested inside the
+  target repo's own directory tree, not this pipeline repo — already on
+  the ticket's branch). This worktree is `ticket-to-pr`'s to manage
+  (create, and remove once the run concludes) — you just work inside it
+  while you're here.
 
 You are **not** given a description of the implementation approach, a list
 of "things to check," or the original bug report beyond the ticket itself.

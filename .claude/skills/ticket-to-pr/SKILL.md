@@ -90,25 +90,36 @@ branch `master`). This is **not** the `dev-loop` repo itself; `dev-loop` only
 orchestrates. Adding a second project later means adding a second
 `pipeline.<project>.config.json` — no code or skill changes.
 
-**Per-run worktree, never work directly in a shared checkout.** At the
-start of Phase 0, create an isolated worktree for this run, on its own
-branch. `targetRepo.path`, if set in config, is a local checkout that
+**Per-run worktree, nested inside the target repo itself — never work
+directly in a shared checkout.** At the start of Phase 0, create an
+isolated worktree for this run, on its own branch, **inside** the target
+repo's own directory tree (`<targetRepo.path>/.claude/worktrees/...`, not a
+sibling path elsewhere), so tools like `direnv` that activate by walking
+up from the current directory pick up the target repo's own
+`.envrc`/local env automatically — a worktree living outside that tree
+never can. `targetRepo.path`, if set in config, is a local checkout that
 already exists on this machine (its `origin` remote is the real GitHub
-remote, so `git push`/`gh pr create` in Phase 5 need no extra setup) —
-branch worktrees off it directly, never inside it, since a human may `cd`
-into it or be mid-inspection of a prior run's worktree at any moment while
-this loop runs unattended in the background:
+remote, so `git push`/`gh pr create` in Phase 5 need no extra setup).
+Never work directly in `targetRepo.path` itself, since a human may `cd`
+into it or be mid-inspection of a prior run's worktree at any moment
+while this loop runs unattended in the background:
 
 ```bash
 git -C <targetRepo.path> fetch origin
 git -C <targetRepo.path> worktree add \
-  <this-repo-root>/.pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID> \
+  <targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID> \
   -b <TICKET>-<slug> origin/<targetRepo.defaultBranch>
-cd .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>
+cd <targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>
 ```
 
+`<targetRepo.path>/.claude/worktrees/` is expected to be listed in that repo's
+own `.git/info/exclude` (a machine-local, never-committed ignore rule) —
+not this skill's job to add, but don't be alarmed that it's untracked and
+outside this repo.
+
 If `targetRepo.path` is **not** set (no local checkout on this machine
-yet), fall back to a shared fetch-only clone instead:
+yet), fall back to a shared fetch-only clone instead, worktree nested the
+same way inside it:
 
 ```bash
 mkdir -p .pipeline/<SLUG>
@@ -117,9 +128,9 @@ if [ ! -d .pipeline/<SLUG>/repo/.git ]; then
 fi
 git -C .pipeline/<SLUG>/repo fetch origin
 git -C .pipeline/<SLUG>/repo worktree add \
-  .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID> \
+  .pipeline/<SLUG>/repo/.claude/worktrees/<TICKET>-<RUN_ID> \
   -b <TICKET>-<slug> origin/<targetRepo.defaultBranch>
-cd .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>
+cd .pipeline/<SLUG>/repo/.claude/worktrees/<TICKET>-<RUN_ID>
 ```
 
 (Three distinct identifiers here: `<SLUG>` uppercase is the *project* slug
@@ -255,14 +266,15 @@ bounced at any phase, or error):
      in-progress work already committed** — remove it:
      `git -C <targetRepo.path or .pipeline/<SLUG>/repo, whichever it was
      created from> worktree remove
-     .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>`. The branch itself lives
-     on in the remote (landed) or in that checkout's branch list (bounced)
-     either way — removing the worktree doesn't lose anything.
+     <that checkout's path>/.claude/worktrees/<TICKET>-<RUN_ID>`. The branch
+     itself lives on in the remote (landed) or in that checkout's branch
+     list (bounced) either way — removing the worktree doesn't lose
+     anything.
    - If the run is **bouncing with uncommitted work still in the working
      tree** (e.g. mid-Green, or Red confirmed but not yet fully
      implemented) — **keep the worktree**, and say so explicitly in the
      bounce `detail` / result line (e.g. "worktree left at
-     `.pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>` for inspection") so a
+     `<targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>` for inspection") so a
      human or `ticket-refine`'s revision pass can inspect exactly what was
      tried. This is the only case where cleanup is conditional — everything
      else removes the worktree unconditionally.

@@ -22,12 +22,20 @@ verify_loops, retries, failure_category, detail, pr, cost_usd, tokens.
   **is** set (a local checkout already exists on this machine, with its
   real `origin` remote already in place for push/PR), worktrees branch
   directly off that path instead and this directory is never created.
-- `.pipeline/<slug>/worktrees/<TICKET>-<RUN_ID>/` — this run's own isolated
-  `git worktree` off `targetRepo.path` (or `repo/` in the fallback case), on
-  its own branch (`<TICKET>-<slug>`). Removed once the run's Cleanup runs —
-  unconditionally if the run landed or bounced with everything committed,
-  but deliberately **kept** if the run bounces with uncommitted in-progress
-  work, so a human can inspect exactly what was tried (see `docs/skills.md`).
+- `<targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>/` (or
+  `.pipeline/<slug>/repo/.claude/worktrees/<TICKET>-<RUN_ID>/` in the fallback
+  case) — this run's own isolated `git worktree`, **nested inside the
+  checkout it was branched from**, not a sibling path elsewhere, on its
+  own branch (`<TICKET>-<slug>`). Nested so tools like `direnv` that
+  activate by walking up from the current directory pick up the target
+  repo's own `.envrc`/local env automatically — a sibling directory never
+  could. Removed once the run's Cleanup runs — unconditionally if the run
+  landed or bounced with everything committed, but deliberately **kept**
+  if the run bounces with uncommitted in-progress work, so a human can
+  inspect exactly what was tried (see `docs/skills.md`). Expected to be
+  listed in `targetRepo.path`'s own `.git/info/exclude` (machine-local,
+  never committed) so it doesn't clutter a human's normal `git status` in
+  that repo.
 - `.pipeline/<slug>/runs/<TICKET>-<RUN_ID>/` — one directory per run:
   - `progress.jsonl` — append-only phase-transition log a skill writes
     *while running* (phase_start/phase_end/note events), so a future
