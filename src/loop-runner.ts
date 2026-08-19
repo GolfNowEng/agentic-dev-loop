@@ -114,20 +114,18 @@ export async function runLoopIteration(
   const result = await runSkill(ticket);
   const verdict: Verdict = parseVerdict(result.verdictRaw);
 
-  const postCheck = checkCeilings(config, {
-    runsToday: runsToday + 1,
-    runCostUsd: result.costUsd,
-    runDurationMin: result.durationMin,
-  });
-  if (postCheck.breached) {
-    return { action: "paused-ceiling", pauseReason: postCheck.detail };
-  }
-
   // ticket-refine reports its own passing verdict as "ready" (a refined
   // ticket, not a PR) -- normalize to "landed" for the shared RunOutcome
   // schema before anything downstream (epic move, runs.jsonl) sees it.
   const outcome = verdict.outcome === "ready" ? "landed" : verdict.outcome;
 
+  // Record this run's real consequences BEFORE checking the post-run
+  // ceiling. A completed run already produced a real verdict -- a
+  // ceiling breach must pause the loop from starting the NEXT run, but
+  // must never discard work that already happened (epic move, audit
+  // log). Checking the ceiling first would silently drop a genuine
+  // "landed" verdict just because it happened to cost/take more than
+  // expected, which defeats the purpose of the audit trail.
   if (outcome === "landed") {
     const autoPromote = ticket.labels.includes(config.autoPromoteLabel);
     const targetEpic = autoPromote ? config.jira.readyEpic : config.jira.reviewEpic;
@@ -156,6 +154,15 @@ export async function runLoopIteration(
   };
 
   await appendRunLog(runsLogPath, logLine);
+
+  const postCheck = checkCeilings(config, {
+    runsToday: runsToday + 1,
+    runCostUsd: result.costUsd,
+    runDurationMin: result.durationMin,
+  });
+  if (postCheck.breached) {
+    return { action: "paused-ceiling", pauseReason: postCheck.detail, ticket: ticket.key, logLine };
+  }
 
   return { action: "processed", ticket: ticket.key, logLine };
 }

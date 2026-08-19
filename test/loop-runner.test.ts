@@ -200,6 +200,40 @@ describe("runLoopIteration", () => {
     expect(result.pauseReason).toBeTruthy();
   });
 
+  it("a post-run ceiling breach still records the run's real consequences (epic move, runs.jsonl) before pausing -- a completed, valid verdict must never be silently discarded", async () => {
+    const jiraClient = makeMockJiraClient();
+    const runSkill: RunSkillFn = vi.fn(async () =>
+      makeRunSkillResult({
+        costUsd: 999, // breaches maxCostPerRunUsd, but only known AFTER the run completed
+        verdictRaw: JSON.stringify({
+          outcome: "landed",
+          phase_reached: "pr",
+          failure_category: null,
+          detail: "Refined and ready for human review.",
+        }),
+      }),
+    );
+    const config = makeConfig({ maxCostPerRunUsd: 5 });
+
+    const result = await runLoopIteration({
+      jiraClient,
+      config,
+      jql: "epic in (EPIC-1)",
+      runSkill,
+      runsLogPath,
+      runsToday: 0,
+    });
+
+    expect(result.action).toBe("paused-ceiling");
+    // The verdict was real and passing -- its consequences must still happen,
+    // not be thrown away just because the ceiling was breached after the fact.
+    expect(jiraClient.moveToEpic).toHaveBeenCalledWith("PROJ-142", config.jira.reviewEpic);
+    const lines = await readRunLog(runsLogPath);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("landed");
+    expect(result.logLine?.outcome).toBe("landed");
+  });
+
   it("ceiling breach (runTimeoutMin) pauses the loop instead of continuing silently", async () => {
     const jiraClient = makeMockJiraClient();
     const runSkill: RunSkillFn = vi.fn(async () =>
