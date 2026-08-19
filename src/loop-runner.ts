@@ -36,7 +36,7 @@ export type LoopIterationResult =
   | { kind: "idle" }
   | { kind: "skipped-race"; ticket: string }
   | { kind: "ran"; ticket: string; logLine: RunLogLine }
-  | { kind: "paused"; reason: string };
+  | { kind: "paused"; reason: string; ticket?: string; logLine?: RunLogLine };
 
 /**
  * Which polling loop this invocation is for - determines which JQL
@@ -108,17 +108,13 @@ export async function runLoopIteration(
   const runDurationMin =
     (new Date(ended).getTime() - new Date(started).getTime()) / 60000;
 
-  const ceilingResult = checkCeilings({
-    runsToday: runsToday + 1,
-    runCostUsd: costUsd,
-    runDurationMin,
-    config: config.ceilings,
-  });
-
-  if (ceilingResult.shouldPause) {
-    return { kind: "paused", reason: ceilingResult.reason ?? "ceiling breach" };
-  }
-
+  // Record this run's real consequences BEFORE checking the post-run
+  // ceiling. A completed run already produced a real verdict -- a
+  // ceiling breach must pause the loop from starting the NEXT run, but
+  // must never discard work that already happened (epic move, audit
+  // log). Checking the ceiling first would silently drop a genuine
+  // "landed" verdict just because it happened to cost/take more than
+  // expected, which defeats the purpose of the audit trail.
   const epic = decideEpicMove(verdict, loopKind, config);
   if (epic) {
     await jiraClient.moveToEpic(ticket.key, epic);
@@ -128,6 +124,22 @@ export async function runLoopIteration(
 
   const logLine = buildRunLogLine(ticket.key, verdict, started, ended, costUsd);
   await appendRunLog(runsLogPath, logLine);
+
+  const ceilingResult = checkCeilings({
+    runsToday: runsToday + 1,
+    runCostUsd: costUsd,
+    runDurationMin,
+    config: config.ceilings,
+  });
+
+  if (ceilingResult.shouldPause) {
+    return {
+      kind: "paused",
+      reason: ceilingResult.reason ?? "ceiling breach",
+      ticket: ticket.key,
+      logLine,
+    };
+  }
 
   return { kind: "ran", ticket: ticket.key, logLine };
 }

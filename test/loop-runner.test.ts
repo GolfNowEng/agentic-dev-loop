@@ -274,6 +274,48 @@ describe("runLoopIteration", () => {
     });
   });
 
+  it("a post-run ceiling breach still records the run's real consequences (epic move, runs.jsonl) before pausing -- a completed, valid verdict must never be silently discarded", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket: JiraTicket = { key: "PROJ-4c", status: "Ready", epic: "EPIC-READY" };
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+        claimTicket: vi.fn(async () => true),
+      });
+      const config = makeConfig();
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({ outcome: "landed" }),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:05:00Z",
+        // Breaches maxCostPerRunUsd, but only known AFTER the run completed.
+        costUsd: config.ceilings.maxCostPerRunUsd + 1,
+      }));
+
+      const deps: LoopIterationDeps = {
+        jiraClient,
+        config,
+        runSkill,
+        loopKind: "dev",
+        runsLogPath,
+        runsToday: 0,
+      };
+
+      const result = await runLoopIteration(deps);
+
+      expect(result.kind).toBe("paused");
+      // The verdict was real and passing -- its consequences must still
+      // happen, not be thrown away just because the ceiling was breached
+      // after the fact.
+      expect(jiraClient.moveToEpic).toHaveBeenCalledWith(
+        "PROJ-4c",
+        config.jira.reviewEpic,
+      );
+      const raw = await readFile(runsLogPath, "utf8");
+      const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+      expect(lines.length).toBe(1);
+      expect(JSON.parse(lines[0]).outcome).toBe("landed");
+    });
+  });
+
   it("ceiling breach (run timeout) pauses the loop rather than silently continuing", async () => {
     await withTempRunsLog(async (runsLogPath) => {
       const ticket: JiraTicket = { key: "PROJ-5", status: "Ready", epic: "EPIC-READY" };
