@@ -433,7 +433,7 @@ Write to `RUN_DIR/verdict.json`:
   "failure_category": null,
   "detail": "the always-emitted result line's content, without the RESULT: prefix",
   "skill_version": "<git SHA of this SKILL.md's commit in research-loop>",
-  "model": "opus",
+  "model": "sonnet",
   "cost_usd": 0,
   "tokens": { "in": 0, "out": 0 }
 }
@@ -449,13 +449,22 @@ as `0`/zeros — the loop runner derives real values from `claude -p
 ## Invocation (for the loop runner)
 
 ```
-claude -p "/ticket-refine <TICKET-KEY>" --model opus --permission-mode acceptEdits --output-format json
+claude -p "/ticket-refine <TICKET-KEY>" --model sonnet --permission-mode acceptEdits --output-format json
 ```
 
-`--model opus` is explicit, not ambient-default: this skill's own judgment calls
-(Interpret, synthesizing Attack's findings, Scope, Synthesize) are exactly the
-reasoning this pipeline pays for higher-tier reasoning to get right. The
-subagents it spawns (`recon-agent`, `devils-advocate-agent`, `verifier-agent`)
-each pin their own model in their frontmatter — they do **not** inherit this
-`opus` invocation, so a Step 2/3/7 fan-out does not multiply Opus cost. See
-`docs/skills.md` for the per-subagent model rationale.
+`--model sonnet` is explicit, not ambient-default. This skill originally ran
+on `--model opus` for its own judgment calls (Interpret, synthesizing
+Attack's findings, Scope, Synthesize), but in practice the *entire* session
+— Triage, Ground's bookkeeping, every intermediate turn — paid Opus pricing
+too, since a single continuous `claude -p` session bills every turn at one
+model tier, not just the turns that need deep reasoning. That drove real
+cost (Cost Tier Mix / Cost Economy) without a corresponding way to scope
+Opus to just the four steps that needed it short of a larger re-architecture
+(splitting into a Sonnet-tier orchestrator that calls out to Opus only for
+specific steps). Switched to Sonnet for the whole session as the simpler
+fix; if bounce/synthesis judgment quality visibly degrades on real tickets,
+revisit — either back to Opus, or the split-orchestrator design. The
+subagents it spawns (`recon-agent`, `devils-advocate-agent`,
+`verifier-agent`) each pin their own model in their frontmatter regardless
+of this invocation's tier. See `docs/skills.md` for the per-subagent model
+rationale.

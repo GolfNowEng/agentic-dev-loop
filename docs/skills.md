@@ -114,15 +114,20 @@ could act on it without inferring anything.
 
 ## Model policy
 
-`ticket-refine` itself runs on `--model opus` (pinned explicitly in the
-invocation command — not an ambient default). Every subagent it spawns
-(`recon-agent`, `devils-advocate-agent`, `verifier-agent`) pins `model:
-sonnet` in its own frontmatter and does **not** inherit Opus from the
-parent — a Step 2/3/7 fan-out does not multiply Opus cost. Opus is reserved
-for this skill's own judgment calls (Interpret, synthesizing Attack's
-findings, Scope, Synthesize); the subagents feed it evidence over
-already-narrowed inputs, they don't independently re-run the expensive
-reasoning.
+`ticket-refine` itself runs on `--model sonnet` (pinned explicitly in the
+invocation command — not an ambient default). It originally ran on Opus,
+reserved in intent for this skill's own judgment calls (Interpret,
+synthesizing Attack's findings, Scope, Synthesize) — but a single
+continuous `claude -p` session bills *every* turn at one model tier, not
+just the turns that need deep reasoning, so Triage/Ground bookkeeping/every
+intermediate turn paid Opus pricing too. That drove real cost without a way
+to scope Opus to just the four steps short of a larger re-architecture
+(splitting into a Sonnet-tier orchestrator that calls out to Opus only for
+specific steps). Switched to Sonnet for the whole session as the simpler
+fix — revisit (either back to Opus, or the split-orchestrator design) if
+bounce/synthesis judgment quality visibly degrades on real tickets. Every
+subagent it spawns (`recon-agent`, `devils-advocate-agent`, `verifier-agent`)
+pins `model: sonnet` in its own frontmatter regardless of the parent's tier.
 
 ## verdict.json contract
 

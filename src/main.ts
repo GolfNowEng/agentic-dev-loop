@@ -30,7 +30,7 @@ import { extractUsage } from "./claude-usage.ts";
 import { redactPII } from "./redact.ts";
 
 const SKILL_NAME = "ticket-refine";
-const MODEL = "opus";
+const MODEL = "sonnet";
 const SKILL_MD_PATH = ".claude/skills/ticket-refine/SKILL.md";
 
 /**
