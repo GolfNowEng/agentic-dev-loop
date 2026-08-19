@@ -23,12 +23,20 @@ apply to `dev-loop`).
   background run pulling the rug out from under them. When `targetRepo.path`
   **is** set (a local checkout already exists on this machine), worktrees
   branch directly off that path instead and this directory is never created.
-- `.pipeline/<slug>/worktrees/<TICKET>-<RUN_ID>-ground/` — this run's own
-  isolated, detached `git worktree` off `targetRepo.path` (or `repo/` in the
-  fallback case), created at the start of Ground and removed unconditionally
-  (hard gate) before the run's Cleanup completes — see `docs/skills.md`.
-  `ticket-refine` never branches or commits here either; it's read-only by
-  convention, just isolated per run.
+- `<targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>-ground/` (or
+  `.pipeline/<slug>/repo/.claude/worktrees/<TICKET>-<RUN_ID>-ground/` in the
+  fallback case) — this run's own isolated, detached `git worktree`,
+  **nested inside the checkout it was branched from**, not a sibling path
+  elsewhere. Nested so tools like `direnv` that activate by walking up
+  from the current directory pick up the target repo's own `.envrc`/local
+  env automatically — a sibling directory never could, regardless of any
+  `direnv allow`. Created at the start of Ground and removed
+  unconditionally (hard gate) before the run's Cleanup completes — see
+  `docs/skills.md`. `ticket-refine` never branches or commits here either;
+  it's read-only by convention, just isolated per run. Expected to be
+  listed in `targetRepo.path`'s own `.git/info/exclude` (machine-local,
+  never committed) so it doesn't clutter a human's normal `git status` in
+  that repo.
 - `.pipeline/<slug>/runs/<TICKET>-<RUN_ID>/` — one directory per run:
   - `progress.jsonl` — append-only phase-transition log the skill writes
     *while running* (phase_start/phase_end/note events for

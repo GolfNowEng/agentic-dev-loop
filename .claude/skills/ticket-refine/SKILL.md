@@ -70,24 +70,33 @@ it) to verify or contradict the ticket's claims. Adding a second project
 later means adding a second `pipeline.<project>.config.json` — no code or
 skill changes.
 
-**Per-run worktree, never work directly in a shared checkout.** At the
-start of Step 2 (Ground) — the only step that touches the target repo —
-create an isolated, detached worktree for this run. `targetRepo.path`, if
-set in config, is a local checkout that already exists on this machine
-(its `origin` remote is the real one) — branch worktrees off it directly,
-never inside it, since a human may `cd` into it or be mid-inspection of a
-prior run's worktree at any moment while this loop runs unattended in the
-background:
+**Per-run worktree, nested inside the target repo itself — never work
+directly in a shared checkout.** At the start of Step 2 (Ground) — the
+only step that touches the target repo — create an isolated, detached
+worktree for this run **inside** the target repo's own directory tree
+(`<targetRepo.path>/.claude/worktrees/...`, not a sibling path elsewhere), so
+tools like `direnv` that activate by walking up from the current
+directory pick up the target repo's own `.envrc`/local env automatically
+— a worktree living outside that tree never can, no matter what. Never
+work directly in `targetRepo.path` itself, since a human may `cd` into it
+or be mid-inspection of a prior run's worktree at any moment while this
+loop runs unattended in the background:
 
 ```bash
 git -C <targetRepo.path> fetch origin
 git -C <targetRepo.path> worktree add --detach \
-  <this-repo-root>/.pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>-ground \
+  <targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>-ground \
   origin/<targetRepo.defaultBranch>
 ```
 
+`<targetRepo.path>/.claude/worktrees/` is expected to be listed in that repo's
+own `.git/info/exclude` (a machine-local, never-committed ignore rule) —
+not this skill's job to add, but don't be alarmed that it's untracked and
+outside this repo.
+
 If `targetRepo.path` is **not** set (no local checkout on this machine
-yet), fall back to a shared fetch-only clone instead:
+yet), fall back to a shared fetch-only clone instead, worktree nested the
+same way inside it:
 
 ```bash
 mkdir -p .pipeline/<SLUG>
@@ -96,13 +105,13 @@ if [ ! -d .pipeline/<SLUG>/repo/.git ]; then
 fi
 git -C .pipeline/<SLUG>/repo fetch origin
 git -C .pipeline/<SLUG>/repo worktree add --detach \
-  .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>-ground \
+  .pipeline/<SLUG>/repo/.claude/worktrees/<TICKET>-<RUN_ID>-ground \
   origin/<targetRepo.defaultBranch>
 ```
 
 Ground, and every `recon-agent` it spawns, reads and executes only inside
-`.pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>-ground` — never in
-`targetRepo.path` or `.pipeline/<SLUG>/repo` themselves. See "Cleanup"
+the `.claude/worktrees/<TICKET>-<RUN_ID>-ground` directory just created — never
+in `targetRepo.path` or `.pipeline/<SLUG>/repo` themselves. See "Cleanup"
 below for removing this worktree once Ground (and the rest of the run)
 concludes — the `git worktree remove` target is whichever checkout
 (`targetRepo.path` or `.pipeline/<SLUG>/repo`) the worktree was created
@@ -307,10 +316,10 @@ bounced at any step, or error):
 2. **Remove this run's worktree**:
    `git -C <targetRepo.path or .pipeline/<SLUG>/repo, whichever it was
    created from> worktree remove
-   .pipeline/<SLUG>/worktrees/<TICKET>-<RUN_ID>-ground`. Since this skill
-   never commits, there is no "uncommitted work worth keeping" exception
-   here (unlike `ticket-to-pr` — see its own Cleanup section) — always
-   remove it.
+   <that checkout's path>/.claude/worktrees/<TICKET>-<RUN_ID>-ground`. Since this
+   skill never commits, there is no "uncommitted work worth keeping"
+   exception here (unlike `ticket-to-pr` — see its own Cleanup section) —
+   always remove it.
 
 Both apply even if you never reached Ground (nothing to clean up, but check
 before assuming so) and even if the run is about to bounce or error out.
