@@ -156,7 +156,7 @@ describe("RealJiraClient", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("moveToEpic PUTs the configured epicLinkField with the epic key", async () => {
+  it("moveToEpic PUTs the configured custom-field epicLinkField with a bare epic key string", async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
     const client = new RealJiraClient(CREDENTIALS, makeConfig());
 
@@ -167,6 +167,21 @@ describe("RealJiraClient", () => {
     expect(init.method).toBe("PUT");
     expect(JSON.parse(init.body as string)).toEqual({
       fields: { customfield_10014: "EPIC-READY" },
+    });
+  });
+
+  it("moveToEpic PUTs the parent field as an object ({ key }), not a bare string -- Jira's own parent field requires this shape (team-managed projects)", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new RealJiraClient(
+      CREDENTIALS,
+      makeConfig({ epicLinkField: "parent" }),
+    );
+
+    await client.moveToEpic("PROJ-1", "EPIC-READY");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({
+      fields: { parent: { key: "EPIC-READY" } },
     });
   });
 

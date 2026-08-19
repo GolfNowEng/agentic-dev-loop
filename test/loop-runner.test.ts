@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { runLoopIteration } from "../src/loop-runner.ts";
-import type { RunSkillFn, LoopIterationDeps } from "../src/loop-runner.ts";
+import type { RunSkillFn, LoopIterationDeps, LoopIterationResult } from "../src/loop-runner.ts";
 import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
 import type { Config, Verdict } from "../src/types.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -309,6 +309,51 @@ describe("runLoopIteration", () => {
         "PROJ-4c",
         config.jira.reviewEpic,
       );
+      const raw = await readFile(runsLogPath, "utf8");
+      const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+      expect(lines.length).toBe(1);
+      expect(JSON.parse(lines[0]).outcome).toBe("landed");
+    });
+  });
+
+  it("a moveToEpic failure (e.g. a malformed Jira request) never throws out of runLoopIteration -- the run still gets logged, and the failure is surfaced via jiraSyncError, not by killing the caller", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket: JiraTicket = { key: "PROJ-4d", status: "Ready", epic: "EPIC-READY" };
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+        claimTicket: vi.fn(async () => true),
+        moveToEpic: vi.fn(async () => {
+          throw new Error('PUT ... -> 400 Bad Request. {"errors":{"parent":"data was not an object"}}');
+        }),
+      });
+      const config = makeConfig();
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({ outcome: "landed" }),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:05:00Z",
+        costUsd: MEASURED_COST_USD,
+      }));
+
+      const deps: LoopIterationDeps = {
+        jiraClient,
+        config,
+        runSkill,
+        loopKind: "dev",
+        runsLogPath,
+        runsToday: 0,
+      };
+
+      let result: LoopIterationResult | undefined;
+      await expect(
+        (async () => {
+          result = await runLoopIteration(deps);
+        })(),
+      ).resolves.not.toThrow();
+
+      expect(result!.kind).toBe("ran");
+      if (result!.kind === "ran") {
+        expect(result!.jiraSyncError).toMatch(/400 Bad Request/);
+      }
       const raw = await readFile(runsLogPath, "utf8");
       const lines = raw.split("\n").filter((l) => l.trim().length > 0);
       expect(lines.length).toBe(1);

@@ -238,9 +238,15 @@ export class RealJiraClient implements JiraClient {
 
   async moveToEpic(ticketKey: string, epic: string): Promise<void> {
     const field = this.epicLinkField();
+    // Jira's "parent" field (team-managed projects) requires an object
+    // ({ key: <issueKey> }), not a bare string -- a custom epic-link field
+    // (company-managed projects) takes the bare issue key string directly.
+    // Sending a bare string for "parent" is a 400 ("data was not an
+    // object"), confirmed against a real Jira instance.
+    const value = field === "parent" ? { key: epic } : epic;
     await this.request(`/rest/api/3/issue/${ticketKey}`, {
       method: "PUT",
-      body: JSON.stringify({ fields: { [field]: epic } }),
+      body: JSON.stringify({ fields: { [field]: value } }),
     });
   }
 }

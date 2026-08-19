@@ -35,8 +35,14 @@ export type RunSkillFn = (ticketKey: string) => Promise<{
 export type LoopIterationResult =
   | { kind: "idle" }
   | { kind: "skipped-race"; ticket: string }
-  | { kind: "ran"; ticket: string; logLine: RunLogLine }
-  | { kind: "paused"; reason: string; ticket?: string; logLine?: RunLogLine };
+  | { kind: "ran"; ticket: string; logLine: RunLogLine; jiraSyncError?: string }
+  | {
+      kind: "paused";
+      reason: string;
+      ticket?: string;
+      logLine?: RunLogLine;
+      jiraSyncError?: string;
+    };
 
 /**
  * Which polling loop this invocation is for - determines which JQL
@@ -115,11 +121,23 @@ export async function runLoopIteration(
   // log). Checking the ceiling first would silently drop a genuine
   // "landed" verdict just because it happened to cost/take more than
   // expected, which defeats the purpose of the audit trail.
-  const epic = decideEpicMove(verdict, loopKind, config);
-  if (epic) {
-    await jiraClient.moveToEpic(ticket.key, epic);
-  } else if (verdict.outcome === "bounced") {
-    await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
+  //
+  // The Jira write itself is wrapped in try/catch: a malformed request or
+  // a transient API error here must never throw out of this function --
+  // that would propagate out of the caller's poll loop and kill the
+  // entire unattended process over what is otherwise a real, completed
+  // run. The run still gets logged either way; only the epic/status may
+  // be out of sync with what runs.jsonl says happened.
+  let jiraSyncError: string | undefined;
+  try {
+    const epic = decideEpicMove(verdict, loopKind, config);
+    if (epic) {
+      await jiraClient.moveToEpic(ticket.key, epic);
+    } else if (verdict.outcome === "bounced") {
+      await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
+    }
+  } catch (err) {
+    jiraSyncError = err instanceof Error ? err.message : String(err);
   }
 
   const logLine = buildRunLogLine(ticket.key, verdict, started, ended, costUsd);
@@ -138,10 +156,11 @@ export async function runLoopIteration(
       reason: ceilingResult.reason ?? "ceiling breach",
       ticket: ticket.key,
       logLine,
+      jiraSyncError,
     };
   }
 
-  return { kind: "ran", ticket: ticket.key, logLine };
+  return { kind: "ran", ticket: ticket.key, logLine, jiraSyncError };
 }
 
 /**
