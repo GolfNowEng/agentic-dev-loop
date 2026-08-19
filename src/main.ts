@@ -354,6 +354,7 @@ async function main(): Promise<void> {
         durationMin:
           (Date.now() - new Date(startedAt).getTime()) / 60000,
         costUsd: 0,
+        tokens: { in: 0, out: 0 },
       };
     }
 
@@ -411,6 +412,7 @@ async function main(): Promise<void> {
       verdictRaw,
       durationMin,
       costUsd: usage.costUsd,
+      tokens: usage.tokens,
     };
   };
 

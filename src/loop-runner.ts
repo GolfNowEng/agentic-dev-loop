@@ -45,6 +45,15 @@ export interface RunSkillResult {
   /** Wall-clock run duration in minutes, for ceiling checks. */
   durationMin: number;
   costUsd: number;
+  /**
+   * Measured token usage from claude -p's own usage report (extractUsage()
+   * in main.ts) -- not the skill's self-report. verdict.tokens is never
+   * populated by either skill (their own schemas document cost_usd/tokens
+   * as left at 0, deriving the real value from claude -p's usage report),
+   * so buildRunLogLine must read this field, not verdict.tokens, or every
+   * logged run silently records {in:0,out:0}.
+   */
+  tokens: { in: number; out: number };
 }
 
 /** Injected in place of a real `claude -p` spawn. */
@@ -196,7 +205,7 @@ export async function runLoopIteration(
     detail: verdict.detail,
     pr: verdict.pr ?? null,
     cost_usd: result.costUsd,
-    tokens: verdict.tokens ?? { in: 0, out: 0 },
+    tokens: result.tokens,
   };
 
   await appendRunLog(runsLogPath, logLine);

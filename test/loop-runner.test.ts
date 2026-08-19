@@ -70,6 +70,10 @@ function makeRunSkillResult(overrides: Partial<RunSkillResult> = {}): RunSkillRe
     }),
     durationMin: 5,
     costUsd: 1.0,
+    // Deliberately different from any verdict.tokens value used in these
+    // tests, so a test asserting on this exposes a bug that reads
+    // verdict.tokens instead of the measured value.
+    tokens: { in: 1234, out: 567 },
     ...overrides,
   };
 }
@@ -409,5 +413,12 @@ describe("runLoopIteration", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0].ticket).toBe("PROJ-142");
     expect(lines[0].outcome).toBe("landed");
+    // Regression: tokens must come from the MEASURED usage (main.ts's
+    // extractUsage(), threaded through RunSkillResult.tokens), never from
+    // verdict.tokens (the skill's own self-report, which is always
+    // {in:0,out:0} in practice since neither skill's SKILL.md ever
+    // populates it) -- a real bug that silently zeroed every run's logged
+    // token count.
+    expect(lines[0].tokens).toEqual({ in: 1234, out: 567 });
   });
 });
