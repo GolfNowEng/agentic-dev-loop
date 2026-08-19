@@ -16,7 +16,9 @@ each item below.
 ## What you are given
 
 - The synthesized refined ticket content (Overview / Acceptance Criteria /
-  Scope, in draft form), not yet written to Jira.
+  Scope, in draft form) — this is a draft of the `Refined Spec — ready for
+  ticket-to-pr` comment `ticket-refine` will post if you pass it, not a
+  draft of the ticket's description (which this pipeline never touches).
 
 ## Checklist (check every item, in order; the first failure is your bounce)
 

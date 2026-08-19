@@ -55,14 +55,21 @@ affected by a background run:
    comments for the human gate to approve; bounce `too_large`.
 5. **Blocked detection** — bounce `blocked` if work can't proceed regardless
    of spec quality (external dependency, missing access, upstream fault).
-6. **Synthesize** — write the refined ticket (comments during work; the
-   official templated description only on a passing verdict).
+6. **Synthesize** — write the refined ticket (working comments during work;
+   a single fixed-title comment, `Refined Spec — ready for ticket-to-pr`,
+   only on a passing verdict). The stakeholder's original description is
+   never touched, ever — see "Ticket content protocol" note below.
 7. **Verify** — spawn `verifier-agent` (below) for an independent
    definition-of-ready check before reporting a passing verdict.
 
 Core rule: a bounce is a normal, successful exit — concrete evidence, not a
 crash. Everything questioned here happens *once*, upstream of the human
 review gate; once a ticket crosses into Review, `dev-loop` trusts it fully.
+A bounce is written to one comment titled `Ticket-Refine Bounce —
+<failure_category>` — same greppable-title convention as the passing-verdict
+`Refined Spec — ready for ticket-to-pr` comment, with a fixed
+Verdict/Summary/Needs-from-you header so a human can tell at a glance what
+decision unblocks the ticket, before the free-form evidence below it.
 
 **Cleanup is a hard gate, unconditional, every run**: stop the dev server if
 one was started, and remove this run's worktree — regardless of outcome
@@ -111,6 +118,19 @@ bounce: (0) template sections populated, (1) every AC testable, (2) files/
 modules named, (3) TDD-ready test expectations per AC, (4) small/medium size
 bound, (5) no open questions, (6) a literal-minded Sonnet-tier implementer
 could act on it without inferring anything.
+
+## Ticket content protocol
+
+`ticket-refine` **never writes to the Jira description field.** The
+stakeholder's original description is permanent and untouched — tickets
+are authored by many different people in many different styles, and
+normalizing someone else's ticket into our house format is bad practice
+regardless of how good the result is. All refined output — the normalized
+Overview/AC/Scope, grounding evidence, surviving assumptions — goes into
+one comment, written once on a passing verdict, titled exactly `Refined
+Spec — ready for ticket-to-pr`. `dev-loop`'s `ticket-to-pr` reads that
+comment as its work order, not the description (see dev-loop's
+`docs/skills.md`).
 
 ## Model policy
 

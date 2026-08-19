@@ -24,15 +24,12 @@ or to bounce it with concrete evidence of why it isn't ready.
 
 ## Setup: idempotent re-refinement
 
-**Always check first**: does this ticket already have prior refinement
-output (a comment titled "Original description — preserved", or a
-description already in the `### Overview` / `### Acceptance Criteria` /
-`### Scope` template)? Two cases:
+**Always check first**: does this ticket already have a `Refined Spec —
+ready for ticket-to-pr` comment? Two cases:
 
-- **First pickup**: copy the original description verbatim into a comment
-  titled "Original description — preserved" *before anything else happens*,
-  so the initial intent is never lost. Then proceed through Steps 0–7 below
-  as a fresh refinement.
+- **First pickup** (no such comment exists): proceed through Steps 0–7
+  below as a fresh refinement. The ticket's description is never touched —
+  it's the stakeholder's original and stays exactly as written, permanently.
 - **Re-pickup after human comments** (ticket was sent back from the Review
   epic to an Intake epic with a comment): read the human's comment(s) as
   steering input, and **revise** the existing refinement rather than
@@ -314,9 +311,9 @@ naming the specific blocker.
 ### Step 6 — Synthesize
 
 Write the refined ticket. Per the ticket content protocol (below), this
-means writing to the ticket's **comments** during work, and only writing
-the official retemplated **description** once a passing verdict is
-reached in Step 7.
+means writing to **working comments** during work, and only writing the
+official `Refined Spec — ready for ticket-to-pr` comment once a passing
+verdict is reached in Step 7. The description is never touched.
 
 ### Step 7 — Verify
 
@@ -325,10 +322,10 @@ the synthesized ticket against the definition-of-ready checklist below.
 This must be a genuinely independent check, not the same reasoning that
 produced the ticket rubber-stamping itself.
 
-- If it passes: write the official description (see ticket content
-  protocol), set `verdict.outcome: "ready"`, move to Review epic (the loop
-  runner does the actual epic move on a passing verdict — this skill just
-  reports the verdict).
+- If it passes: write the `Refined Spec — ready for ticket-to-pr` comment
+  (see ticket content protocol), set `verdict.outcome: "ready"`, move to
+  Review epic (the loop runner does the actual epic move on a passing
+  verdict — this skill just reports the verdict).
 - If it fails: bounce with the specific `failure_category` and what's
   missing, per the checklist's own criteria.
 
@@ -354,9 +351,9 @@ This is not conditional on how the run concludes.
 
 ## Definition-of-ready checklist (enforced, not vibed)
 
-0. Description follows the official template: `### Overview`,
-   `### Acceptance Criteria`, `### Scope` present and populated; original
-   description preserved in a comment.
+0. The `Refined Spec — ready for ticket-to-pr` comment exists and follows
+   the official template: `### Overview`, `### Acceptance Criteria`,
+   `### Scope` present and populated.
 1. Problem statement and every acceptance criterion are testable (each AC
    maps to an assertion `ticket-to-pr` could write a test against).
 2. Files/modules to touch are enumerated by name — no "relevant files"
@@ -374,26 +371,36 @@ This is not conditional on how the run concludes.
 
 ## Ticket content protocol
 
-1. On first pickup, the original description is copied verbatim into a
-   comment ("Original description — preserved") before anything else
-   happens.
-2. All work-in-progress — interpretation notes, recon findings, assumption
-   attacks, iteration updates — flows through **comments**. The
-   description is never used as a scratchpad.
-3. Only on a passing verdict does this skill write the **official
-   description**, in the fixed template:
+**This skill never writes to the Jira description field.** Tickets are
+authored by many different stakeholders in many different styles;
+normalizing or overwriting someone else's ticket into our house format is
+bad practice regardless of how good the result is. The original
+description stays exactly as written, permanently — it's the fast,
+human-skimmable "what is this ticket about" view.
+
+1. All work-in-progress — interpretation notes, recon findings, assumption
+   attacks, iteration updates — flows through **working comments** during
+   the run. The description is never used as a scratchpad, and never
+   rewritten.
+2. Only on a passing verdict does this skill write **one comment**, titled
+   exactly `Refined Spec — ready for ticket-to-pr`, in the fixed template:
    - `### Overview` — problem statement, verified context, fault domain
      (for bugs), surviving assumptions (labeled as assumptions)
    - `### Acceptance Criteria` — TDD-ready: each AC names its test, what it
      asserts, why it fails on current code
    - `### Scope` — files/modules to touch, size estimate,
      sequencing/follow-up drafts if split
-4. The Step 7 verifier checks the description *format* as well as content —
-   a refined ticket without these sections is not ready by definition.
-5. **Never write an absolute filesystem path into a Jira comment or the
-   description** — this machine's home directory is an email address, so
-   an absolute path leaks PII into Jira. Refer to files by repo-relative
-   path only (e.g. `src/client/App.jsx`, not
+3. On re-pickup (an existing `Refined Spec — ready for ticket-to-pr`
+   comment found, ticket sent back with a human steering comment): update
+   that same comment in place rather than creating a second one each
+   cycle.
+4. The Step 7 verifier checks this comment's content and format — a
+   refined ticket without these sections, or without this comment at all,
+   is not ready by definition.
+5. **Never write an absolute filesystem path into any Jira comment** —
+   this machine's home directory is an email address, so an absolute path
+   leaks PII into Jira. Refer to files by repo-relative path only (e.g.
+   `src/client/App.jsx`, not
    `/Users/<email>/Desktop/repo/src/client/App.jsx`).
 
 ## Bouncing (any step)
@@ -402,9 +409,29 @@ A bounce is a normal, successful exit — not a crash. On any bounce:
 
 1. Run Cleanup (see above) — it applies regardless of why this run is
    ending; a bounce is not an exception to it.
-2. Write findings to a ticket comment (never the description) with concrete
-   evidence — file paths, what was found vs. claimed, the specific
-   ambiguous readings, the suggested split.
+2. Write **one comment** (never the description), titled exactly
+   `Ticket-Refine Bounce — <failure_category>` (e.g.
+   `Ticket-Refine Bounce — blocked`) — greppable and consistent the same
+   way `Refined Spec — ready for ticket-to-pr` is for a passing verdict.
+   Open the comment body with this fixed three-line header, then the
+   evidence free-form below it (evidence genuinely varies by category —
+   a `blocked` bounce and a `spec_contradicted` bounce don't look alike,
+   and forcing them into one shape would lose signal):
+   ```
+   **Verdict:** bounced (`<failure_category>`)
+   **Summary:** <one sentence — what's wrong, in plain language>
+   **Needs from you:** <one sentence — the specific decision or action
+     that unblocks this ticket, e.g. "approve the drafted split," "decide
+     assertion strategy A or B," "confirm this should be filed against
+     the Critics service">
+   ---
+   <free-form evidence: file paths, what was found vs. claimed, the
+   specific ambiguous readings, the suggested split, drafted follow-up
+   tickets, etc.>
+   ```
+   On re-pickup after a bounce, find and update this same comment (same
+   title convention as the `Refined Spec` comment) rather than posting a
+   second one each cycle.
 3. Write `verdict.json` with `outcome: "bounced"`, the step you stopped at
    as `phase_reached` (use the closest match: `triage`→`intake`,
    `interpret`/`ground`/`attack`→`plan`, `scope`/`blocked-check`→`plan`,
