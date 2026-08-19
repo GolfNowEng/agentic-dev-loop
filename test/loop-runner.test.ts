@@ -340,7 +340,7 @@ describe("runLoopIteration", () => {
     });
   });
 
-  it("a post-run ceiling breach still records the run's real consequences (epic move, runs.jsonl) before pausing -- a completed, valid verdict must never be silently discarded", async () => {
+  it("a post-run ceiling breach still records the run's real consequences (Code Review transition, runs.jsonl) before pausing -- a completed, valid verdict must never be silently discarded", async () => {
     await withTempRunsLog(async (runsLogPath) => {
       const ticket = makeTicket({ key: "PROJ-4c" });
       const jiraClient = makeMockJiraClient({
@@ -362,10 +362,13 @@ describe("runLoopIteration", () => {
       expect(result.kind).toBe("paused");
       // The verdict was real and passing -- its consequences must still
       // happen, not be thrown away just because the ceiling was breached
-      // after the fact.
-      expect(jiraClient.moveToEpic).toHaveBeenCalledWith(
+      // after the fact. A landed dev-loop verdict never moves the epic --
+      // only its status transitions, to Code Review.
+      expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+      expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
         "PROJ-4c",
-        config.jira.reviewEpic,
+        config.jira.statusNames.prOpen,
+        expect.anything(),
       );
       const raw = await readFile(runsLogPath, "utf8");
       const lines = raw.split("\n").filter((l) => l.trim().length > 0);
@@ -374,13 +377,13 @@ describe("runLoopIteration", () => {
     });
   });
 
-  it("a moveToEpic failure (e.g. a malformed Jira request) never throws out of runLoopIteration -- the run still gets logged, and the failure is surfaced via jiraSyncError, not by killing the caller", async () => {
+  it("a Code Review transition failure (e.g. a malformed Jira request) never throws out of runLoopIteration -- the run still gets logged, and the failure is surfaced via jiraSyncError, not by killing the caller", async () => {
     await withTempRunsLog(async (runsLogPath) => {
       const ticket = makeTicket({ key: "PROJ-4d" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        moveToEpic: vi.fn(async () => {
-          throw new Error('PUT ... -> 400 Bad Request. {"errors":{"parent":"data was not an object"}}');
+        transitionStatus: vi.fn(async () => {
+          throw new Error('PUT ... -> 400 Bad Request. {"errors":{"customfield_13504":"..."}}');
         }),
       });
       const config = makeConfig();
@@ -434,7 +437,7 @@ describe("runLoopIteration", () => {
     });
   });
 
-  it("epic-move-on-verdict: a landed verdict from the dev loop moves the ticket to the review epic", async () => {
+  it("epic-move-on-verdict: a landed verdict from the dev loop never moves the epic -- only status transitions, to Code Review, with the required PII/QA-notes screen fields populated", async () => {
     await withTempRunsLog(async (runsLogPath) => {
       const ticket = makeTicket({ key: "PROJ-6" });
       const jiraClient = makeMockJiraClient({
@@ -453,9 +456,16 @@ describe("runLoopIteration", () => {
       const result = await runLoopIteration(deps);
 
       expect(result.kind).toBe("ran");
-      expect(jiraClient.moveToEpic).toHaveBeenCalledWith(
+      // A landed dev-loop verdict never moves the epic -- the ticket
+      // stays in Pipeline: Ready. Moving it to reviewEpic would collide
+      // with research-loop's own use of that epic ("refined spec
+      // awaiting human approval"), overloading one epic to mean two
+      // different things depending on which ticket you're looking at.
+      expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+      expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
         "PROJ-6",
-        config.jira.reviewEpic,
+        config.jira.statusNames.prOpen,
+        expect.anything(),
       );
     });
   });

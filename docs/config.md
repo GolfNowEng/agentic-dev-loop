@@ -83,14 +83,32 @@ The assign call is wrapped in try/catch and surfaced via the existing
 `jiraSyncError` result field — a failed assignment never blocks the actual
 work or crashes the loop.
 
-## Code Review transition screen fields
+## A landed dev-loop verdict never moves the epic
 
 TARS-1349's real Jira run (the first end-to-end dev-loop pass) landed a PR
 but never actually moved the ticket to Code Review — `moveToEpic` ran, but
 nothing ever called `transitionStatus` for a landed outcome, so the
 transition itself was simply missing from the code, not rejected by Jira.
+That was fixed the same night — but the first fix also moved the ticket's
+**epic** to `reviewEpic` on a landed verdict, which turned out to be its
+own bug: `reviewEpic` ("Pipeline: Review") already means "research-loop's
+refined spec is awaiting human approval." Landing a dev-loop PR there too
+overloaded the same epic to mean two different things depending on which
+ticket you were looking at, confirmed confusing on the real board (two
+landed PRs both showed "Pipeline: Review" alongside spec-review tickets,
+with no way to tell them apart without opening each one).
 
-Separately, this Jira instance's `statusNames.prOpen` transition ("Ready
+Fixed by removing the epic move entirely for a landed dev-loop verdict —
+`decideEpicMove` returns `null` whenever `loopKind === "dev"`, regardless
+of outcome. A landed ticket stays in whatever epic it already sits in
+(`readyEpic`, "Pipeline: Ready"); **status alone** — `In Progress` →
+`Code Review` — is the "needs code review" signal now. research-loop's own
+landed/ready verdicts still move the epic normally (that's the real
+Intake→Review/Ready human gate, unrelated to this fix).
+
+## Code Review transition screen fields
+
+Separately: this Jira instance's `statusNames.prOpen` transition ("Ready
 for Code Review") has `hasScreen: true` — a required Jira UI screen with
 PII/security and QA-notes fields. The interactive `push-branch` skill
 (`~/.claude/skills/push-branch/SKILL.md`) already handles this by hand
