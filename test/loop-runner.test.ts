@@ -7,6 +7,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+const ASSIGNEE_ACCOUNT_ID = "user-123";
+
 function makeConfig(): Config {
   return {
     jira: {
@@ -16,14 +18,30 @@ function makeConfig(): Config {
       claimStatus: { from: "Ready", to: "In Progress" },
       pollJql: {
         refine: 'epic in ({epics}) ORDER BY created ASC',
-        dev: 'epic = {readyEpic} ORDER BY created ASC',
+        dev: 'epic = {readyEpic} AND assignee = "{assignee}" ORDER BY created ASC',
       },
       epicLinkField: "customfield_10014",
       statusNames: { bounced: "Blocked", prOpen: "In Progress" },
+      codeReviewFields: {
+        piiField: "customfield_13504",
+        piiNoImpactOptionId: "14310",
+        qaNotesField: "customfield_14226",
+      },
     },
     ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
     autoPromoteLabel: "auto-promote",
     targetRepo: { url: "git@github.com:org/repo.git", defaultBranch: "main" },
+  };
+}
+
+/** Ticket already assigned to the configured human -- the common case in most tests below. */
+function makeTicket(overrides: Partial<JiraTicket> = {}): JiraTicket {
+  return {
+    key: "PROJ-1",
+    status: "In Progress",
+    epic: "EPIC-READY",
+    assignee: ASSIGNEE_ACCOUNT_ID,
+    ...overrides,
   };
 }
 
@@ -33,6 +51,7 @@ function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
     claimTicket: vi.fn(async () => true),
     transitionStatus: vi.fn(async () => {}),
     moveToEpic: vi.fn(async () => {}),
+    assignTicket: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -58,6 +77,19 @@ function makeVerdict(overrides: Partial<Verdict> = {}): Verdict {
 /** Default measured cost for a mocked runSkill, matching makeVerdict's cost_usd. */
 const MEASURED_COST_USD = 1.0;
 
+function makeDeps(overrides: Partial<LoopIterationDeps> = {}): LoopIterationDeps {
+  return {
+    jiraClient: makeMockJiraClient(),
+    config: makeConfig(),
+    runSkill: vi.fn(),
+    loopKind: "dev",
+    runsLogPath: "",
+    runsToday: 0,
+    assigneeAccountId: ASSIGNEE_ACCOUNT_ID,
+    ...overrides,
+  };
+}
+
 async function withTempRunsLog<T>(
   fn: (path: string) => Promise<T>,
 ): Promise<T> {
@@ -71,70 +103,129 @@ async function withTempRunsLog<T>(
 }
 
 describe("runLoopIteration", () => {
-  it("returns idle when polling finds no matching ticket, without claiming or running the skill", async () => {
+  it("returns idle when polling finds no matching ticket, without running the skill", async () => {
     await withTempRunsLog(async (runsLogPath) => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => null),
       });
       const runSkill: RunSkillFn = vi.fn();
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config: makeConfig(),
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
       expect(result.kind).toBe("idle");
-      expect(jiraClient.claimTicket).not.toHaveBeenCalled();
       expect(runSkill).not.toHaveBeenCalled();
+      expect(jiraClient.assignTicket).not.toHaveBeenCalled();
     });
   });
 
-  it("claim race: when claimTicket resolves false (another process raced it), the loop skips this ticket and continues without throwing", async () => {
+  it("never calls claimTicket -- this MVP has no atomic claim step for dev-loop (single-instance assumption; see docs/config.md's multi-instance note)", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-1", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-1" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        claimTicket: vi.fn(async () => false),
       });
-      const runSkill: RunSkillFn = vi.fn();
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict(),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
+      }));
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config: makeConfig(),
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
 
-      let result;
+      const result = await runLoopIteration(deps);
+
+      expect(result.kind).toBe("ran");
+      expect(jiraClient.claimTicket).not.toHaveBeenCalled();
+      expect(runSkill).toHaveBeenCalledWith("PROJ-1");
+    });
+  });
+
+  it("assigns the ticket to the configured human when it's currently unassigned", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket = makeTicket({ key: "PROJ-10", assignee: null });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+      });
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict(),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
+      }));
+
+      const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
+
+      await runLoopIteration(deps);
+
+      expect(jiraClient.assignTicket).toHaveBeenCalledWith(
+        "PROJ-10",
+        ASSIGNEE_ACCOUNT_ID,
+      );
+    });
+  });
+
+  it("does not call assignTicket when the ticket already has an assignee", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket = makeTicket({ key: "PROJ-11", assignee: "someone-else" });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+      });
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict(),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
+      }));
+
+      const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
+
+      await runLoopIteration(deps);
+
+      expect(jiraClient.assignTicket).not.toHaveBeenCalled();
+    });
+  });
+
+  it("an assignTicket failure never throws out of runLoopIteration -- the run still proceeds and completes, surfaced via jiraSyncError", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket = makeTicket({ key: "PROJ-12", assignee: null });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+        assignTicket: vi.fn(async () => {
+          throw new Error("PUT ... -> 400 Bad Request");
+        }),
+      });
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict(),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
+      }));
+
+      const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
+
+      let result: LoopIterationResult | undefined;
       await expect(
         (async () => {
           result = await runLoopIteration(deps);
         })(),
       ).resolves.not.toThrow();
 
-      expect(result!.kind).toBe("skipped-race");
-      if (result!.kind === "skipped-race") {
-        expect(result!.ticket).toBe("PROJ-1");
+      expect(runSkill).toHaveBeenCalled();
+      expect(result!.kind).toBe("ran");
+      if (result!.kind === "ran") {
+        expect(result!.jiraSyncError).toMatch(/400 Bad Request/);
       }
-      // Never spawns the skill for a ticket it failed to claim.
-      expect(runSkill).not.toHaveBeenCalled();
     });
   });
 
   it("malformed/missing verdict.json is treated as outcome error / failure_category agent_error and still logged", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-2", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-2" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        claimTicket: vi.fn(async () => true),
       });
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({
@@ -147,14 +238,7 @@ describe("runLoopIteration", () => {
         costUsd: MEASURED_COST_USD,
       }));
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config: makeConfig(),
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -178,10 +262,9 @@ describe("runLoopIteration", () => {
 
   it("ceiling breach (runs/day) pauses the loop rather than silently continuing", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-3", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-3" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        claimTicket: vi.fn(async () => true),
       });
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict(),
@@ -191,15 +274,14 @@ describe("runLoopIteration", () => {
       }));
 
       const config = makeConfig();
-      const deps: LoopIterationDeps = {
+      const deps = makeDeps({
         jiraClient,
         config,
         runSkill,
-        loopKind: "dev",
         runsLogPath,
         // Already at the ceiling before this run even started.
         runsToday: config.ceilings.maxRunsPerDay,
-      };
+      });
 
       const result = await runLoopIteration(deps);
 
@@ -212,10 +294,9 @@ describe("runLoopIteration", () => {
 
   it("ceiling breach (cost/run) pauses the loop rather than silently continuing", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-4", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-4" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        claimTicket: vi.fn(async () => true),
       });
       const config = makeConfig();
       const runSkill: RunSkillFn = vi.fn(async () => ({
@@ -225,14 +306,7 @@ describe("runLoopIteration", () => {
         costUsd: config.ceilings.maxCostPerRunUsd + 1,
       }));
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config,
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -242,10 +316,9 @@ describe("runLoopIteration", () => {
 
   it("ceiling breach (cost/run): pauses using the MEASURED cost, even when the verdict under-reports its own cost_usd", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-4b", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-4b" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        claimTicket: vi.fn(async () => true),
       });
       const config = makeConfig();
       // The skill under-reports its own cost (e.g. a bug, or a misbehaving
@@ -259,14 +332,7 @@ describe("runLoopIteration", () => {
         costUsd: config.ceilings.maxCostPerRunUsd + 1,
       }));
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config,
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -276,10 +342,9 @@ describe("runLoopIteration", () => {
 
   it("a post-run ceiling breach still records the run's real consequences (epic move, runs.jsonl) before pausing -- a completed, valid verdict must never be silently discarded", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-4c", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-4c" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        claimTicket: vi.fn(async () => true),
       });
       const config = makeConfig();
       const runSkill: RunSkillFn = vi.fn(async () => ({
@@ -290,14 +355,7 @@ describe("runLoopIteration", () => {
         costUsd: config.ceilings.maxCostPerRunUsd + 1,
       }));
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config,
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -318,10 +376,9 @@ describe("runLoopIteration", () => {
 
   it("a moveToEpic failure (e.g. a malformed Jira request) never throws out of runLoopIteration -- the run still gets logged, and the failure is surfaced via jiraSyncError, not by killing the caller", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-4d", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-4d" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        claimTicket: vi.fn(async () => true),
         moveToEpic: vi.fn(async () => {
           throw new Error('PUT ... -> 400 Bad Request. {"errors":{"parent":"data was not an object"}}');
         }),
@@ -334,14 +391,7 @@ describe("runLoopIteration", () => {
         costUsd: MEASURED_COST_USD,
       }));
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config,
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
 
       let result: LoopIterationResult | undefined;
       await expect(
@@ -363,10 +413,9 @@ describe("runLoopIteration", () => {
 
   it("ceiling breach (run timeout) pauses the loop rather than silently continuing", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-5", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-5" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        claimTicket: vi.fn(async () => true),
       });
       const config = makeConfig();
       const runSkill: RunSkillFn = vi.fn(async () => ({
@@ -377,14 +426,7 @@ describe("runLoopIteration", () => {
         costUsd: MEASURED_COST_USD,
       }));
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config,
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -394,10 +436,9 @@ describe("runLoopIteration", () => {
 
   it("epic-move-on-verdict: a landed verdict from the dev loop moves the ticket to the review epic", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-6", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-6" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        claimTicket: vi.fn(async () => true),
       });
       const config = makeConfig();
       const runSkill: RunSkillFn = vi.fn(async () => ({
@@ -407,14 +448,7 @@ describe("runLoopIteration", () => {
         costUsd: MEASURED_COST_USD,
       }));
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config,
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -426,12 +460,79 @@ describe("runLoopIteration", () => {
     });
   });
 
-  it("epic-move-on-verdict: a bounced verdict sets outcome bounced and does not move the epic", async () => {
+  it("a landed dev-loop verdict also transitions the ticket to Code Review, with the required PII/QA-notes screen fields populated", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-7", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-6b" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        claimTicket: vi.fn(async () => true),
+      });
+      const config = makeConfig();
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({
+          outcome: "landed",
+          pr: "https://github.com/org/repo/pull/42",
+          verify_loops: 2,
+        }),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
+      }));
+
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+
+      await runLoopIteration(deps);
+
+      expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
+        "PROJ-6b",
+        config.jira.statusNames.prOpen,
+        {
+          [config.jira.codeReviewFields.piiField]: [
+            { id: config.jira.codeReviewFields.piiNoImpactOptionId },
+          ],
+          [config.jira.codeReviewFields.qaNotesField]: expect.objectContaining({
+            type: "doc",
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    text: expect.stringContaining("https://github.com/org/repo/pull/42"),
+                  }),
+                ]),
+              }),
+            ]),
+          }),
+        },
+      );
+    });
+  });
+
+  it("a refine-loop landed verdict does NOT transition to Code Review -- that's dev-loop-only behavior", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket = makeTicket({ key: "PROJ-6c" });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+      });
+      const config = makeConfig();
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({ outcome: "landed" }),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
+      }));
+
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath, loopKind: "refine" });
+
+      await runLoopIteration(deps);
+
+      expect(jiraClient.transitionStatus).not.toHaveBeenCalled();
+    });
+  });
+
+  it("epic-move-on-verdict: a bounced verdict sets outcome bounced and does not move the epic", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket = makeTicket({ key: "PROJ-7" });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
       });
       const config = makeConfig();
       const runSkill: RunSkillFn = vi.fn(async () => ({
@@ -445,14 +546,7 @@ describe("runLoopIteration", () => {
         costUsd: MEASURED_COST_USD,
       }));
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config,
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -466,10 +560,9 @@ describe("runLoopIteration", () => {
 
   it("appends exactly one valid runs.jsonl line per run, matching the schema", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-8", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-8" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
-        claimTicket: vi.fn(async () => true),
       });
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict(),
@@ -478,14 +571,7 @@ describe("runLoopIteration", () => {
         costUsd: MEASURED_COST_USD,
       }));
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config: makeConfig(),
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
 
       await runLoopIteration(deps);
 
@@ -505,16 +591,18 @@ describe("runLoopIteration", () => {
 
   it("never touches a real JiraClient implementation or a real process - only the injected mocks are called", async () => {
     await withTempRunsLog(async (runsLogPath) => {
-      const ticket: JiraTicket = { key: "PROJ-9", status: "Ready", epic: "EPIC-READY" };
+      const ticket = makeTicket({ key: "PROJ-9" });
       const pollOldestMatching = vi.fn(async () => ticket);
       const claimTicket = vi.fn(async () => true);
       const transitionStatus = vi.fn(async () => {});
       const moveToEpic = vi.fn(async () => {});
+      const assignTicket = vi.fn(async () => {});
       const jiraClient: JiraClient = {
         pollOldestMatching,
         claimTicket,
         transitionStatus,
         moveToEpic,
+        assignTicket,
       };
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict(),
@@ -523,19 +611,11 @@ describe("runLoopIteration", () => {
         costUsd: MEASURED_COST_USD,
       }));
 
-      const deps: LoopIterationDeps = {
-        jiraClient,
-        config: makeConfig(),
-        runSkill,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-      };
+      const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
 
       await runLoopIteration(deps);
 
       expect(pollOldestMatching).toHaveBeenCalled();
-      expect(claimTicket).toHaveBeenCalled();
       expect(runSkill).toHaveBeenCalledWith("PROJ-9");
     });
   });

@@ -6,10 +6,15 @@
     "claimStatus": { "from": "To Do", "to": "In Progress" },
     "pollJql": {
       "refine": "\"parent\" in ({epics}) AND status = \"To Do\" ORDER BY created ASC",
-      "dev": "\"parent\" = {readyEpic} AND status = \"To Do\" ORDER BY created ASC"
+      "dev": "\"parent\" = {readyEpic} AND status = \"In Progress\" AND assignee = \"{assignee}\" ORDER BY created ASC"
     },
     "epicLinkField": "parent",
-    "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" }
+    "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" },
+    "codeReviewFields": {
+      "piiField": "customfield_13504",
+      "piiNoImpactOptionId": "14310",
+      "qaNotesField": "customfield_14226"
+    }
   },
   "ceilings": { "maxRunsPerDay": 10, "maxCostPerRunUsd": 20, "runTimeoutMin": 45 },
   "autoPromoteLabel": "auto-promote",

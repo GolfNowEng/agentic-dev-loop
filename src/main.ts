@@ -19,7 +19,7 @@ import {
   assertNoPlaceholders,
   repoSlugFromUrl,
 } from "./config.ts";
-import { credentialsFromEnv, RealJiraClient } from "./jira-client.ts";
+import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./jira-client.ts";
 import { runLoopIteration } from "./loop-runner.ts";
 import type { RunSkillFn } from "./loop-runner.ts";
 import { countRunsToday } from "./runs-log.ts";
@@ -271,6 +271,7 @@ async function main(): Promise<void> {
   const loopConfig = await loadLoopConfig();
 
   const credentials = credentialsFromEnv();
+  const assigneeAccountId = assigneeAccountIdFromEnv();
   const jiraClient = new RealJiraClient(credentials, config);
 
   const slug = repoSlugFromUrl(config.targetRepo.url);
@@ -389,6 +390,7 @@ async function main(): Promise<void> {
       loopKind: "dev",
       runsLogPath,
       runsToday,
+      assigneeAccountId,
     });
 
     switch (result.kind) {

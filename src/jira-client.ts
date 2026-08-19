@@ -13,6 +13,8 @@ export interface JiraTicket {
   key: string;
   status: string;
   epic: string | null;
+  /** Jira accountId of the current assignee, or null if unassigned. */
+  assignee: string | null;
 }
 
 export interface JiraClient {
@@ -34,15 +36,29 @@ export interface JiraClient {
   /**
    * Transition a ticket to a new status (not a claim - used for
    * post-run outcome transitions such as marking a ticket "bounced" or
-   * moving it toward "landed").
+   * moving it toward "landed"). `fields`, if given, is sent alongside the
+   * transition request -- some transitions have a required Jira screen
+   * (e.g. Code Review's PII/QA-notes fields) that rejects an empty
+   * payload even when the field schema itself reports `required: false`.
    */
-  transitionStatus(ticketKey: string, to: string): Promise<void>;
+  transitionStatus(
+    ticketKey: string,
+    to: string,
+    fields?: Record<string, unknown>,
+  ): Promise<void>;
 
   /**
    * Move a ticket to a different epic (e.g. from an intake epic to the
    * review epic, or from the review epic to the ready epic).
    */
   moveToEpic(ticketKey: string, epic: string): Promise<void>;
+
+  /**
+   * Assign a ticket to the given Jira account ID. Callers should only
+   * invoke this when the ticket is currently unassigned -- this method
+   * itself does not check, it just performs the assignment.
+   */
+  assignTicket(ticketKey: string, accountId: string): Promise<void>;
 }
 
 /**
@@ -74,12 +90,20 @@ export class StubJiraClient implements JiraClient {
     throw StubJiraClient.notConfigured("claimTicket");
   }
 
-  async transitionStatus(_ticketKey: string, _to: string): Promise<void> {
+  async transitionStatus(
+    _ticketKey: string,
+    _to: string,
+    _fields?: Record<string, unknown>,
+  ): Promise<void> {
     throw StubJiraClient.notConfigured("transitionStatus");
   }
 
   async moveToEpic(_ticketKey: string, _epic: string): Promise<void> {
     throw StubJiraClient.notConfigured("moveToEpic");
+  }
+
+  async assignTicket(_ticketKey: string, _accountId: string): Promise<void> {
+    throw StubJiraClient.notConfigured("assignTicket");
   }
 }
 
@@ -110,11 +134,31 @@ export function credentialsFromEnv(env: NodeJS.ProcessEnv = process.env): JiraCr
   return { baseUrl: baseUrl!, email: email!, apiToken: apiToken! };
 }
 
+/**
+ * Reads JIRA_ASSIGNEE_ACCOUNT_ID from process.env, or throws. Kept separate
+ * from JiraCredentials/credentialsFromEnv since this isn't an API
+ * credential -- it's the human's own Jira account ID, used as a call-time
+ * argument (assignTicket) and in JQL, not something RealJiraClient holds
+ * as constructor state.
+ */
+export function assigneeAccountIdFromEnv(env: NodeJS.ProcessEnv = process.env): string {
+  const accountId = env.JIRA_ASSIGNEE_ACCOUNT_ID;
+  if (!accountId) {
+    throw new Error(
+      "RealJiraClient: missing required env var JIRA_ASSIGNEE_ACCOUNT_ID. " +
+        "Set it in a gitignored .env (see .env.example) and run with " +
+        '"node --env-file=.env ...".',
+    );
+  }
+  return accountId;
+}
+
 interface JiraSearchResponse {
   issues: Array<{
     key: string;
     fields: {
       status: { name: string };
+      assignee: { accountId: string } | null;
       [key: string]: unknown;
     };
   }>;
@@ -186,7 +230,9 @@ export class RealJiraClient implements JiraClient {
       body: JSON.stringify({
         jql,
         maxResults: 1,
-        fields: ["status", this.config.jira.epicLinkField].filter((f) => f !== "___"),
+        fields: ["status", "assignee", this.config.jira.epicLinkField].filter(
+          (f) => f !== "___",
+        ),
       }),
     });
     const data = (await response.json()) as JiraSearchResponse;
@@ -201,6 +247,7 @@ export class RealJiraClient implements JiraClient {
       key: issue.key,
       status: issue.fields.status.name,
       epic,
+      assignee: issue.fields.assignee?.accountId ?? null,
     };
   }
 
@@ -220,7 +267,11 @@ export class RealJiraClient implements JiraClient {
     return true;
   }
 
-  async transitionStatus(ticketKey: string, to: string): Promise<void> {
+  async transitionStatus(
+    ticketKey: string,
+    to: string,
+    fields?: Record<string, unknown>,
+  ): Promise<void> {
     const response = await this.request(`/rest/api/3/issue/${ticketKey}/transitions`);
     const data = (await response.json()) as JiraTransitionsResponse;
     const transition = data.transitions.find((t) => t.to.name === to);
@@ -232,7 +283,10 @@ export class RealJiraClient implements JiraClient {
     }
     await this.request(`/rest/api/3/issue/${ticketKey}/transitions`, {
       method: "POST",
-      body: JSON.stringify({ transition: { id: transition.id } }),
+      body: JSON.stringify({
+        transition: { id: transition.id },
+        ...(fields ? { fields } : {}),
+      }),
     });
   }
 
@@ -247,6 +301,13 @@ export class RealJiraClient implements JiraClient {
     await this.request(`/rest/api/3/issue/${ticketKey}`, {
       method: "PUT",
       body: JSON.stringify({ fields: { [field]: value } }),
+    });
+  }
+
+  async assignTicket(ticketKey: string, accountId: string): Promise<void> {
+    await this.request(`/rest/api/3/issue/${ticketKey}`, {
+      method: "PUT",
+      body: JSON.stringify({ fields: { assignee: { accountId } } }),
     });
   }
 }

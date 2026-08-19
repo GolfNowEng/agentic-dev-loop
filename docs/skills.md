@@ -26,7 +26,11 @@ working in it manually is never affected by a background run:
    lint/build failure is caught here, not after the PR is already open;
    spawns `qa-agent` (see below) for a fresh-context adversarial pass, up
    to 3 retry loops.
-6. **PR** — push the branch, open the PR, write `verdict.json`.
+6. **PR** — push the branch, open the PR with a fixed body template
+   (`## Changes` / `## QA Notes` / a link back to the ticket —
+   `https://<jira-base-url>/browse/<TICKET>`, so a PR reads consistently
+   with one opened by hand via the interactive `push-branch` skill, whose
+   template this mirrors), write `verdict.json`.
 
 Core rule: this skill **never edits the spec**. Any ambiguity, contradiction,
 or oversized scope is `research-loop`'s problem to fix upstream — this skill

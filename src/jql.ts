@@ -14,8 +14,13 @@ export function buildRefineJql(config: Config): string {
 
 /**
  * Build the JQL used by the dev loop (Terminal B, this repo) to poll for
- * tickets that have reached the ready epic.
+ * tickets that have reached the ready epic. `assigneeAccountId` fills the
+ * `{assignee}` placeholder -- dev-loop only ever touches a ticket still
+ * assigned to the configured human, since status no longer signals
+ * "claimed" (see loop-runner.ts).
  */
-export function buildDevJql(config: Config): string {
-  return config.jira.pollJql.dev.replace("{readyEpic}", config.jira.readyEpic);
+export function buildDevJql(config: Config, assigneeAccountId: string): string {
+  return config.jira.pollJql.dev
+    .replace("{readyEpic}", config.jira.readyEpic)
+    .replace("{assignee}", assigneeAccountId);
 }

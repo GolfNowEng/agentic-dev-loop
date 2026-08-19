@@ -7,9 +7,11 @@
 
 - `jira.intakeEpics` / `reviewEpic` / `readyEpic` — the three pipeline-stage
   epics a ticket moves through (Intake → Review → Ready).
-- `jira.claimStatus.{from,to}` — the status transition a loop uses to
-  atomically claim a ticket (race-safe: `JiraClient.claim`/`claimTicket`
-  returns `false`, never throws, if another process already claimed it).
+- `jira.claimStatus.{from,to}` — the status transition research-loop uses to
+  atomically claim a ticket from an intake epic (race-safe:
+  `JiraClient.claimTicket` returns `false`, never throws, if another
+  process already claimed it). **dev-loop does not use this** — see
+  "Ticket status never reverts" below.
 - `jira.pollJql.{refine,dev}` — JQL templates with `{epics}` / `{epic}`
   placeholders, filled in by `src/jql.ts`.
 - `jira.epicLinkField` — `"parent"` for team-managed Jira projects, or a
@@ -20,6 +22,10 @@
   **Important**: check the child issue type's own transitions
   (`getTransitionsForJiraIssue`) — epics have a separate, simpler workflow
   and will give you the wrong answer.
+- `jira.codeReviewFields.{piiField,piiNoImpactOptionId,qaNotesField}` — see
+  "Code Review transition screen fields" below. dev-loop-only; this Jira
+  instance's Code Review transition (`prOpen`) has a required screen that
+  rejects an empty payload.
 - `ceilings.{maxRunsPerDay,maxCostPerRunUsd,runTimeoutMin}` — enforced by
   `src/ceilings.ts`; a breach pauses the loop, it never silently continues.
 - `autoPromoteLabel` — a ticket label that lets a passing verdict skip the
@@ -33,6 +39,84 @@
   real one, so `ticket-to-pr`'s `git push`/`gh pr create` need no extra
   setup. Omit on a machine with no local checkout yet; the clone-based flow
   is used instead.
+
+## Ticket status never reverts
+
+Once research-loop claims a ticket (`To Do` → `In Progress`), status stays
+`In Progress` for the rest of the pipeline's lifecycle — no loop ever
+transitions it back toward `To Do`. The **epic move** (Intake → Review →
+Ready) is the real human-approval gate; status is not overloaded to also
+signal that.
+
+This means dev-loop can't claim a ticket the way research-loop does (there's
+no `In Progress` → `In Progress` self-transition in a normal Jira workflow).
+Instead, `jira.pollJql.dev` matches on `status = "In Progress"` directly
+(not `"To Do"`) plus an `assignee = "{assignee}"` clause (filled from
+`JIRA_ASSIGNEE_ACCOUNT_ID`, see below), and `runLoopIteration` for
+`loopKind: "dev"` has **no atomic claim step at all** — it goes straight
+from poll to running the skill. This is safe only because this MVP assumes
+exactly one dev-loop instance is ever running against a project at a time.
+
+**Future: multiple concurrent loop instances.** Running more than one
+research-loop or dev-loop terminal against the same project at once has no
+coordination mechanism today and would race. A real fix would need
+something like a per-instance label (e.g. `Runner1`/`Dev1`, incrementing per
+instance) checked and set at pickup time, or each loop process being aware
+of how many sibling instances are running. Not built — noted here so it's
+not forgotten if this pipeline needs to scale beyond one terminal per loop.
+
+## Assignee bookkeeping
+
+Both loops check the ticket's assignee right when they pick it up: if it's
+currently unassigned, they assign it to a configured human via
+`JiraClient.assignTicket`. If it's already assigned to anyone, it's left
+alone — this is "assign if unassigned," not "reassign to force ownership."
+
+The human's Jira account ID (`JIRA_ASSIGNEE_ACCOUNT_ID`) lives in `.env`, not
+`pipeline.<project>.config.json` — it's a per-machine/per-runner-identity
+setting like `JIRA_EMAIL`/`JIRA_API_TOKEN`, not per-project wiring. Read via
+`assigneeAccountIdFromEnv()` in `src/jira-client.ts`, same pattern as
+`credentialsFromEnv()`. Find your own account ID via the Atlassian REST API
+(`GET /rest/api/3/myself`) or your Jira profile URL.
+
+The assign call is wrapped in try/catch and surfaced via the existing
+`jiraSyncError` result field — a failed assignment never blocks the actual
+work or crashes the loop.
+
+## Code Review transition screen fields
+
+TARS-1349's real Jira run (the first end-to-end dev-loop pass) landed a PR
+but never actually moved the ticket to Code Review — `moveToEpic` ran, but
+nothing ever called `transitionStatus` for a landed outcome, so the
+transition itself was simply missing from the code, not rejected by Jira.
+
+Separately, this Jira instance's `statusNames.prOpen` transition ("Ready
+for Code Review") has `hasScreen: true` — a required Jira UI screen with
+PII/security and QA-notes fields. The interactive `push-branch` skill
+(`~/.claude/skills/push-branch/SKILL.md`) already handles this by hand
+today, by sending specific field values alongside the transition request;
+`runLoopIteration` now mirrors that same write for a **landed dev-loop**
+verdict only (never for research-loop, which has no PR to review):
+
+- `jira.codeReviewFields.piiField` (`customfield_13504`, "Covered
+  Information Data Inventory") is set to `[{ id: piiNoImpactOptionId }]` —
+  unconditionally declaring **"No Impact."** This mirrors push-branch's own
+  behavior exactly; neither push-branch nor this pipeline performs a real
+  PII/security assessment of the diff. That's a known gap, not solved here
+  — if this pipeline ever handles a project where PII impact is a real
+  possibility, this needs actual assessment logic, not a hardcoded default.
+- `jira.codeReviewFields.qaNotesField` (`customfield_14226`, "QA Notes") is
+  a rich-text field — Jira rejects a plain string for it ("Operation value
+  must be an Atlassian Document"), confirmed against a real transition
+  attempt — so it's set to a short Atlassian Document (ADF)
+  (`buildQaNotesAdf()` in `src/loop-runner.ts` — one paragraph per line,
+  built purely from the verdict's PR URL and verify-loop count), not from
+  anything the skill writes — no `SKILL.md`/verdict.json contract change.
+
+`JiraClient.transitionStatus` takes an optional third `fields` argument for
+this — omitted entirely (not sent as `{}`) when a transition needs none
+(e.g. the `bounced` transition), so a transition with no screen requirement
+isn't given an unnecessary payload.
 
 ## Appendix A (Jira wiring)
 

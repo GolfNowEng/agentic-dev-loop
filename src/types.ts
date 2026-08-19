@@ -129,6 +129,21 @@ export interface JiraConfig {
     bounced: string;
     prOpen: string;
   };
+  /**
+   * Jira custom field IDs written when transitioning a landed PR to Code
+   * Review -- mirrors what the interactive `push-branch` skill sets by
+   * hand today (its "Transition ticket to Code Review" step), so an
+   * automated PR gets the same Code Review screen fields populated
+   * instead of the transition silently failing to happen at all.
+   */
+  codeReviewFields: {
+    /** "Covered Information Data Inventory" multicheckboxes field. */
+    piiField: string;
+    /** Option id for its "No Impact" value. */
+    piiNoImpactOptionId: string;
+    /** "QA Notes" textarea field. */
+    qaNotesField: string;
+  };
 }
 
 export interface CeilingsConfig {

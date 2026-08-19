@@ -247,14 +247,38 @@ Commit once all Phase 2 tests pass
 
 1. Push the branch: `git push -u origin <TICKET>-<slug>`.
 2. Open the PR (via `gh pr create` or equivalent) against
-   `targetRepo.defaultBranch`, title `<TICKET>: <ticket summary>`, body
-   summarizing what changed, which tests were added, and verification
-   results (existing suite status, lint/typecheck/build status, QA agent
-   outcome). **Never write an absolute filesystem path into the PR title
-   or body** — this machine's home directory is an email address, so an
-   absolute path leaks PII into a PR anyone with repo access can see.
-   Refer to files by repo-relative path only (e.g. `src/client/App.jsx`,
-   not `/Users/<email>/Desktop/repo/src/client/App.jsx`).
+   `targetRepo.defaultBranch`, with title `<TICKET>: <ticket summary>` and
+   the **fixed body template below** — same shape the interactive
+   `push-branch` skill uses by hand today, so an automated PR reads
+   consistently with a manual one:
+
+   ```markdown
+   ## Changes
+   - <concise bullet — what changed, not how>
+   - <one bullet per AC or logical change; 2-4 bullets typical>
+
+   ## QA Notes
+   - Existing suite: <N passed / M failed, or "green">
+   - Lint/typecheck/build: <status per Verify's own checks>
+   - QA agent: <pass/fail, verify_loops count>
+
+   ---
+   [TICKET](JIRA_BASE_URL/browse/TICKET)
+   ```
+
+   Replace `TICKET` with the actual ticket key and `JIRA_BASE_URL` with the
+   site URL from `getAccessibleAtlassianResources` (already called in
+   Phase 0) — e.g. `[TARS-1349](https://fandango.atlassian.net/browse/TARS-1349)`.
+   This is the one addition beyond push-branch's own template: a clickable
+   link back to the ticket, since this run has no human watching a
+   terminal to see it printed there instead. No other sections — do not
+   add "Core Architecture," "Files Changed," "Migration Notes," or similar;
+   `## Changes` and `## QA Notes` plus the link line is the complete body.
+   **Never write an absolute filesystem path into the PR title or body** —
+   this machine's home directory is an email address, so an absolute path
+   leaks PII into a PR anyone with repo access can see. Refer to files by
+   repo-relative path only (e.g. `src/client/App.jsx`, not
+   `/Users/<email>/Desktop/repo/src/client/App.jsx`).
 3. Write `verdict.json` in `RUN_DIR` (see schema below) with
    `outcome: "landed"`, `phase_reached: "pr"`, the PR URL, and all recorded
    metrics.

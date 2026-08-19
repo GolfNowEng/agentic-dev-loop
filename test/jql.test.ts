@@ -10,10 +10,15 @@ const config: Config = {
     claimStatus: { from: "Ready", to: "In Progress" },
     pollJql: {
       refine: 'epic in ({epics}) AND status = "To Refine" ORDER BY created ASC',
-      dev: 'epic = {readyEpic} AND status = "Ready" ORDER BY created ASC',
+      dev: 'epic = {readyEpic} AND status = "Ready" AND assignee = "{assignee}" ORDER BY created ASC',
     },
     epicLinkField: "customfield_10014",
     statusNames: { bounced: "Blocked", prOpen: "In Progress" },
+    codeReviewFields: {
+      piiField: "customfield_13504",
+      piiNoImpactOptionId: "14310",
+      qaNotesField: "customfield_14226",
+    },
   },
   ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
   autoPromoteLabel: "auto-promote",
@@ -36,14 +41,16 @@ describe("buildRefineJql", () => {
 });
 
 describe("buildDevJql", () => {
-  it("interpolates the ready epic into the dev template", () => {
-    const jql = buildDevJql(config);
+  it("interpolates the ready epic and assignee accountId into the dev template", () => {
+    const jql = buildDevJql(config, "user-123");
     expect(jql).toContain("EPIC-READY");
     expect(jql).not.toContain("{readyEpic}");
+    expect(jql).toContain("user-123");
+    expect(jql).not.toContain("{assignee}");
   });
 
   it("returns a non-empty string", () => {
-    const jql = buildDevJql(config);
+    const jql = buildDevJql(config, "user-123");
     expect(typeof jql).toBe("string");
     expect(jql.length).toBeGreaterThan(0);
   });

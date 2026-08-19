@@ -61,6 +61,12 @@ const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
   ["jira.epicLinkField", (c) => c.jira.epicLinkField],
   ["jira.statusNames.bounced", (c) => c.jira.statusNames.bounced],
   ["jira.statusNames.prOpen", (c) => c.jira.statusNames.prOpen],
+  ["jira.codeReviewFields.piiField", (c) => c.jira.codeReviewFields.piiField],
+  [
+    "jira.codeReviewFields.piiNoImpactOptionId",
+    (c) => c.jira.codeReviewFields.piiNoImpactOptionId,
+  ],
+  ["jira.codeReviewFields.qaNotesField", (c) => c.jira.codeReviewFields.qaNotesField],
   ["autoPromoteLabel", (c) => c.autoPromoteLabel],
   ["targetRepo.url", (c) => c.targetRepo.url],
   ["targetRepo.defaultBranch", (c) => c.targetRepo.defaultBranch],

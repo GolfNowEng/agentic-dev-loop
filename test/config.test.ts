@@ -24,6 +24,11 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
       },
       epicLinkField: "parent",
       statusNames: { bounced: "Blocked", prOpen: "Code Review" },
+      codeReviewFields: {
+        piiField: "customfield_13504",
+        piiNoImpactOptionId: "14310",
+        qaNotesField: "customfield_14226",
+      },
       ...overrides.jira,
     },
     ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 45 },
@@ -133,6 +138,19 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
     const missing = findPlaceholders(config);
     expect(missing).toContain("jira.reviewEpic");
     expect(missing).toContain("jira.epicLinkField");
+  });
+
+  it("lists codeReviewFields sub-fields still set to the placeholder value", () => {
+    const config = makeConfig({
+      jira: {
+        ...makeConfig().jira,
+        codeReviewFields: { piiField: "___", piiNoImpactOptionId: "___", qaNotesField: "___" },
+      },
+    });
+    const missing = findPlaceholders(config);
+    expect(missing).toContain("jira.codeReviewFields.piiField");
+    expect(missing).toContain("jira.codeReviewFields.piiNoImpactOptionId");
+    expect(missing).toContain("jira.codeReviewFields.qaNotesField");
   });
 
   it("assertNoPlaceholders does not throw on a fully-bound config", () => {

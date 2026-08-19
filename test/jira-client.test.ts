@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   RealJiraClient,
   credentialsFromEnv,
+  assigneeAccountIdFromEnv,
   type JiraCredentials,
 } from "../src/jira-client.ts";
 import type { Config } from "../src/types.ts";
@@ -50,6 +51,21 @@ describe("credentialsFromEnv", () => {
   });
 });
 
+describe("assigneeAccountIdFromEnv", () => {
+  it("returns the value when present", () => {
+    const accountId = assigneeAccountIdFromEnv({
+      JIRA_ASSIGNEE_ACCOUNT_ID: "user-123",
+    } as NodeJS.ProcessEnv);
+    expect(accountId).toBe("user-123");
+  });
+
+  it("throws when missing", () => {
+    expect(() => assigneeAccountIdFromEnv({} as NodeJS.ProcessEnv)).toThrow(
+      /JIRA_ASSIGNEE_ACCOUNT_ID/,
+    );
+  });
+});
+
 describe("RealJiraClient", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -71,6 +87,7 @@ describe("RealJiraClient", () => {
               key: "PROJ-1",
               fields: {
                 status: { name: "Backlog" },
+                assignee: { accountId: "user-123" },
                 customfield_10014: "EPIC-1",
               },
             },
@@ -83,13 +100,44 @@ describe("RealJiraClient", () => {
     const client = new RealJiraClient(CREDENTIALS, makeConfig());
     const ticket = await client.pollOldestMatching("epic in (EPIC-1)");
 
-    expect(ticket).toEqual({ key: "PROJ-1", status: "Backlog", epic: "EPIC-1" });
+    expect(ticket).toEqual({
+      key: "PROJ-1",
+      status: "Backlog",
+      epic: "EPIC-1",
+      assignee: "user-123",
+    });
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("https://example.atlassian.net/rest/api/3/search/jql");
     expect((init.headers as Record<string, string>).Authorization).toBe(
       `Basic ${Buffer.from("bot@example.com:fake-token").toString("base64")}`,
     );
+    expect(JSON.parse(init.body as string).fields).toContain("assignee");
+  });
+
+  it("pollOldestMatching maps a null assignee to null (unassigned ticket)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          issues: [
+            {
+              key: "PROJ-2",
+              fields: {
+                status: { name: "Backlog" },
+                assignee: null,
+                customfield_10014: "EPIC-1",
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+    const ticket = await client.pollOldestMatching("epic in (EPIC-1)");
+
+    expect(ticket?.assignee).toBeNull();
   });
 
   it("pollOldestMatching returns null when no issues match", async () => {
@@ -145,6 +193,53 @@ describe("RealJiraClient", () => {
     });
   });
 
+  it("transitionStatus posts the given fields alongside the transition, when provided", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            transitions: [{ id: "21", to: { name: "Code Review" } }],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+    await client.transitionStatus("PROJ-1", "Code Review", {
+      customfield_13504: [{ id: "14310" }],
+      customfield_14226: "PR: https://github.com/org/repo/pull/1",
+    });
+
+    const [, postInit] = fetchMock.mock.calls[1];
+    expect(JSON.parse(postInit.body as string)).toEqual({
+      transition: { id: "21" },
+      fields: {
+        customfield_13504: [{ id: "14310" }],
+        customfield_14226: "PR: https://github.com/org/repo/pull/1",
+      },
+    });
+  });
+
+  it("transitionStatus omits the fields key entirely when no fields are given", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ transitions: [{ id: "31", to: { name: "Blocked" } }] }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+    await client.transitionStatus("PROJ-1", "Blocked");
+
+    const [, postInit] = fetchMock.mock.calls[1];
+    expect(JSON.parse(postInit.body as string)).toEqual({
+      transition: { id: "31" },
+    });
+  });
+
   it("moveToEpic throws a clear error when epicLinkField is still the placeholder", async () => {
     const client = new RealJiraClient(
       CREDENTIALS,
@@ -182,6 +277,20 @@ describe("RealJiraClient", () => {
     const [, init] = fetchMock.mock.calls[0];
     expect(JSON.parse(init.body as string)).toEqual({
       fields: { parent: { key: "EPIC-READY" } },
+    });
+  });
+
+  it("assignTicket PUTs the assignee field with the given accountId", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    await client.assignTicket("PROJ-1", "user-123");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://example.atlassian.net/rest/api/3/issue/PROJ-1");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body as string)).toEqual({
+      fields: { assignee: { accountId: "user-123" } },
     });
   });
 
