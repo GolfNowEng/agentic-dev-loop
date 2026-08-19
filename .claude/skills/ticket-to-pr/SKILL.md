@@ -246,7 +246,11 @@ Commit once all Phase 2 tests pass
    `targetRepo.defaultBranch`, title `<TICKET>: <ticket summary>`, body
    summarizing what changed, which tests were added, and verification
    results (existing suite status, lint/typecheck/build status, QA agent
-   outcome).
+   outcome). **Never write an absolute filesystem path into the PR title
+   or body** — this machine's home directory is an email address, so an
+   absolute path leaks PII into a PR anyone with repo access can see.
+   Refer to files by repo-relative path only (e.g. `src/client/App.jsx`,
+   not `/Users/<email>/Desktop/repo/src/client/App.jsx`).
 3. Write `verdict.json` in `RUN_DIR` (see schema below) with
    `outcome: "landed"`, `phase_reached: "pr"`, the PR URL, and all recorded
    metrics.

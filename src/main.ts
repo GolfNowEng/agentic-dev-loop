@@ -26,6 +26,7 @@ import { countRunsToday } from "./runs-log.ts";
 import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.ts";
 import { extractUsage } from "./claude-usage.ts";
 import { readVerdictFile, agentErrorVerdict } from "./verdict.ts";
+import { redactPII } from "./redact.ts";
 
 const SKILL_NAME = "ticket-to-pr";
 const MODEL = "sonnet";
@@ -70,6 +71,22 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Redacting wrappers around console.log/console.error -- every line this
+ * process prints goes through redactPII() first, so an email address (and,
+ * on machines where $HOME is email-shaped, any absolute path containing
+ * it) never reaches the terminal or a captured log, regardless of whether
+ * it came from our own message or from something a spawned `claude`
+ * process/subagent tool call printed.
+ */
+function log(message: string): void {
+  console.log(redactPII(message));
+}
+
+function logError(message: string): void {
+  console.error(redactPII(message));
+}
+
+/**
  * Polls a run's own progress.jsonl (which the skill writes to live, phase
  * by phase, while it works) and prints each new line to the terminal as
  * it appears -- so a human watching the foreground process sees
@@ -101,7 +118,7 @@ function startProgressTail(
     for (const line of lines.slice(linesPrinted)) {
       try {
         const event = JSON.parse(line) as { phase: string; event: string; detail: string };
-        console.log(`[${SKILL_NAME}] ${ticketKey} ${event.phase} ${event.event}: ${event.detail}`);
+        log(`[${SKILL_NAME}] ${ticketKey} ${event.phase} ${event.event}: ${event.detail}`);
       } catch {
         // Malformed progress line -- never let a logging glitch crash the loop.
       }
@@ -121,14 +138,33 @@ function startProgressTail(
   };
 }
 
+/**
+ * Line-buffers a readable stream and calls onLine per complete line --
+ * shared by both spawn functions' stderr handling below, since stderr is
+ * never inherited (that would print an unredacted child-process line
+ * straight to the terminal, bypassing redactPII() entirely).
+ */
+function onLines(stream: NodeJS.ReadableStream, onLine: (line: string) => void): void {
+  let buffered = "";
+  stream.on("data", (chunk: Buffer) => {
+    buffered += chunk.toString("utf8");
+    const lines = buffered.split("\n");
+    buffered = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.trim().length > 0) onLine(line);
+    }
+  });
+}
+
 /** Spawns `claude` with the given args and resolves with its stdout. */
 function spawnClaude(args: string[], env: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn("claude", args, { stdio: ["ignore", "pipe", "inherit"], env });
+    const child = spawn("claude", args, { stdio: ["ignore", "pipe", "pipe"], env });
     let stdout = "";
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
     });
+    onLines(child.stderr, (line) => logError(`[${SKILL_NAME}] (stderr) ${line}`));
     child.on("error", reject);
     child.on("close", (code) => {
       if (code !== 0) {
@@ -161,7 +197,7 @@ function printStreamEvent(parsed: unknown, ticketKey: string): void {
     if (!Array.isArray(content)) return;
     for (const item of content) {
       if (item?.type === "tool_use") {
-        console.log(
+        log(
           `[${SKILL_NAME}] ${ticketKey} tool_use: ${item.name} ${truncate(item.input)}`,
         );
       }
@@ -171,7 +207,7 @@ function printStreamEvent(parsed: unknown, ticketKey: string): void {
     if (!Array.isArray(content)) return;
     for (const item of content) {
       if (item?.type === "tool_result") {
-        console.log(
+        log(
           `[${SKILL_NAME}] ${ticketKey} tool_result: ${truncate(item.content)}`,
         );
       }
@@ -197,30 +233,24 @@ function spawnClaudeStreaming(
     const child = spawn(
       "claude",
       [...args, "--output-format", "stream-json", "--verbose"],
-      { stdio: ["ignore", "pipe", "inherit"], env },
+      { stdio: ["ignore", "pipe", "pipe"], env },
     );
-    let buffered = "";
     let lastLine = "";
     let resultLine: string | null = null;
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      buffered += chunk.toString("utf8");
-      const lines = buffered.split("\n");
-      buffered = lines.pop() ?? "";
-      for (const line of lines) {
-        if (line.trim().length === 0) continue;
-        lastLine = line;
-        try {
-          const parsed = JSON.parse(line);
-          if (parsed?.type === "result") {
-            resultLine = line;
-          }
-          onEvent(parsed);
-        } catch {
-          // Malformed stream line -- skip it, never let it crash the loop.
+    onLines(child.stdout, (line) => {
+      lastLine = line;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed?.type === "result") {
+          resultLine = line;
         }
+        onEvent(parsed);
+      } catch {
+        // Malformed stream line -- skip it, never let it crash the loop.
       }
     });
+    onLines(child.stderr, (line) => logError(`[${SKILL_NAME}] (stderr) ${line}`));
     child.on("error", reject);
     child.on("close", (code) => {
       const finalLine = resultLine ?? lastLine;
@@ -248,7 +278,7 @@ async function main(): Promise<void> {
   const runsLogPath = join("runs", `${slug}.jsonl`);
   const runsBaseDir = join(".pipeline", slug, "runs");
 
-  console.log(
+  log(
     `[${SKILL_NAME}] loop started, polling every ${loopConfig.pollIntervalSec}s (project: ${slug})`,
   );
 
@@ -256,7 +286,7 @@ async function main(): Promise<void> {
     const started = new Date().toISOString();
     const before = await snapshotRunDirs(runsBaseDir, ticketKey);
 
-    console.log(`[${SKILL_NAME}] claimed ${ticketKey}, running...`);
+    log(`[${SKILL_NAME}] claimed ${ticketKey}, running...`);
     const tail = startProgressTail(runsBaseDir, ticketKey, before);
 
     const claudeArgs = [
@@ -297,7 +327,7 @@ async function main(): Promise<void> {
       // missing verdict.json: log it, let the loop record an agent_error
       // and keep polling.
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[${SKILL_NAME}] ${ticketKey}: spawn failed: ${message}`);
+      logError(`[${SKILL_NAME}] ${ticketKey}: spawn failed: ${message}`);
       await tail.stop();
       return {
         verdict: agentErrorVerdict(message),
@@ -336,11 +366,11 @@ async function main(): Promise<void> {
           permission_denials?: Array<{ tool_name: string }>;
         } | null;
         if (parsed?.result) {
-          console.error(`[${SKILL_NAME}] ${ticketKey}: claude's own result text: ${parsed.result}`);
+          logError(`[${SKILL_NAME}] ${ticketKey}: claude's own result text: ${parsed.result}`);
         }
         if (parsed?.permission_denials?.length) {
           const denied = parsed.permission_denials.map((d) => d.tool_name).join(", ");
-          console.error(`[${SKILL_NAME}] ${ticketKey}: permission denials: ${denied}`);
+          logError(`[${SKILL_NAME}] ${ticketKey}: permission denials: ${denied}`);
         }
       } catch {
         // Diagnostic logging must never itself crash the loop.
@@ -363,33 +393,33 @@ async function main(): Promise<void> {
 
     switch (result.kind) {
       case "idle":
-        console.log(
+        log(
           `[${SKILL_NAME}] queue empty, sleeping ${loopConfig.pollIntervalSec}s`,
         );
         if (once) return;
         await sleep(loopConfig.pollIntervalSec * 1000);
         break;
       case "skipped-race":
-        console.log(`[${SKILL_NAME}] claim raced on ${result.ticket}, retrying`);
+        log(`[${SKILL_NAME}] claim raced on ${result.ticket}, retrying`);
         if (once) return;
         break;
       case "ran":
-        console.log(`[${SKILL_NAME}] ${result.ticket}: ${result.logLine.detail}`);
+        log(`[${SKILL_NAME}] ${result.ticket}: ${result.logLine.detail}`);
         if (result.jiraSyncError) {
-          console.error(
+          logError(
             `[${SKILL_NAME}] ${result.ticket}: WARNING -- Jira epic/status update failed (${result.jiraSyncError}). The run is logged in runs.jsonl, but Jira's epic/status may not reflect it -- check and fix manually.`,
           );
         }
         if (once) return;
         break;
       case "paused":
-        console.error(`[${SKILL_NAME}] PAUSED: ${result.reason}`);
+        logError(`[${SKILL_NAME}] PAUSED: ${result.reason}`);
         process.exit(1);
     }
   }
 }
 
 main().catch((err) => {
-  console.error(`[${SKILL_NAME}] fatal error:`, err);
+  logError(`[${SKILL_NAME}] fatal error: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
   process.exit(1);
 });
