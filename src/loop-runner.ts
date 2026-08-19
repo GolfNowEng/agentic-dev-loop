@@ -63,6 +63,16 @@ export interface LoopIterationResult {
   logLine?: RunLogLine;
   /** Present when action is "paused-ceiling". */
   pauseReason?: string;
+  /**
+   * Present if the post-verdict Jira write (moveToEpic/transitionStatus)
+   * threw -- e.g. a malformed request, a transient API error. The run
+   * itself still completed and is still logged; this only means Jira's
+   * state may now be out of sync with runs.jsonl (the ticket may still
+   * sit in its old epic/status). Surfaced so a caller can alert a human,
+   * but never thrown -- one Jira write failing must not kill the loop or
+   * discard an otherwise-real, already-completed run.
+   */
+  jiraSyncError?: string;
 }
 
 export interface RunLoopIterationDeps {
@@ -126,12 +136,24 @@ export async function runLoopIteration(
   // log). Checking the ceiling first would silently drop a genuine
   // "landed" verdict just because it happened to cost/take more than
   // expected, which defeats the purpose of the audit trail.
-  if (outcome === "landed") {
-    const autoPromote = ticket.labels.includes(config.autoPromoteLabel);
-    const targetEpic = autoPromote ? config.jira.readyEpic : config.jira.reviewEpic;
-    await jiraClient.moveToEpic(ticket.key, targetEpic);
-  } else if (outcome === "bounced") {
-    await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
+  //
+  // The Jira write itself is wrapped in try/catch: a malformed request or
+  // a transient API error here must never throw out of this function --
+  // that would propagate out of the caller's poll loop and kill the
+  // entire unattended process over what is otherwise a real, completed
+  // run. The run still gets logged either way; only the epic/status may
+  // be out of sync with what runs.jsonl says happened.
+  let jiraSyncError: string | undefined;
+  try {
+    if (outcome === "landed") {
+      const autoPromote = ticket.labels.includes(config.autoPromoteLabel);
+      const targetEpic = autoPromote ? config.jira.readyEpic : config.jira.reviewEpic;
+      await jiraClient.moveToEpic(ticket.key, targetEpic);
+    } else if (outcome === "bounced") {
+      await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
+    }
+  } catch (err) {
+    jiraSyncError = err instanceof Error ? err.message : String(err);
   }
 
   const logLine: RunLogLine = {
@@ -161,8 +183,14 @@ export async function runLoopIteration(
     runDurationMin: result.durationMin,
   });
   if (postCheck.breached) {
-    return { action: "paused-ceiling", pauseReason: postCheck.detail, ticket: ticket.key, logLine };
+    return {
+      action: "paused-ceiling",
+      pauseReason: postCheck.detail,
+      ticket: ticket.key,
+      logLine,
+      jiraSyncError,
+    };
   }
 
-  return { action: "processed", ticket: ticket.key, logLine };
+  return { action: "processed", ticket: ticket.key, logLine, jiraSyncError };
 }

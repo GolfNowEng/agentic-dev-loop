@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { runLoopIteration } from "../src/loop-runner.ts";
-import type { RunSkillFn, RunSkillResult, RunLoopIterationDeps } from "../src/loop-runner.ts";
+import type { RunSkillFn, RunSkillResult, RunLoopIterationDeps, LoopIterationResult } from "../src/loop-runner.ts";
 import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
 import type { Config } from "../src/types.ts";
 import { readRunLog } from "../src/runs-log.ts";
@@ -361,6 +361,46 @@ describe("runLoopIteration", () => {
 
     expect(result.logLine?.outcome).toBe("bounced");
     expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+  });
+
+  it("a moveToEpic failure (e.g. a malformed Jira request) never throws out of runLoopIteration -- the run still gets logged, and the failure is surfaced via jiraSyncError, not by killing the caller", async () => {
+    const jiraClient = makeMockJiraClient({
+      moveToEpic: vi.fn(async () => {
+        throw new Error('PUT ... -> 400 Bad Request. {"errors":{"parent":"data was not an object"}}');
+      }),
+    });
+    const runSkill: RunSkillFn = vi.fn(async () =>
+      makeRunSkillResult({
+        verdictRaw: JSON.stringify({
+          outcome: "landed",
+          phase_reached: "pr",
+          failure_category: null,
+          detail: "Refined and ready for human review.",
+        }),
+      }),
+    );
+    const config = makeConfig();
+
+    let result: LoopIterationResult | undefined;
+    await expect(
+      (async () => {
+        result = await runLoopIteration({
+          jiraClient,
+          config,
+          jql: "epic in (EPIC-1)",
+          runSkill,
+          runsLogPath,
+          runsToday: 0,
+        });
+      })(),
+    ).resolves.not.toThrow();
+
+    expect(result!.action).toBe("processed");
+    expect(result!.jiraSyncError).toMatch(/400 Bad Request/);
+    // The run itself is still recorded, even though the Jira write failed.
+    const lines = await readRunLog(runsLogPath);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("landed");
   });
 
   it("appends exactly one valid runs.jsonl line for a processed ticket", async () => {
