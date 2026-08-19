@@ -13,7 +13,6 @@ function makeConfig(): Config {
   return {
     jira: {
       intakeEpics: ["EPIC-1"],
-      reviewEpic: "EPIC-REVIEW",
       readyEpic: "EPIC-READY",
       claimStatus: { from: "Ready", to: "In Progress" },
       pollJql: {
@@ -457,10 +456,9 @@ describe("runLoopIteration", () => {
 
       expect(result.kind).toBe("ran");
       // A landed dev-loop verdict never moves the epic -- the ticket
-      // stays in Pipeline: Ready. Moving it to reviewEpic would collide
-      // with research-loop's own use of that epic ("refined spec
-      // awaiting human approval"), overloading one epic to mean two
-      // different things depending on which ticket you're looking at.
+      // stays in Pipeline: dev-loop. Moving it to research-loop's epic
+      // would overload one epic to mean two different things depending
+      // on which ticket you're looking at.
       expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
       expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
         "PROJ-6",

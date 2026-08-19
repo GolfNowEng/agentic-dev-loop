@@ -153,14 +153,13 @@ export async function runLoopIteration(
     }
     if (loopKind === "dev" && verdict.outcome === "landed") {
       // A landed PR gets its status transitioned to Code Review -- never
-      // its epic. The epic (Pipeline: Ready) already means "dev-loop is
-      // authorized to work this ticket"; moving it to reviewEpic would
-      // collide with research-loop's own use of that epic ("refined spec
-      // awaiting human approval"), making one epic mean two different
-      // things depending on which ticket you're looking at. Status alone
-      // -- In Progress -> Code Review -- is the "needs code review"
-      // signal. That transition has a required Jira screen (PII/QA-notes
-      // fields), so the fields must be sent alongside it, not left empty.
+      // its epic. The epic (Pipeline: dev-loop) already means "dev-loop
+      // is authorized to work this ticket"; moving it anywhere else would
+      // make epic placement ambiguous depending on which ticket you're
+      // looking at. Status alone -- In Progress -> Code Review -- is the
+      // "needs code review" signal. That transition has a required Jira
+      // screen (PII/QA-notes fields), so the fields must be sent alongside
+      // it, not left empty.
       const fields = buildCodeReviewFields(config, buildQaNotesAdf(verdict));
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.prOpen, fields);
     } else if (verdict.outcome === "bounced") {
@@ -202,9 +201,11 @@ export async function runLoopIteration(
  * ticket stays in place). A landed dev-loop verdict never moves the epic
  * either -- a landed PR only transitions status (see runLoopIteration's
  * Code Review branch); the ticket stays in whatever epic it already sits
- * in (Pipeline: Ready). Only research-loop's own landed/ready verdicts
- * move an epic (to reviewEpic, or readyEpic if research-loop only ever
- * uses this function for its own loop -- see the "refine" branch below).
+ * in (Pipeline: dev-loop). Only research-loop's own landed/ready verdicts
+ * move an epic -- to readyEpic, when auto-promoted (see the "refine"
+ * branch below); a non-auto-promoted verdict leaves the ticket in place
+ * too, since research-loop's own intake and spec-review territory is now
+ * a single combined epic (Pipeline: review-loop), not two.
  */
 export function decideEpicMove(
   verdict: Verdict,

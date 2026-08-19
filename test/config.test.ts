@@ -15,7 +15,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
     jira: {
       intakeEpics: ["EPIC-1"],
-      reviewEpic: "EPIC-REVIEW",
       readyEpic: "EPIC-READY",
       claimStatus: { from: "To Do", to: "In Progress" },
       pollJql: {
@@ -76,7 +75,7 @@ describe("loadConfig", () => {
     await fs.writeFile(filePath, JSON.stringify(makeConfig()), "utf8");
     const config = await loadConfig(filePath);
     expect(config.targetRepo.url).toBe("git@github.com:fandango/webtarsthree.git");
-    expect(config.jira.reviewEpic).toBe("EPIC-REVIEW");
+    expect(config.jira.readyEpic).toBe("EPIC-READY");
   });
 
   it("throws if the file does not exist", async () => {
@@ -133,10 +132,10 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
 
   it("lists every field still set to the placeholder value", () => {
     const config = makeConfig({
-      jira: { ...makeConfig().jira, reviewEpic: "___", epicLinkField: "___" },
+      jira: { ...makeConfig().jira, readyEpic: "___", epicLinkField: "___" },
     });
     const missing = findPlaceholders(config);
-    expect(missing).toContain("jira.reviewEpic");
+    expect(missing).toContain("jira.readyEpic");
     expect(missing).toContain("jira.epicLinkField");
   });
 

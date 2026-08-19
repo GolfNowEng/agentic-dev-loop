@@ -5,7 +5,6 @@ import type { Config } from "../src/types.ts";
 const config: Config = {
   jira: {
     intakeEpics: ["EPIC-1", "EPIC-2"],
-    reviewEpic: "EPIC-REVIEW",
     readyEpic: "EPIC-READY",
     claimStatus: { from: "Ready", to: "In Progress" },
     pollJql: {

@@ -11,7 +11,6 @@ function makeConfig(overrides: Partial<Config["jira"]> = {}): Config {
   return {
     jira: {
       intakeEpics: ["EPIC-1"],
-      reviewEpic: "EPIC-REVIEW",
       readyEpic: "EPIC-READY",
       claimStatus: { from: "Backlog", to: "In Progress" },
       pollJql: { refine: "epic in ({epics})", dev: "epic = {epic}" },

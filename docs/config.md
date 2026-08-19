@@ -5,8 +5,14 @@
 `src/types.ts`'s `Config` interface is the source of truth for
 `pipeline.<project>.config.json`'s shape:
 
-- `jira.intakeEpics` / `reviewEpic` / `readyEpic` — the three pipeline-stage
-  epics a ticket moves through (Intake → Review → Ready).
+- `jira.intakeEpics` / `readyEpic` — the two pipeline epics a ticket moves
+  through: `intakeEpics` ("Pipeline: review-loop") is research-loop's whole
+  territory — fresh, unrefined tickets *and* already-refined tickets
+  awaiting Justin's approval, both live here (there is no separate
+  "awaiting approval" epic; that distinction is now a comment on the
+  ticket itself — presence of `Refined Spec — ready for ticket-to-pr` —
+  not an epic). `readyEpic` ("Pipeline: dev-loop") is dev-loop's whole
+  territory, end to end: picked up, coded, PR'd, code-reviewed, merged.
 - `jira.claimStatus.{from,to}` — the status transition research-loop uses to
   atomically claim a ticket from an intake epic (race-safe:
   `JiraClient.claimTicket` returns `false`, never throws, if another
@@ -28,8 +34,8 @@
   rejects an empty payload.
 - `ceilings.{maxRunsPerDay,maxCostPerRunUsd,runTimeoutMin}` — enforced by
   `src/ceilings.ts`; a breach pauses the loop, it never silently continues.
-- `autoPromoteLabel` — a ticket label that lets a passing verdict skip the
-  human Review epic and go straight to Ready.
+- `autoPromoteLabel` — a ticket label that lets a passing research-loop
+  verdict skip human approval and move straight to `readyEpic`.
 - `targetRepo.{url,defaultBranch}` — the codebase this pipeline operates on
   (not this pipeline repo itself).
 - `targetRepo.path` (optional) — local filesystem path to an existing
@@ -44,9 +50,9 @@
 
 Once research-loop claims a ticket (`To Do` → `In Progress`), status stays
 `In Progress` for the rest of the pipeline's lifecycle — no loop ever
-transitions it back toward `To Do`. The **epic move** (Intake → Review →
-Ready) is the real human-approval gate; status is not overloaded to also
-signal that.
+transitions it back toward `To Do`. The **epic move** (`intakeEpics` →
+`readyEpic`, on human approval or `autoPromoteLabel`) is the real
+human-approval gate; status is not overloaded to also signal that.
 
 This means dev-loop can't claim a ticket the way research-loop does (there's
 no `In Progress` → `In Progress` self-transition in a normal Jira workflow).
@@ -90,21 +96,25 @@ but never actually moved the ticket to Code Review — `moveToEpic` ran, but
 nothing ever called `transitionStatus` for a landed outcome, so the
 transition itself was simply missing from the code, not rejected by Jira.
 That was fixed the same night — but the first fix also moved the ticket's
-**epic** to `reviewEpic` on a landed verdict, which turned out to be its
-own bug: `reviewEpic` ("Pipeline: Review") already means "research-loop's
-refined spec is awaiting human approval." Landing a dev-loop PR there too
-overloaded the same epic to mean two different things depending on which
-ticket you were looking at, confirmed confusing on the real board (two
-landed PRs both showed "Pipeline: Review" alongside spec-review tickets,
-with no way to tell them apart without opening each one).
+**epic** on a landed verdict, which turned out to be its own bug: at the
+time, research-loop's spec-review epic ("Pipeline: Review") already meant
+"refined spec is awaiting human approval," and landing a dev-loop PR there
+too overloaded that same epic to mean two different things depending on
+which ticket you were looking at — confirmed confusing on the real board
+(landed PRs and spec-review tickets both showed the same epic name, with
+no way to tell them apart without opening each one). That epic no longer
+exists at all now (see the two-epic model above) — but the underlying fix
+stands regardless of naming.
 
 Fixed by removing the epic move entirely for a landed dev-loop verdict —
 `decideEpicMove` returns `null` whenever `loopKind === "dev"`, regardless
 of outcome. A landed ticket stays in whatever epic it already sits in
-(`readyEpic`, "Pipeline: Ready"); **status alone** — `In Progress` →
+(`readyEpic`, "Pipeline: dev-loop"); **status alone** — `In Progress` →
 `Code Review` — is the "needs code review" signal now. research-loop's own
-landed/ready verdicts still move the epic normally (that's the real
-Intake→Review/Ready human gate, unrelated to this fix).
+landed/ready verdicts still move the epic normally (`intakeEpics` →
+`readyEpic`, on `autoPromoteLabel` — the real human-approval gate,
+unrelated to this fix; a non-auto-promoted verdict leaves the ticket in
+place, since research-loop's territory is now one epic, not two).
 
 ## Code Review transition screen fields
 
@@ -142,10 +152,18 @@ Every Jira-specific value above starts as the literal placeholder string
 `"___"` in a fresh `pipeline.<project>.config.json`. `findPlaceholders()` /
 `assertNoPlaceholders()` in `src/config.ts` detect leftover placeholders —
 `RealJiraClient` refuses to make a Jira call while any remain. Filling these
-in for a real project means: creating (or identifying) the three pipeline
-epics in Jira, checking the *child ticket* workflow for real status names,
-and confirming `epicLinkField` against whether the project is team-managed
-or company-managed.
+in for a real project means: creating (or identifying) the two pipeline
+epics in Jira (review-loop's, dev-loop's), checking the *child ticket*
+workflow for real status names, and confirming `epicLinkField` against
+whether the project is team-managed or company-managed.
+
+**Known tradeoff of the two-epic model**: the board no longer shows
+"still being refined" vs. "refined, awaiting approval" as two different
+epics — both look identical (same epic, same status) until you open the
+ticket. The real signal for which is the presence of a `Refined Spec —
+ready for ticket-to-pr` comment. Not solved here; revisit only if this
+becomes a real problem in practice (e.g. a dedicated label set alongside
+the comment, checked at a glance without opening the ticket).
 
 ## Adding a new project
 

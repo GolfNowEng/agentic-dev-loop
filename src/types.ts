@@ -107,7 +107,6 @@ export interface PollJqlConfig {
 
 export interface JiraConfig {
   intakeEpics: string[];
-  reviewEpic: string;
   readyEpic: string;
   claimStatus: ClaimStatusConfig;
   pollJql: PollJqlConfig;
