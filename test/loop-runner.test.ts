@@ -14,7 +14,6 @@ function makeConfig(overrides: Partial<Config["ceilings"]> = {}): Config {
   return {
     jira: {
       intakeEpics: ["EPIC-1"],
-      reviewEpic: "EPIC-REVIEW",
       readyEpic: "EPIC-READY",
       claimStatus: { from: "Backlog", to: "In Progress" },
       pollJql: { refine: "epic in ({epics})", dev: "epic = {epic}" },
@@ -237,7 +236,7 @@ describe("runLoopIteration", () => {
     expect(result.pauseReason).toBeTruthy();
   });
 
-  it("a post-run ceiling breach still records the run's real consequences (epic move, runs.jsonl) before pausing -- a completed, valid verdict must never be silently discarded", async () => {
+  it("a post-run ceiling breach still records the run's real consequences (runs.jsonl) before pausing -- a completed, valid verdict must never be silently discarded", async () => {
     const jiraClient = makeMockJiraClient();
     const runSkill: RunSkillFn = vi.fn(async () =>
       makeRunSkillResult({
@@ -257,7 +256,8 @@ describe("runLoopIteration", () => {
     expect(result.action).toBe("paused-ceiling");
     // The verdict was real and passing -- its consequences must still happen,
     // not be thrown away just because the ceiling was breached after the fact.
-    expect(jiraClient.moveToEpic).toHaveBeenCalledWith("PROJ-142", config.jira.reviewEpic);
+    // No autoPromoteLabel -- ticket stays in place, no epic move.
+    expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
     const lines = await readRunLog(runsLogPath);
     expect(lines).toHaveLength(1);
     expect(lines[0].outcome).toBe("landed");
@@ -278,7 +278,7 @@ describe("runLoopIteration", () => {
     expect(result.pauseReason).toBeTruthy();
   });
 
-  it("a passing verdict without autoPromoteLabel moves the ticket to the review epic", async () => {
+  it("a passing verdict without autoPromoteLabel never moves the epic -- research-loop's intake+review territory is one combined epic, so the ticket just stays in place, refined, awaiting human approval", async () => {
     const jiraClient = makeMockJiraClient();
     const runSkill: RunSkillFn = vi.fn(async () =>
       makeRunSkillResult({
@@ -294,7 +294,7 @@ describe("runLoopIteration", () => {
 
     await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
 
-    expect(jiraClient.moveToEpic).toHaveBeenCalledWith("PROJ-142", config.jira.reviewEpic);
+    expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
   });
 
   it("a passing verdict with autoPromoteLabel present moves the ticket to the ready epic", async () => {
@@ -320,7 +320,7 @@ describe("runLoopIteration", () => {
     expect(jiraClient.moveToEpic).toHaveBeenCalledWith("PROJ-142", config.jira.readyEpic);
   });
 
-  it("a verdict with outcome \"ready\" (ticket-refine's own passing outcome) moves the epic and logs as \"landed\"", async () => {
+  it("a verdict with outcome \"ready\" (ticket-refine's own passing outcome) logs as \"landed\" and, without autoPromoteLabel, never moves the epic", async () => {
     const jiraClient = makeMockJiraClient();
     const runSkill: RunSkillFn = vi.fn(async () =>
       makeRunSkillResult({
@@ -336,7 +336,7 @@ describe("runLoopIteration", () => {
 
     const result = await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
 
-    expect(jiraClient.moveToEpic).toHaveBeenCalledWith("PROJ-142", config.jira.reviewEpic);
+    expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
     expect(result.logLine?.outcome).toBe("landed");
   });
 
@@ -362,6 +362,12 @@ describe("runLoopIteration", () => {
 
   it("a moveToEpic failure (e.g. a malformed Jira request) never throws out of runLoopIteration -- the run still gets logged, and the failure is surfaced via jiraSyncError, not by killing the caller", async () => {
     const jiraClient = makeMockJiraClient({
+      // auto-promote label is required to exercise moveToEpic at all --
+      // a non-auto-promoted landed verdict never calls it (see the
+      // "never moves the epic" test above).
+      pollOldestMatching: vi.fn(async () =>
+        makeTicket({ key: "PROJ-142", labels: ["auto-promote"] }),
+      ),
       moveToEpic: vi.fn(async () => {
         throw new Error('PUT ... -> 400 Bad Request. {"errors":{"parent":"data was not an object"}}');
       }),

@@ -1,7 +1,6 @@
 {
   "jira": {
     "intakeEpics": ["TARS-1350"],
-    "reviewEpic": "TARS-1383",
     "readyEpic": "TARS-1384",
     "claimStatus": { "from": "To Do", "to": "In Progress" },
     "pollJql": {

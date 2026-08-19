@@ -6,7 +6,6 @@ function makeConfig(): Config {
   return {
     jira: {
       intakeEpics: ["EPIC-1", "EPIC-2"],
-      reviewEpic: "EPIC-REVIEW",
       readyEpic: "EPIC-READY",
       claimStatus: { from: "Backlog", to: "In Progress" },
       pollJql: {

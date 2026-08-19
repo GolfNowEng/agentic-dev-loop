@@ -10,8 +10,8 @@ Full design: see the pipeline spec referenced in `docs/config.md`.
   produce a ticket a literal-minded Sonnet-tier implementer can execute
   without asking a single question, or bounce it with concrete evidence of
   why it isn't ready. All the pipeline's skepticism lives here, upstream of
-  the human review gate — once a ticket crosses into the Review epic, it
-  stops being questioned.
+  the human review gate — once a human approves a refined ticket and moves
+  it to dev-loop's epic, it stops being questioned.
 - **Ground claims against the actual codebase before trusting them.** Don't
   take a ticket's description of "current behavior" or "the bug" at face
   value — verify it via `recon-agent` against the target repo.

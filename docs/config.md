@@ -5,8 +5,14 @@
 `src/types.ts`'s `Config` interface is the source of truth for
 `pipeline.<project>.config.json`'s shape:
 
-- `jira.intakeEpics` / `reviewEpic` / `readyEpic` — the three pipeline-stage
-  epics a ticket moves through (Intake → Review → Ready).
+- `jira.intakeEpics` / `readyEpic` — the two pipeline epics a ticket moves
+  through. `intakeEpics` ("Pipeline: review-loop") is this loop's whole
+  territory — fresh, unrefined tickets *and* already-refined tickets
+  awaiting Justin's approval both live here; there is no separate epic for
+  "awaiting approval" (that distinction is a comment on the ticket itself
+  — presence of `Refined Spec — ready for ticket-to-pr` — not an epic).
+  `readyEpic` ("Pipeline: dev-loop") is dev-loop's territory; this loop
+  only ever *writes* to it (on an auto-promoted verdict), never polls it.
 - `jira.claimStatus.{from,to}` — the status transition this loop uses to
   atomically claim a ticket (race-safe: `JiraClient.claim` returns `false`,
   never throws, if another process already claimed it).
@@ -23,8 +29,10 @@
   and will give you the wrong answer.
 - `ceilings.{maxRunsPerDay,maxCostPerRunUsd,runTimeoutMin}` — enforced by
   `src/ceilings.ts`; a breach pauses the loop, it never silently continues.
-- `autoPromoteLabel` — a ticket label that lets a passing verdict skip the
-  human Review epic and go straight to Ready.
+- `autoPromoteLabel` — a ticket label that lets a passing verdict skip
+  human approval and move straight to `readyEpic`. Without it, a passing
+  verdict leaves the ticket in place (`intakeEpics`), refined and awaiting
+  approval.
 - `targetRepo.{url,defaultBranch}` — the codebase `ticket-refine` grounds
   tickets against (not this pipeline repo itself). Read-only for this repo.
 - `targetRepo.path` (optional) — local filesystem path to an existing
@@ -49,8 +57,8 @@ Once this loop claims a ticket (`claimStatus.from` → `claimStatus.to`,
 typically `To Do` → `In Progress`), status stays at `claimStatus.to` for the
 rest of the pipeline's lifecycle — this loop never transitions it back
 toward `claimStatus.from`, even on a passing verdict. The **epic move**
-(Intake → Review → Ready) is the real human-approval gate; status is not
-overloaded to also signal that.
+(`intakeEpics` → `readyEpic`, on human approval or `autoPromoteLabel`) is
+the real human-approval gate; status is not overloaded to also signal that.
 
 This matters for `dev-loop`, which has no atomic claim step of its own and
 instead polls directly for `status = claimStatus.to` (typically
@@ -83,10 +91,17 @@ Every Jira-specific value above starts as the literal placeholder string
 `"___"` in a fresh `pipeline.<project>.config.json`. `findPlaceholders()` /
 `assertNoPlaceholders()` in `src/config.ts` detect leftover placeholders —
 `RealJiraClient` refuses to make a Jira call while any remain. Filling these
-in for a real project means: creating (or identifying) the three pipeline
-epics in Jira, checking the *child ticket* workflow for real status names,
-and confirming `epicLinkField` against whether the project is team-managed
-or company-managed.
+in for a real project means: creating (or identifying) the two pipeline
+epics in Jira (this loop's, dev-loop's), checking the *child ticket*
+workflow for real status names, and confirming `epicLinkField` against
+whether the project is team-managed or company-managed.
+
+**Known tradeoff of the two-epic model**: the board no longer shows
+"still being refined" vs. "refined, awaiting approval" as two different
+epics — both look identical (same epic, same status) until you open the
+ticket. The real signal for which is the presence of a `Refined Spec —
+ready for ticket-to-pr` comment. Not solved here; revisit only if this
+becomes a real problem in practice.
 
 ## Adding a new project
 

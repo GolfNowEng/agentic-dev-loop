@@ -106,10 +106,14 @@ export interface LoopConfig {
 /** Shape of pipeline.config.json. */
 export interface Config {
   jira: {
-    /** Epics whose tickets are candidates for the refine (skeptic) loop. */
+    /**
+     * research-loop's combined territory -- fresh, unrefined tickets and
+     * already-refined tickets awaiting human approval both live here (no
+     * separate epic for "awaiting approval"; that distinction is a
+     * comment on the ticket -- presence of "Refined Spec -- ready for
+     * ticket-to-pr" -- not an epic).
+     */
     intakeEpics: string[];
-    /** Epic a ticket moves to after a passing refine verdict (human review gate). */
-    reviewEpic: string;
     /** Epic a ticket moves to when ready for dev-loop to pick up. */
     readyEpic: string;
     claimStatus: {
@@ -148,7 +152,7 @@ export interface Config {
   };
   /**
    * Label that, when present on a ticket, allows a passing refine verdict
-   * to skip the human review epic and go straight to the ready epic.
+   * to skip human approval and go straight to the ready epic.
    */
   autoPromoteLabel: string;
   /**

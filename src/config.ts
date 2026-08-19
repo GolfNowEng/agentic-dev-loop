@@ -52,7 +52,6 @@ export function repoSlugFromUrl(url: string): string {
 
 /** Field paths (dot-notation) worth checking for leftover "___" placeholders. */
 const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
-  ["jira.reviewEpic", (c) => c.jira.reviewEpic],
   ["jira.readyEpic", (c) => c.jira.readyEpic],
   ["jira.claimStatus.from", (c) => c.jira.claimStatus.from],
   ["jira.claimStatus.to", (c) => c.jira.claimStatus.to],

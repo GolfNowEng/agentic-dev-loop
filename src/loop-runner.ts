@@ -160,9 +160,16 @@ export async function runLoopIteration(
   let jiraSyncError: string | undefined = assignSyncError;
   try {
     if (outcome === "landed") {
+      // Only an auto-promoted verdict moves the epic (straight to
+      // readyEpic, skipping human approval). A non-auto-promoted landed
+      // verdict leaves the ticket in place -- research-loop's intake and
+      // spec-review territory is a single combined epic, not two, so
+      // there's nowhere new to move to; the ticket just sits there,
+      // refined, until a human manually moves it to readyEpic.
       const autoPromote = ticket.labels.includes(config.autoPromoteLabel);
-      const targetEpic = autoPromote ? config.jira.readyEpic : config.jira.reviewEpic;
-      await jiraClient.moveToEpic(ticket.key, targetEpic);
+      if (autoPromote) {
+        await jiraClient.moveToEpic(ticket.key, config.jira.readyEpic);
+      }
     } else if (outcome === "bounced") {
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
     }

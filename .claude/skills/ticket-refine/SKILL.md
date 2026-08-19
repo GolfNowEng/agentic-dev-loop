@@ -30,8 +30,10 @@ ready for ticket-to-pr` comment? Two cases:
 - **First pickup** (no such comment exists): proceed through Steps 0–7
   below as a fresh refinement. The ticket's description is never touched —
   it's the stakeholder's original and stays exactly as written, permanently.
-- **Re-pickup after human comments** (ticket was sent back from the Review
-  epic to an Intake epic with a comment): read the human's comment(s) as
+- **Re-pickup after human comments** (ticket status was reset to `To Do`
+  with a steering comment added, still in this same epic — research-loop's
+  intake and spec-review territory is one combined epic, not two, so
+  there's no epic to move between): read the human's comment(s) as
   steering input, and **revise** the existing refinement rather than
   starting over from scratch. Re-run only the steps the comment calls into
   question (e.g. if the human flagged an incorrect fault-domain call,
@@ -323,9 +325,10 @@ This must be a genuinely independent check, not the same reasoning that
 produced the ticket rubber-stamping itself.
 
 - If it passes: write the `Refined Spec — ready for ticket-to-pr` comment
-  (see ticket content protocol), set `verdict.outcome: "ready"`, move to
-  Review epic (the loop runner does the actual epic move on a passing
-  verdict — this skill just reports the verdict).
+  (see ticket content protocol), set `verdict.outcome: "ready"`. The
+  ticket stays in this same epic, refined and awaiting human approval
+  (the loop runner only moves it to dev-loop's epic if `autoPromoteLabel`
+  is present — this skill just reports the verdict either way).
 - If it fails: bounce with the specific `failure_category` and what's
   missing, per the checklist's own criteria.
 
