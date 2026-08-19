@@ -206,6 +206,33 @@ them with trial and error until one is confirmed or all are exhausted —
 don't stop at the first plausible-looking explanation without checking
 whether it actually holds.
 
+0. **Currency check, before anything else in this step.** Before forming
+   hypotheses or spawning any `recon-agent`, do one cheap, direct check —
+   a `Read`/`grep` on the specific file(s)/behavior/test the ticket names,
+   not a fan-out — to confirm the ticket's premise is still current. Tickets
+   can go stale: the described gap may already be fully closed, or partially
+   closed (e.g. a test file the ticket claims doesn't exist actually does,
+   but the specific coverage the ticket is really asking for is still
+   missing). This exists because the expensive parallel hypothesis machinery
+   below is the wrong tool for "does this still need doing at all" — that
+   question should be answered by one cheap read, not a multi-hypothesis
+   investigation that only discovers the contradiction after paying for it.
+   - **Fully resolved** (the described problem/gap no longer exists at
+     all — already fixed, file already does what's asked, nothing left to
+     do): bounce `spec_contradicted` right here, cheaply, with the specific
+     evidence (file, line, what you found vs. what the ticket claims). Do
+     not proceed to hypothesis-forming.
+   - **Partially stale** (real work still exists, but the ticket's framing
+     of it is wrong — e.g. it assumes a file must be created when it
+     already exists and the actual gap is extending it, or assumes a
+     symptom that's now different from what's actually broken): this is
+     not a bounce. Correct your working understanding of the premise (note
+     the correction, e.g. "extend the existing file" instead of "create a
+     new one") and continue into hypothesis-forming with the corrected
+     premise — the work is real, just mis-described; a bounce here would
+     just cost a human round-trip for something this skill can fix in the
+     same run.
+   - **Premise holds**: proceed as normal.
 1. **Form hypotheses.** If the cause or the described behavior isn't
    obvious from a first read, write down 2–3 concrete, distinct candidate
    explanations (not "something's wrong in the auth flow" — specific enough

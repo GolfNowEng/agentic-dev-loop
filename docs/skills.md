@@ -27,17 +27,28 @@ affected by a background run:
    can't resolve the gap. Tickets here vary a lot by author and are often
    under-specified; the default is to investigate and bounce with
    evidence, not to bounce on input alone.
-2. **Ground** — pragmatic, hypothesis-driven investigation, not a lookup:
-   creates this run's worktree first, then forms 2-3 concrete competing
-   explanations when the cause isn't obvious. If any hypothesis needs a
-   live API call to test (not just reading client code), `ticket-refine`
-   starts the target repo's own dev server *once* inside that worktree,
-   checking first whether one's already running — then fans out one
-   `recon-agent` per hypothesis in parallel (below), each testing its own
-   hypothesis against the worktree (and the running dev server's local
-   proxy routes, if relevant). "More than one confirmed, or none" is a
-   finding to carry into Attack, not something to silently resolve by
-   picking one.
+2. **Ground** — starts with a cheap **currency check**: one direct
+   `Read`/`grep` on the specific file(s)/behavior the ticket names — no
+   subagent fan-out — to confirm the ticket's premise still holds before
+   paying for anything expensive. Fully resolved (the described gap no
+   longer exists at all) bounces `spec_contradicted` right there, cheaply.
+   Partially stale (real work remains, but the ticket's framing is wrong —
+   e.g. it assumes a file needs creating when it already exists and the
+   actual gap is extending it) is *not* a bounce: the premise is corrected
+   in place and the run continues with the corrected understanding, since
+   the work is real, just mis-described — a bounce here would just cost a
+   human round-trip for something fixable in the same run. Only past this
+   check does it become pragmatic, hypothesis-driven investigation, not a
+   lookup: creates this run's worktree first, then forms 2-3 concrete
+   competing explanations when the cause isn't obvious. If any hypothesis
+   needs a live API call to test (not just reading client code),
+   `ticket-refine` starts the target repo's own dev server *once* inside
+   that worktree, checking first whether one's already running — then
+   fans out one `recon-agent` per hypothesis in parallel (below), each
+   testing its own hypothesis against the worktree (and the running dev
+   server's local proxy routes, if relevant). "More than one confirmed, or
+   none" is a finding to carry into Attack, not something to silently
+   resolve by picking one.
 3. **Attack** — spawn `devils-advocate-agent` (below) to try to break the
    working assumptions from Interpret/Ground.
 4. **Scope & sequence** — if oversized, draft (never create) a split as
