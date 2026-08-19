@@ -86,6 +86,11 @@ export interface RunLoopIterationDeps {
   runsLogPath: string;
   /** Number of runs already recorded today, for the maxRunsPerDay ceiling. */
   runsToday: number;
+  /**
+   * Jira accountId of the human who owns this pipeline's tickets. Used to
+   * assign-if-unassigned a ticket right after it's claimed.
+   */
+  assigneeAccountId: string;
 }
 
 /**
@@ -96,7 +101,7 @@ export interface RunLoopIterationDeps {
 export async function runLoopIteration(
   deps: RunLoopIterationDeps,
 ): Promise<LoopIterationResult> {
-  const { jiraClient, config, jql, runSkill, runsLogPath, runsToday } = deps;
+  const { jiraClient, config, jql, runSkill, runsLogPath, runsToday, assigneeAccountId } = deps;
 
   const preCheck = checkCeilings(config, {
     runsToday,
@@ -121,6 +126,15 @@ export async function runLoopIteration(
     return { action: "claim-raced", ticket: ticket.key };
   }
 
+  let assignSyncError: string | undefined;
+  if (ticket.assignee === null) {
+    try {
+      await jiraClient.assignTicket(ticket.key, assigneeAccountId);
+    } catch (err) {
+      assignSyncError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
   const result = await runSkill(ticket);
   const verdict: Verdict = parseVerdict(result.verdictRaw);
 
@@ -143,7 +157,7 @@ export async function runLoopIteration(
   // entire unattended process over what is otherwise a real, completed
   // run. The run still gets logged either way; only the epic/status may
   // be out of sync with what runs.jsonl says happened.
-  let jiraSyncError: string | undefined;
+  let jiraSyncError: string | undefined = assignSyncError;
   try {
     if (outcome === "landed") {
       const autoPromote = ticket.labels.includes(config.autoPromoteLabel);
@@ -153,7 +167,10 @@ export async function runLoopIteration(
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
     }
   } catch (err) {
-    jiraSyncError = err instanceof Error ? err.message : String(err);
+    const epicMoveError = err instanceof Error ? err.message : String(err);
+    jiraSyncError = jiraSyncError
+      ? `${jiraSyncError}; ${epicMoveError}`
+      : epicMoveError;
   }
 
   const logLine: RunLogLine = {

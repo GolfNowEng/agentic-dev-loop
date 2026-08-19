@@ -18,6 +18,8 @@ export interface JiraTicket {
   status: string;
   epic: string | null;
   labels: string[];
+  /** Jira accountId of the current assignee, or null if unassigned. */
+  assignee: string | null;
 }
 
 export interface JiraClient {
@@ -41,6 +43,13 @@ export interface JiraClient {
 
   /** Move a ticket to a different epic. */
   moveToEpic(ticketKey: string, epicKey: string): Promise<void>;
+
+  /**
+   * Assign a ticket to the given Jira account ID. Callers should only
+   * invoke this when the ticket is currently unassigned -- this method
+   * itself does not check, it just performs the assignment.
+   */
+  assignTicket(ticketKey: string, accountId: string): Promise<void>;
 }
 
 const UNCONFIGURED_MESSAGE = (method: string): string =>
@@ -71,6 +80,10 @@ export class StubJiraClient implements JiraClient {
   async moveToEpic(_ticketKey: string, _epicKey: string): Promise<void> {
     throw new Error(UNCONFIGURED_MESSAGE("moveToEpic"));
   }
+
+  async assignTicket(_ticketKey: string, _accountId: string): Promise<void> {
+    throw new Error(UNCONFIGURED_MESSAGE("assignTicket"));
+  }
 }
 
 /** Credentials RealJiraClient needs, read from process.env by callers. */
@@ -100,12 +113,32 @@ export function credentialsFromEnv(env: NodeJS.ProcessEnv = process.env): JiraCr
   return { baseUrl: baseUrl!, email: email!, apiToken: apiToken! };
 }
 
+/**
+ * Reads JIRA_ASSIGNEE_ACCOUNT_ID from process.env, or throws. Kept separate
+ * from JiraCredentials/credentialsFromEnv since this isn't an API
+ * credential -- it's the human's own Jira account ID, used as a call-time
+ * argument (assignTicket), not something RealJiraClient holds as
+ * constructor state.
+ */
+export function assigneeAccountIdFromEnv(env: NodeJS.ProcessEnv = process.env): string {
+  const accountId = env.JIRA_ASSIGNEE_ACCOUNT_ID;
+  if (!accountId) {
+    throw new Error(
+      "RealJiraClient: missing required env var JIRA_ASSIGNEE_ACCOUNT_ID. " +
+        "Set it in a gitignored .env (see .env.example) and run with " +
+        '"node --env-file=.env ...".',
+    );
+  }
+  return accountId;
+}
+
 interface JiraSearchResponse {
   issues: Array<{
     key: string;
     fields: {
       status: { name: string };
       labels: string[];
+      assignee: { accountId: string } | null;
       [key: string]: unknown;
     };
   }>;
@@ -177,7 +210,7 @@ export class RealJiraClient implements JiraClient {
       body: JSON.stringify({
         jql,
         maxResults: 1,
-        fields: ["status", "labels", this.config.jira.epicLinkField].filter(
+        fields: ["status", "labels", "assignee", this.config.jira.epicLinkField].filter(
           (f) => f !== "___",
         ),
       }),
@@ -195,6 +228,7 @@ export class RealJiraClient implements JiraClient {
       status: issue.fields.status.name,
       epic,
       labels: issue.fields.labels ?? [],
+      assignee: issue.fields.assignee?.accountId ?? null,
     };
   }
 
@@ -241,6 +275,13 @@ export class RealJiraClient implements JiraClient {
     await this.request(`/rest/api/3/issue/${ticketKey}`, {
       method: "PUT",
       body: JSON.stringify({ fields: { [field]: value } }),
+    });
+  }
+
+  async assignTicket(ticketKey: string, accountId: string): Promise<void> {
+    await this.request(`/rest/api/3/issue/${ticketKey}`, {
+      method: "PUT",
+      body: JSON.stringify({ fields: { assignee: { accountId } } }),
     });
   }
 }
