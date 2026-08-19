@@ -79,11 +79,16 @@ which has one for uncommitted work — see dev-loop's `docs/skills.md`).
   window — while scanning that commit history for Jira keys that lead to a
   prior ticket which touched the same code. Never proposes a fix.
 - **devils-advocate-agent** (`.claude/agents/devils-advocate-agent.md`) —
-  attacks Interpret/Ground's assumptions across six angles (already fixed
-  elsewhere? symptom vs. cause? hidden dependencies? blocked prerequisites?
-  unstated scope? ambiguity Ground missed?). Surviving assumptions get
-  written into the refined ticket's Overview, explicitly labeled as
-  assumptions.
+  attacks Interpret/Ground's assumptions across four angles (symptom vs.
+  cause? hidden dependencies? unstated scope? ambiguity Ground missed?) —
+  deliberately narrowed from an earlier six to angles judgeable from
+  Interpret/Ground's own findings, without needing this subagent's own
+  open-ended codebase exploration (which risked running long enough to hit
+  the CLI's own background-task time limit in headless mode); "already
+  fixed elsewhere?" and "blocked prerequisites?" were dropped, the latter
+  because it's redundant with Step 5's own "Blocked detection." Surviving
+  assumptions get written into the refined ticket's Overview, explicitly
+  labeled as assumptions.
 - **verifier-agent** (`.claude/agents/verifier-agent.md`) — an
   independent pass over the definition-of-ready checklist (see below); not
   the same reasoning that produced the ticket rubber-stamping itself.

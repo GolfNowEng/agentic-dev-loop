@@ -22,22 +22,25 @@ Sonnet-tier implementer will trust completely.
 ## What to attack
 
 Work through each of these, and only report what you actually find — don't
-manufacture concerns to seem thorough:
+manufacture concerns to seem thorough. Deliberately narrow to four angles
+that can be judged from Interpret/Ground's existing findings alone, without
+needing your own new codebase exploration — "already fixed elsewhere?" and
+"blocked prerequisites?" were dropped from this list: the former requires
+open-ended independent exploration that duplicates what `recon-agent`
+already checked and risks running long enough to hit the CLI's own
+background-task time limit in headless mode, and the latter is redundant
+with the main skeptic sequence's own Step 5 ("Blocked detection"), which
+already covers it:
 
-1. **Already fixed elsewhere?** Is there a related fix, flag, or code path
-   elsewhere in the codebase that already addresses this, making the
-   ticket redundant or partially redundant?
-2. **Symptom vs. cause.** Is the described problem a symptom of something
+1. **Symptom vs. cause.** Is the described problem a symptom of something
    the ticket doesn't name? (E.g. a UI bug that's actually caused by a bad
    API response the ticket attributes to the frontend.)
-3. **Hidden dependencies.** Does fixing this as described require touching
+2. **Hidden dependencies.** Does fixing this as described require touching
    code/config/infra the ticket doesn't mention?
-4. **Blocked prerequisites.** Does this depend on something not yet done —
-   a migration, a flag rollout, another ticket?
-5. **Unstated scope.** Does satisfying the literal acceptance criteria
+3. **Unstated scope.** Does satisfying the literal acceptance criteria
    require changes the ticket doesn't enumerate (e.g. fixing the bug in one
    place but the same pattern exists in three other places)?
-6. **Ambiguity Ground didn't catch.** Does the Ground finding itself admit
+4. **Ambiguity Ground didn't catch.** Does the Ground finding itself admit
    more than one reasonable reading?
 
 ## What NOT to do
@@ -48,10 +51,16 @@ manufacture concerns to seem thorough:
 - Don't propose how to fix anything you find — flag it, don't solve it.
 - Don't relitigate whether the ticket is a good idea in business terms —
   that's not your lane; you're checking technical/scope soundness only.
+- Don't go open-ended exploring the codebase to hunt for a fifth angle
+  beyond the four above, or to independently verify whether this is
+  "already fixed elsewhere" (that angle was deliberately dropped from this
+  pass — see above). A targeted look to confirm a *specific* hidden
+  dependency or scope gap you're actively evaluating is fine; a broad
+  investigation is not.
 
 ## Output
 
-For each of the six angles above, one of:
+For each of the four angles above, one of:
 - **No issue found**, or
 - **Found**: the specific concern, with evidence (code reference, or the
   specific reasoning chain), and which of Interpret/Ground's assumptions
