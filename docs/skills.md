@@ -11,10 +11,12 @@ shared fetch-only clone at `.pipeline/<slug>/repo` otherwise (see
 `docs/logging.md`) — never that source checkout directly, so a human
 working in it manually is never affected by a background run:
 
-1. **Intake** — confirm the ticket is actually ready (has the
-   `research-loop` template sections populated); bounce immediately if not.
-2. **Plan** — break acceptance criteria into concrete steps; bounce on any
-   AC that requires inference the ticket doesn't state.
+1. **Intake** — find the `Refined Spec — ready for ticket-to-pr` comment
+   `research-loop` posts and confirm it has the template sections
+   populated; bounce immediately if the comment is missing or malformed.
+2. **Plan** — break the Refined Spec comment's acceptance criteria into
+   concrete steps; bounce on any AC that requires inference it doesn't
+   state.
 3. **Red** — write a failing test per AC, confirm it fails for the right
    reason, commit tests before any implementation.
 4. **Green** — implement the minimum change to pass, touching only the
@@ -29,6 +31,13 @@ working in it manually is never affected by a background run:
 Core rule: this skill **never edits the spec**. Any ambiguity, contradiction,
 or oversized scope is `research-loop`'s problem to fix upstream — this skill
 bounces with evidence instead of guessing.
+
+**Ticket content protocol**: the ticket's description is the stakeholder's
+original, untouched by `research-loop`, and is background context only —
+never authoritative for AC/Scope. The `Refined Spec — ready for
+ticket-to-pr` comment is the actual work order (see research-loop's
+`docs/skills.md` for why it lives in a comment instead of the
+description).
 
 **Cleanup is a hard gate, every run**: stop the dev server if one was
 started (by this skill or by `qa-agent`), and remove this run's worktree —
@@ -45,8 +54,9 @@ server shutdown is never conditional.
 `.claude/agents/qa-agent.md` — a genuinely fresh-context subagent spawned
 during Verify. It sees only the ticket key and the path to `ticket-to-pr`'s
 already-created run worktree (never the implementer's reasoning) — and
-checks: AC satisfaction, scope discipline (no files touched beyond what
-Scope names), regressions, test quality, and unrelated diff noise. Not
+checks, against the Refined Spec comment's AC/Scope (not the description):
+AC satisfaction, scope discipline (no files touched beyond what Scope
+names), regressions, test quality, and unrelated diff noise. Not
 limited to static diff reading: for ACs that are visual, timing-sensitive,
 or otherwise hard to trust from a diff and its tests alone, it starts the
 app and exercises the behavior directly — and if it does, stopping it is

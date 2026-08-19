@@ -14,14 +14,17 @@ description: Turn a single ready Jira ticket into a PR against the target repo (
 Per spec section 5.0, this skill runs **downstream of the human review gate**
 and operates under full trust of the refined ticket:
 
-- The ticket's **description** is the work order. Treat it as near-perfect —
-  do not renegotiate acceptance criteria, scope, or the stated fault domain.
-- The ticket's **comments** hold extra context (original raw description,
-  research-loop's recon findings, human steering notes at the review gate).
-  Consult them when the description alone leaves a judgment call, but the
-  description remains authoritative.
+- The **`Refined Spec — ready for ticket-to-pr` comment** is the work order.
+  Treat it as near-perfect — do not renegotiate acceptance criteria, scope,
+  or the stated fault domain. `research-loop` never rewrites a stakeholder's
+  original description, so the description itself is raw context only —
+  useful for background, never authoritative for AC/Scope.
+- The ticket's **other comments** hold extra context (research-loop's recon
+  findings, human steering notes at the review gate). Consult them when the
+  Refined Spec comment alone leaves a judgment call, but that comment
+  remains authoritative.
 - **No guessing.** If an implementation decision can't be *reasoned to* from
-  the description + comments, or the described work turns out to be larger
+  the Refined Spec comment + other comments, or the described work turns out to be larger
   than stated, stop and bounce with exactly what was missing. A ticket is
   never edited by this skill — if the spec is wrong, ambiguous, or
   unimplementable as written, that is `ticket-refine`'s problem to fix
@@ -154,14 +157,15 @@ Each phase's `progress.jsonl` events use the phase name shown.
 
 1. Fetch the ticket (`getJiraIssue`, fields: summary, description, comments,
    status) for `$ARGUMENTS`.
-2. Confirm the description follows the definition-of-ready template from
-   `ticket-refine` (`### Overview`, `### Acceptance Criteria`, `### Scope`).
-   If it doesn't — this ticket should never have reached the Ready epic —
-   bounce immediately with `failure_category: "spec_ambiguous"` and detail
-   noting the missing sections. Do not attempt to proceed on an unreadied
-   ticket.
+2. Find the comment titled exactly `Refined Spec — ready for ticket-to-pr`.
+   If no such comment exists, or it exists but doesn't follow the
+   definition-of-ready template from `ticket-refine` (`### Overview`,
+   `### Acceptance Criteria`, `### Scope`) — this ticket should never have
+   reached the Ready epic — bounce immediately with
+   `failure_category: "spec_ambiguous"` and detail noting the missing
+   comment/sections. Do not attempt to proceed on an unreadied ticket.
 3. Read every Acceptance Criterion and the Scope section's enumerated
-   files/modules.
+   files/modules, from that comment's content.
 4. **Early fail-exit check**: if the enumerated scope is clearly larger than
    a single ticket's worth of work (spans many unrelated modules, requires
    architectural changes not described, etc.), bounce now with
@@ -172,7 +176,7 @@ Each phase's `progress.jsonl` events use the phase name shown.
 ### Phase 1 — Plan
 
 Break the Acceptance Criteria into an ordered list of concrete steps. For
-each AC, from the ticket's own TDD-ready description, note: the test name,
+each AC, from the Refined Spec comment's TDD-ready Acceptance Criteria, note: the test name,
 what it asserts, and why it currently fails. Write this plan as a single
 note in `progress.jsonl` (not a separate file) — it exists to keep this run
 honest about scope, not as a deliverable.
@@ -186,8 +190,8 @@ touching any code.
 
 For each Acceptance Criterion, in order:
 
-1. Write the failing test named in that AC (per the ticket's TDD-ready
-   description of test name / assertion / why it fails).
+1. Write the failing test named in that AC (per the Refined Spec comment's
+   TDD-ready statement of test name / assertion / why it fails).
 2. Run it. Confirm it actually fails, **and fails for the expected reason**
    (not e.g. a typo or missing import producing an unrelated error).
 3. If a test passes against unmodified code, the AC doesn't describe a real

@@ -28,6 +28,11 @@ of "things to check," or the original bug report beyond the ticket itself.
 Read the ticket, read the diff (`git diff <defaultBranch>...HEAD` in the
 target repo checkout), and form your own judgment.
 
+The ticket's Acceptance Criteria and Scope live in its `Refined Spec —
+ready for ticket-to-pr` comment, not its description (`research-loop`
+never rewrites a stakeholder's original description) — read that comment,
+not the description, for AC/Scope content.
+
 You are not limited to static reading. If the AC or the change is
 visual, timing-sensitive, or otherwise hard to trust from a diff alone —
 start the app locally and actually exercise the behavior the AC describes.
@@ -38,7 +43,7 @@ default to skipping execution just because the diff "looks right."
 ## What to check
 
 1. **Does the diff actually satisfy every Acceptance Criterion** in the
-   ticket's `### Acceptance Criteria` section — not just "does it compile
+   Refined Spec comment's `### Acceptance Criteria` section — not just "does it compile
    and pass its own new tests," but does the described behavior actually
    hold? Read the new tests critically: do they assert the right thing, or
    do they assert something weaker than the AC requires (e.g. checking a
@@ -48,7 +53,7 @@ default to skipping execution just because the diff "looks right."
    flow), run the app and check the AC directly rather than taking the
    test's word for it.
 2. **Scope discipline**: does the diff touch only files enumerated in the
-   ticket's `### Scope` section? Flag any file changed that wasn't listed.
+   Refined Spec comment's `### Scope` section? Flag any file changed that wasn't listed.
 3. **Regressions**: look for edge cases the new tests don't cover that the
    change could plausibly break — null/empty inputs, off-by-one boundaries,
    concurrent access if relevant, error paths.
