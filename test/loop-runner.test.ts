@@ -75,6 +75,8 @@ function makeVerdict(overrides: Partial<Verdict> = {}): Verdict {
 
 /** Default measured cost for a mocked runSkill, matching makeVerdict's cost_usd. */
 const MEASURED_COST_USD = 1.0;
+/** Default measured tokens for a mocked runSkill -- deliberately different from any verdict.tokens value, so a test asserting on this exposes a bug that reads verdict.tokens instead. */
+const MEASURED_TOKENS = { in: 1234, out: 567 };
 
 function makeDeps(overrides: Partial<LoopIterationDeps> = {}): LoopIterationDeps {
   return {
@@ -130,6 +132,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
@@ -153,6 +156,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
@@ -177,6 +181,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
@@ -201,6 +206,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
@@ -235,6 +241,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:05:00Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
@@ -270,6 +277,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:05:00Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const config = makeConfig();
@@ -303,6 +311,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:05:00Z",
         costUsd: config.ceilings.maxCostPerRunUsd + 1,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
@@ -329,6 +338,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:05:00Z",
         costUsd: config.ceilings.maxCostPerRunUsd + 1,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
@@ -352,6 +362,7 @@ describe("runLoopIteration", () => {
         ended: "2026-08-16T14:05:00Z",
         // Breaches maxCostPerRunUsd, but only known AFTER the run completed.
         costUsd: config.ceilings.maxCostPerRunUsd + 1,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
@@ -391,6 +402,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:05:00Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
@@ -426,6 +438,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:00:00Z",
         ended: "2026-08-16T15:30:00Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
@@ -448,6 +461,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
@@ -484,6 +498,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
@@ -526,6 +541,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath, loopKind: "refine" });
@@ -552,6 +568,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
@@ -577,6 +594,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, runSkill, runsLogPath });
@@ -590,6 +608,12 @@ describe("runLoopIteration", () => {
       const parsed = JSON.parse(lines[0]);
       expect(parsed.ticket).toBe("PROJ-8");
       expect(typeof parsed.started).toBe("string");
+      // Regression: tokens must come from the MEASURED usage (main.ts's
+      // extractUsage() via runSkill), never from verdict.tokens (the
+      // skill's own self-report, which is always {in:0,out:0} in practice
+      // since neither skill's SKILL.md ever populates it) -- a real bug
+      // that silently zeroed every run's logged token count.
+      expect(parsed.tokens).toEqual(MEASURED_TOKENS);
       expect(typeof parsed.ended).toBe("string");
       expect(["landed", "bounced", "error", "killed"]).toContain(
         parsed.outcome,
@@ -617,6 +641,7 @@ describe("runLoopIteration", () => {
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
         costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
       }));
 
       const deps = makeDeps({ jiraClient, runSkill, runsLogPath });

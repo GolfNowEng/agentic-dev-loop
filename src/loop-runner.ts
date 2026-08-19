@@ -26,6 +26,15 @@ export type RunSkillFn = (ticketKey: string) => Promise<{
   started: string;
   ended: string;
   costUsd: number;
+  /**
+   * Measured token usage from claude -p's own usage report (extractUsage()
+   * in main.ts) -- not the skill's self-report. verdict.tokens is never
+   * populated by ticket-to-pr (its own schema documents cost_usd/tokens as
+   * left at 0, deriving the real value from claude -p's usage report), so
+   * buildRunLogLine must read this field, not verdict.tokens, or every
+   * logged run silently records {in:0,out:0}.
+   */
+  tokens: { in: number; out: number };
 }>;
 
 /**
@@ -126,7 +135,7 @@ export async function runLoopIteration(
     }
   }
 
-  const { verdict, started, ended, costUsd } = await runSkill(ticket.key);
+  const { verdict, started, ended, costUsd, tokens } = await runSkill(ticket.key);
 
   const runDurationMin =
     (new Date(ended).getTime() - new Date(started).getTime()) / 60000;
@@ -172,7 +181,7 @@ export async function runLoopIteration(
       : epicMoveError;
   }
 
-  const logLine = buildRunLogLine(ticket.key, verdict, started, ended, costUsd);
+  const logLine = buildRunLogLine(ticket.key, verdict, started, ended, costUsd, tokens);
   await appendRunLog(runsLogPath, logLine);
 
   const ceilingResult = checkCeilings({
@@ -273,6 +282,7 @@ export function buildRunLogLine(
   started: string,
   ended: string,
   costUsd: number,
+  tokens: { in: number; out: number },
 ): RunLogLine {
   return {
     ticket,
@@ -290,6 +300,6 @@ export function buildRunLogLine(
     detail: verdict.detail,
     pr: verdict.pr,
     cost_usd: costUsd,
-    tokens: verdict.tokens,
+    tokens,
   };
 }

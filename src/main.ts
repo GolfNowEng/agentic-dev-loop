@@ -335,6 +335,7 @@ async function main(): Promise<void> {
         started,
         ended: new Date().toISOString(),
         costUsd: 0,
+        tokens: { in: 0, out: 0 },
       };
     }
 
@@ -378,7 +379,7 @@ async function main(): Promise<void> {
       }
     }
 
-    return { verdict, started, ended, costUsd: usage.costUsd };
+    return { verdict, started, ended, costUsd: usage.costUsd, tokens: usage.tokens };
   };
 
   for (;;) {
