@@ -34,16 +34,23 @@ const MODEL = "sonnet";
 const SKILL_MD_PATH = ".claude/skills/ticket-refine/SKILL.md";
 
 /**
- * --permission-mode acceptEdits only auto-approves file edits, not MCP
- * tool calls or Bash -- Atlassian MCP calls (getJiraIssue, etc.) and every
- * Bash invocation (git fetch/worktree, running the target repo's test
- * suite, starting/stopping its dev server, throwaway repro scripts) still
- * prompt for approval, which hangs/fails in headless -p mode. Explicitly
- * allow the specific Atlassian MCP tools this skill actually uses (read +
- * comment + description writes -- ticket-refine never transitions status
- * or moves epics itself, the loop runner's REST client does that) plus
- * Bash broadly, since Ground's whole design assumes real command
- * execution inside the isolated per-run worktree.
+ * --permission-mode acceptEdits only auto-approves file *edits* (Edit/
+ * Write), not MCP tool calls, Bash, or plain file reads -- Atlassian MCP
+ * calls (getJiraIssue, etc.), every Bash invocation (git fetch/worktree,
+ * running the target repo's test suite, starting/stopping its dev
+ * server, throwaway repro scripts), and Read/Grep/Glob all still prompt
+ * for approval, which hangs/fails in headless -p mode with no human to
+ * answer it. Explicitly allow the specific Atlassian MCP tools this
+ * skill actually uses (read + comment + description writes --
+ * ticket-refine never transitions status or moves epics itself, the loop
+ * runner's REST client does that) plus Bash broadly, since Ground's
+ * whole design assumes real command execution inside the isolated
+ * per-run worktree. Read/Grep/Glob are allowed for the same reason:
+ * recon-agent and the synthesis phase read source files in the target
+ * repo constantly, and Edit itself refuses to touch a file that hasn't
+ * been Read first in-session -- the same gap that stalled dev-loop's
+ * ticket-to-pr headless runs (see dev-loop's CHANGELOG.md, 2026-08-27)
+ * with no verdict.json ever written.
  */
 const ALLOWED_TOOLS = [
   "mcp__atlassian__getAccessibleAtlassianResources",
@@ -52,6 +59,9 @@ const ALLOWED_TOOLS = [
   "mcp__atlassian__addCommentToJiraIssue",
   "mcp__atlassian__editJiraIssue",
   "Bash",
+  "Read",
+  "Grep",
+  "Glob",
 ].join(",");
 
 function parseArgs(
