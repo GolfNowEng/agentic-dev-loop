@@ -32,21 +32,30 @@ const SKILL_NAME = "ticket-to-pr";
 const MODEL = "sonnet";
 
 /**
- * --permission-mode acceptEdits only auto-approves file edits, not MCP
- * tool calls or Bash -- Atlassian MCP calls (getJiraIssue, etc.) and every
- * Bash invocation (git worktree/push, running the test suite, lint/
- * typecheck/build, `gh pr create`) still prompt for approval, which
- * hangs/fails in headless -p mode. ticket-to-pr only ever reads the
+ * --permission-mode acceptEdits only auto-approves file *edits* (Edit/
+ * Write), not MCP tool calls, Bash, or plain file reads -- Atlassian MCP
+ * calls (getJiraIssue, etc.), every Bash invocation (git worktree/push,
+ * running the test suite, lint/typecheck/build, `gh pr create`), and Read/
+ * Grep/Glob all still prompt for approval, which hangs/fails in headless
+ * -p mode with no human to answer it. ticket-to-pr only ever reads the
  * ticket itself via MCP (fetches summary/description/comments/status); it
  * never transitions status, moves epics, or writes comments through MCP
  * -- the loop runner's REST client handles all of that. Bash is allowed
  * broadly since every TDD phase (Red/Green/Verify/PR) assumes real
- * command execution inside the isolated per-run worktree.
+ * command execution inside the isolated per-run worktree. Read/Grep/Glob
+ * are allowed for the same reason Edit/Write already are: the skill reads
+ * source and test files constantly while planning and implementing, and
+ * Edit itself refuses to touch a file that hasn't been Read first in-
+ * session -- confirmed live on TARS-1341, which exhausted its retries
+ * stuck on exactly that Read prompt and exited with no verdict.json.
  */
 const ALLOWED_TOOLS = [
   "mcp__atlassian__getAccessibleAtlassianResources",
   "mcp__atlassian__getJiraIssue",
   "Bash",
+  "Read",
+  "Grep",
+  "Glob",
 ].join(",");
 
 function parseArgs(

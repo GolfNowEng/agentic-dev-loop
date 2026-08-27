@@ -37,3 +37,6 @@ skeptic**. Full design: see the pipeline spec referenced in `docs/config.md`.
   contract.
 - `docs/logging.md` — `runs/<project>.jsonl`, per-run `progress.jsonl`,
   `.pipeline/` layout, the `stats` script.
+- `CHANGELOG.md` — notable fixes/behavior changes to the pipeline itself
+  (not the tickets it processes). Add an entry whenever you fix a bug a
+  human had to diagnose from a real run, same as the entry below.
