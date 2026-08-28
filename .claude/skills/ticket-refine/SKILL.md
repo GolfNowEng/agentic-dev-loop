@@ -329,8 +329,72 @@ produced the ticket rubber-stamping itself.
   ticket stays in this same epic, refined and awaiting human approval
   (the loop runner only moves it to dev-loop's epic if `autoPromoteLabel`
   is present — this skill just reports the verdict either way).
-- If it fails: bounce with the specific `failure_category` and what's
-  missing, per the checklist's own criteria.
+- If it fails: classify the failure before deciding what to do with it —
+  see "Self-heal vs. bounce" below. Never skip this classification and
+  bounce by default; a mechanical failure resolved via self-heal is a
+  *better* outcome than a bounce, not a fallback.
+
+#### Self-heal vs. bounce
+
+A Verify failure is exactly one of two kinds. Get this classification
+wrong in either direction and you either burn a human round-trip on
+something the machine could fix itself, or you quietly paper over a real
+decision that was supposed to reach the human — so this is a genuine
+judgment call, not a formality.
+
+**Mechanical** (self-heal in this same run, do not bounce): the fix has
+exactly one correct answer, fully derivable from evidence Ground/Attack
+already gathered in this run — no new investigation, no tradeoff, no
+stakeholder preference involved. The verifier names the gap; closing it
+is transcription, not decision-making. Concrete examples, all drawn from
+real runs:
+
+- A mocked dependency has no default return value, and the component
+  under test calls it unconditionally — the fix is giving it the
+  resolved shape the code already expects (e.g. `clientFetch(...)` is
+  called with `.then(...)` right after mount; the fix is
+  `mockResolvedValue({...})` with a shape matching what the real
+  endpoint returns, not a new decision about what it *should* return).
+- An AC's assertion is unreachable because an earlier guard in the same
+  code path returns first (e.g. a required-field check runs before the
+  behavior under test, so the AC's setup must satisfy that guard too).
+- An AC leaves a value implicit that the code path actually branches on,
+  making the test's outcome accidental rather than deliberate (give it
+  the explicit value already implied by what the AC is trying to prove).
+- An AC's own preconditions make its assertion vacuously true (e.g. it
+  never reaches the branch it claims to test) — tighten the setup so the
+  assertion is actually exercised.
+
+**Judgment-requiring** (bounce as normal, spend no retries on it): the
+verifier flags something with more than one defensible resolution, or
+requiring information this run doesn't have — a design tradeoff, a
+missing stakeholder decision, an architectural choice, anything the
+skill's own philosophy (`## Role: the skeptic`) already reserves "for
+the human gate, not a machine guess." If you notice yourself justifying
+a fix with "I think probably," "the more scalable choice," or picking
+between two approaches with real tradeoffs — that is judgment-requiring,
+even if it feels small. Bounce it exactly as Steps elsewhere in this
+skill already do.
+
+**Mechanics of a self-heal cycle**: fix the specific gap the verifier
+named, nothing else (do not re-open sections that already passed), then
+re-run the verifier subagent — a fresh independent check, not a
+self-assessment that the fix worked. Cap at **4 cycles** per run. If a
+mechanical-looking failure is still unresolved after 4 cycles, stop
+self-healing and bounce it as `spec_ambiguous` with all 4 attempts and
+findings as evidence — that many unresolved "mechanical" fixes is itself
+a signal the classification was wrong, or the ticket has a deeper problem
+than any single AC.
+
+Log each self-heal cycle to `progress.jsonl` distinctly from a bounce —
+a `"phase": "verify"`, `"event": "note"` line whose `detail` starts with
+`"self-heal cycle <n>:"` naming the specific gap and fix, so a run that
+took 4 internal cycles is distinguishable at a glance from one that
+passed clean on the first attempt. The finalized `Refined Spec` comment
+and `verdict.json`'s `detail` should also note the cycle count in one
+clause (e.g. "ready — refined ticket written (after 4 fix/re-verify
+cycles)") — this is signal for anyone reading the ticket or the run
+later, not just internal bookkeeping.
 
 ## Cleanup (hard gate, every run)
 

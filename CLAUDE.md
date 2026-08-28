@@ -44,3 +44,7 @@ Full design: see the pipeline spec referenced in `docs/config.md`.
 - `CHANGELOG.md` — notable fixes/behavior changes to the pipeline itself
   (not the tickets it processes). Add an entry whenever you fix a bug a
   human had to diagnose from a real run.
+- `docs/future-enhancements.md` — ideas for the pipeline itself that are
+  worth doing but not yet drafted into a change. Check here before
+  starting speculative work on `ticket-refine`/its agents; when one of
+  these lands, move its entry to `CHANGELOG.md` and delete it from here.
