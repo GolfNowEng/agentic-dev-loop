@@ -27,7 +27,7 @@ import { buildRefineJql } from "./jql.ts";
 import { countRunsToday } from "./runs-log.ts";
 import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.ts";
 import { extractUsage } from "./claude-usage.ts";
-import { redactPII } from "./redact.ts";
+import { redactSensitive } from "./redact.ts";
 
 const SKILL_NAME = "ticket-refine";
 const MODEL = "sonnet";
@@ -93,18 +93,21 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Redacting wrappers around console.log/console.error -- every line this
- * process prints goes through redactPII() first, so an email address (and,
- * on machines where $HOME is email-shaped, any absolute path containing
- * it) never reaches the terminal or a captured log, regardless of whether
- * it came from our own message or from something a spawned `claude`
+ * process prints goes through redactSensitive() first, so an email address
+ * (and, on machines where $HOME is email-shaped, any absolute path
+ * containing it) or a secret-shaped value (an API key/token/password,
+ * whether inherited from this process's own env or dumped from the target
+ * repo's own `.envrc`/`.env` by a child Bash call under direnv) never
+ * reaches the terminal or a captured log, regardless of whether it came
+ * from our own message or from something a spawned `claude`
  * process/subagent tool call printed.
  */
 function log(message: string): void {
-  console.log(redactPII(message));
+  console.log(redactSensitive(message));
 }
 
 function logError(message: string): void {
-  console.error(redactPII(message));
+  console.error(redactSensitive(message));
 }
 
 /**
@@ -163,7 +166,7 @@ function startProgressTail(
  * Line-buffers a readable stream and calls onLine per complete line --
  * shared by both spawn functions' stderr handling below, since stderr is
  * never inherited (that would print an unredacted child-process line
- * straight to the terminal, bypassing redactPII() entirely).
+ * straight to the terminal, bypassing redactSensitive() entirely).
  */
 function onLines(stream: NodeJS.ReadableStream, onLine: (line: string) => void): void {
   let buffered = "";
@@ -205,9 +208,16 @@ function spawnClaude(args: string[], env: NodeJS.ProcessEnv): Promise<string> {
  * input/content so a large file read/write doesn't flood the terminal.
  */
 function printStreamEvent(parsed: unknown, ticketKey: string): void {
+  // Redact *before* truncating, not after: a secret cut mid-value by
+  // truncation loses its closing quote, so the redaction patterns in
+  // redact.ts (which require a real closing quote/delimiter) never match
+  // the now-unquoted prefix, and it prints in the clear. log() below also
+  // runs redactSensitive() on the final line -- harmless, since
+  // re-redacting an already-substituted REDACTED_SECRET string is a no-op.
   const truncate = (value: unknown): string => {
     const text = typeof value === "string" ? value : JSON.stringify(value);
-    return text.length > 200 ? `${text.slice(0, 200)}...` : text;
+    const redacted = redactSensitive(text);
+    return redacted.length > 200 ? `${redacted.slice(0, 200)}...` : redacted;
   };
 
   if (typeof parsed !== "object" || parsed === null) return;
@@ -383,7 +393,15 @@ async function main(): Promise<void> {
     let verdictRaw: string | undefined;
     if (runDirName) {
       try {
-        verdictRaw = await readFile(join(runsBaseDir, runDirName, "verdict.json"), "utf8");
+        // Redacted before it ever leaves this function -- verdict.json is
+        // the skill's own self-report and could in principle echo back a
+        // secret-shaped value it encountered during Ground; this is what
+        // ultimately lands in runs.jsonl's `detail` field via
+        // buildRunLogLine, so it must never carry one through unredacted,
+        // even though runs.jsonl itself is local/gitignored.
+        verdictRaw = redactSensitive(
+          await readFile(join(runsBaseDir, runDirName, "verdict.json"), "utf8"),
+        );
       } catch {
         verdictRaw = undefined;
       }

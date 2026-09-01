@@ -47,6 +47,12 @@ each item below.
    specifically — "could a competent but literal-minded implementer do
    this without inferring anything or asking a single question?" If
    answering that requires senior-engineer judgment call, it fails.
+7. **No raw secret/credential value**: does the draft contain any raw env
+   var value, `.envrc`/`.env` content, API key, token, or password? A
+   presence/shape reference (a var name alone, "hasClientSecret: true") is
+   fine; an actual value is not, regardless of which earlier step
+   introduced it. This is a last line of defense before this comment gets
+   posted to Jira — check it even if nothing upstream flagged a concern.
 
 ## What NOT to do
 
@@ -62,5 +68,5 @@ each item below.
 - If `bounced`: which checklist item(s) failed (by number), and for each,
   the specific text in the draft that fails it and why (quote the
   offending AC/scope line, don't just say "AC 2 is vague").
-- If `ready`: confirm all seven items pass — brief acknowledgment is
+- If `ready`: confirm all eight items pass — brief acknowledgment is
   sufficient, no need to restate the whole ticket.

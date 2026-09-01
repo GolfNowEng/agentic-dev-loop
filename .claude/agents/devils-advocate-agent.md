@@ -57,6 +57,11 @@ already covers it:
   pass — see above). A targeted look to confirm a *specific* hidden
   dependency or scope gap you're actively evaluating is fine; a broad
   investigation is not.
+- **Never report a raw env var value or `.envrc`/`.env` file content as
+  evidence.** The target repo checkout you read from can carry real
+  secrets in its local env. Report presence/shape only (e.g. "the var is
+  set"), never the raw value, even if it feels like stronger evidence for
+  a hidden-dependency finding.
 
 ## Output
 

@@ -435,6 +435,10 @@ This is not conditional on how the run concludes.
 6. Written to the Sonnet-executor standard: no step requires inference or
    judgment to act on. The verifier asks, for each AC: "could a
    literal-minded implementer do this without asking anything?"
+7. No raw secret/credential/token/password value anywhere in the draft —
+   see Ticket content protocol item 6. Presence/shape references
+   (`hasClientSecret: true`, a var name alone) are fine; a raw value is
+   not, regardless of which step surfaced it.
 
 ## Ticket content protocol
 
@@ -469,6 +473,23 @@ human-skimmable "what is this ticket about" view.
    leaks PII into Jira. Refer to files by repo-relative path only (e.g.
    `src/client/App.jsx`, not
    `/Users/<email>/Desktop/repo/src/client/App.jsx`).
+6. **Never write a raw env var value, `.envrc`/`.env` file content, or any
+   credential/token/key/password value into a Jira comment,
+   `progress.jsonl` note, or the always-emitted result line** — Ground's
+   worktree lives inside the target repo's own directory tree specifically
+   so `direnv` picks up its real local env (see "Target repo (grounding)"
+   above), which means that env can contain real secrets. To demonstrate a
+   var is set (e.g. confirming a dev-server dependency has credentials
+   available), report name/presence/length only — imitate the target
+   repo's own `hasClientSecret`/`clientSecretLength`-style logging, never
+   the raw value itself. This applies to `recon-agent` and
+   `devils-advocate-agent` findings quoted into a comment just as much as
+   to this skill's own writing. **This rule now has a code-level backstop**
+   — a `PreToolUse` hook (`.claude/hooks/block-secret-comments.sh`) denies
+   any Jira/Confluence write whose content matches a known secret name or
+   format pattern (see `CHANGELOG.md`'s "Round 2" entry) — but that hook is
+   a heuristic backstop, not a replacement for following this rule; it
+   won't catch every shape a secret could take.
 
 ## Bouncing (any step)
 

@@ -2,6 +2,9 @@
   "name": "research-loop",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "scripts": {
     "test": "vitest run",
     "build": "tsc",

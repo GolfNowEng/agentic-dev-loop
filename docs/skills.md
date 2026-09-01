@@ -117,7 +117,14 @@ Enforced by `verifier-agent`, checked in order — first failure is the
 bounce: (0) template sections populated, (1) every AC testable, (2) files/
 modules named, (3) TDD-ready test expectations per AC, (4) small/medium size
 bound, (5) no open questions, (6) a literal-minded Sonnet-tier implementer
-could act on it without inferring anything.
+could act on it without inferring anything, (7) no raw secret/credential/
+token/password value anywhere in the draft (presence/shape only — see
+Ticket content protocol). Item 7 also has a code-level backstop: a
+`PreToolUse` hook (`.claude/hooks/block-secret-comments.sh`) denies any
+Jira/Confluence write whose content matches a known secret name or format
+pattern before it reaches the real API — see `CHANGELOG.md`'s "Round 2"
+entry. The hook is a heuristic backstop behind this checklist item, not a
+replacement for it.
 
 ## Ticket content protocol
 
