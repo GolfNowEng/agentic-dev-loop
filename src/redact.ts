@@ -71,6 +71,18 @@ const AWS_KEY_PATTERN = /AKIA[0-9A-Z]{16}/g;
 const JWT_PATTERN = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
 
 /**
+ * Bare-token format backstops, same confidence bar as AWS_KEY_PATTERN/
+ * JWT_PATTERN above: recognizable by shape alone, no NAME= prefix needed.
+ * These target the highest-frequency "secret pasted in prose with no key
+ * name nearby" shape (e.g. "...using key sk_live_51H8x... which is
+ * hardcoded") -- the one leak shape no NAME=value pattern can catch,
+ * since there's no name to anchor on.
+ */
+const STRIPE_KEY_PATTERN = /\b(?:sk|rk|pk)_live_[A-Za-z0-9]{16,}\b/g;
+const GITHUB_TOKEN_PATTERN = /\bgh[oprsu]_[A-Za-z0-9]{16,}\b/g;
+const SLACK_TOKEN_PATTERN = /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g;
+
+/**
  * Credentials embedded in a connection string/DSN (e.g.
  * `postgres://user:pass@host`) -- a final pattern pass to redact only the
  * embedded `user:pass` part. Note: as of Task 1, `DATABASE_URL` and `URI`
@@ -97,6 +109,7 @@ const MIN_PATTERN_VALUE_LENGTH = 6;
  * throws, and a string with nothing to redact is returned unchanged.
  */
 export function redactSecrets(text: string): string {
+  if (typeof text !== "string") return "";
   let result = text;
 
   for (const [name, value] of Object.entries(process.env)) {
@@ -143,12 +156,30 @@ export function redactSecrets(text: string): string {
 
   result = result.replace(AWS_KEY_PATTERN, "REDACTED_SECRET");
   result = result.replace(JWT_PATTERN, "REDACTED_SECRET");
+  result = result.replace(STRIPE_KEY_PATTERN, "REDACTED_SECRET");
+  result = result.replace(GITHUB_TOKEN_PATTERN, "REDACTED_SECRET");
+  result = result.replace(SLACK_TOKEN_PATTERN, "REDACTED_SECRET");
   result = result.replace(
     CONNECTION_STRING_CREDENTIALS_PATTERN,
     "$1REDACTED_SECRET@",
   );
 
   return result;
+}
+
+/**
+ * Boolean check reusing redactSecrets's own patterns -- true if `text`
+ * contains anything redactSecrets would redact, false otherwise. This is
+ * what the .claude/hooks/block-secret-comments.sh hook (via
+ * scripts/check-secret-in-tool-input.ts) uses to decide whether to deny a
+ * `gh pr create`/`gh pr edit` Bash call, so this is intentionally the
+ * *same* detection logic as redactSecrets, not a second, drifting
+ * reimplementation. Pure, defensive: never throws, and returns false
+ * rather than throwing when there's nothing to check.
+ */
+export function containsSecret(text: string): boolean {
+  if (typeof text !== "string" || text.length === 0) return false;
+  return redactSecrets(text) !== text;
 }
 
 /**

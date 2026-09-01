@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { homedir } from "node:os";
-import { redactPII, redactSecrets, redactSensitive } from "../src/redact.ts";
+import { redactPII, redactSecrets, redactSensitive, containsSecret } from "../src/redact.ts";
 
 describe("redactPII", () => {
   it("redacts a bare email address", () => {
@@ -114,9 +114,34 @@ describe("redactSecrets", () => {
     );
   });
 
+  it("redacts a bare Stripe-shaped secret key with no matching var name", () => {
+    expect(
+      redactSecrets(
+        "using key sk_live_51H8xabcdefghijklmnopqrstuvwxyz which is hardcoded",
+      ),
+    ).toBe("using key REDACTED_SECRET which is hardcoded");
+  });
+
+  it("redacts a bare GitHub-shaped token with no matching var name", () => {
+    expect(
+      redactSecrets("token: ghp_abcdefghijklmnopqrstuvwxyz0123456789"),
+    ).toBe("token: REDACTED_SECRET");
+  });
+
+  it("redacts a bare Slack-shaped token with no matching var name", () => {
+    expect(
+      redactSecrets("webhook uses xoxb-1234567890-abcdefghijklmnop"),
+    ).toBe("webhook uses REDACTED_SECRET");
+  });
+
   it("never throws on empty input", () => {
     expect(() => redactSecrets("")).not.toThrow();
     expect(redactSecrets("")).toBe("");
+  });
+
+  it("never throws on non-string input", () => {
+    // @ts-expect-error -- deliberately testing runtime defensiveness against bad input
+    expect(() => redactSecrets(null)).not.toThrow();
   });
 
   it("redacts a JSON value containing a comma without corrupting the JSON", () => {
@@ -226,6 +251,36 @@ describe("redactSecrets", () => {
     expect(redactSecrets("Server=myhost;Timeout=30")).toBe(
       "Server=myhost;Timeout=30",
     );
+  });
+});
+
+describe("containsSecret", () => {
+  it("returns true for a secret-shaped NAME=value line", () => {
+    expect(containsSecret("CLIENT_SECRET=abcdefghijklmnop")).toBe(true);
+  });
+
+  it("returns true for a secret-shaped JSON value", () => {
+    expect(containsSecret('{"apiKey":"abcdefghijklmnop"}')).toBe(true);
+  });
+
+  it("returns true for a bare AWS-shaped key", () => {
+    expect(containsSecret("AKIAABCDEFGHIJKLMNOP")).toBe(true);
+  });
+
+  it("returns false for clean text", () => {
+    expect(containsSecret("PORT=5001, NODE_ENV=development")).toBe(false);
+  });
+
+  it("returns false, not a throw, on empty input", () => {
+    expect(() => containsSecret("")).not.toThrow();
+    expect(containsSecret("")).toBe(false);
+  });
+
+  it("returns false, not a throw, on non-string input", () => {
+    // @ts-expect-error -- deliberately testing runtime defensiveness against bad input
+    expect(() => containsSecret(null)).not.toThrow();
+    // @ts-expect-error -- deliberately testing runtime defensiveness against bad input
+    expect(containsSecret(undefined)).toBe(false);
   });
 });
 
