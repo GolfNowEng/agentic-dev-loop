@@ -205,6 +205,28 @@ describe("redactSecrets", () => {
       "postgres://host:5432/db",
     );
   });
+
+  it("redacts a semicolon-delimited connection-string Password segment", () => {
+    expect(
+      redactSecrets("Server=myhost;Password=abcdefghijklmnop;Timeout=30"),
+    ).toBe("Server=myhost;Password=REDACTED_SECRET;Timeout=30");
+  });
+
+  it("redacts a semicolon-delimited connection-string AccountKey segment", () => {
+    expect(
+      redactSecrets(
+        "DefaultEndpointsProtocol=https;AccountKey=abcdefghijklmnop;EndpointSuffix=core.windows.net",
+      ),
+    ).toBe(
+      "DefaultEndpointsProtocol=https;AccountKey=REDACTED_SECRET;EndpointSuffix=core.windows.net",
+    );
+  });
+
+  it("does not touch a non-secret semicolon-delimited segment", () => {
+    expect(redactSecrets("Server=myhost;Timeout=30")).toBe(
+      "Server=myhost;Timeout=30",
+    );
+  });
 });
 
 describe("redactSensitive", () => {
