@@ -72,10 +72,13 @@ const JWT_PATTERN = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
 
 /**
  * Credentials embedded in a connection string/DSN (e.g.
- * `postgres://user:pass@host`) -- the var name here (`DATABASE_URL`, say)
- * won't match SECRET_NAME_PATTERN at all, so without this backstop the
- * embedded password leaks completely. Applied unconditionally, like the
- * AWS-key and JWT backstops above.
+ * `postgres://user:pass@host`) -- a final pattern pass to redact only the
+ * embedded `user:pass` part. Note: as of Task 1, `DATABASE_URL` and `URI`
+ * now match SECRET_NAME_PATTERN, so the generic name/value pass attempts to
+ * redact the entire URL value (a temporary known regression until Task 4
+ * adds a URL_SHAPED_VALUE guard). This pattern runs after and catches the
+ * embedded credentials directly, providing defense-in-depth. Applied
+ * unconditionally, like the AWS-key and JWT backstops above.
  */
 const CONNECTION_STRING_CREDENTIALS_PATTERN =
   /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/g;
