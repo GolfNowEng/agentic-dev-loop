@@ -84,6 +84,11 @@ default to skipping execution just because the diff "looks right."
   note it as an **observation**, clearly separated from actual **findings**
   (things that mean the ticket's ACs are not actually satisfied, or that
   are real regressions).
+- Never report a raw env var value or `.envrc`/`.env` file content as
+  evidence when you run the app or read logs during QA — presence/shape
+  only (e.g. "reads `API_KEY` from env", "token present, 42 chars"), same
+  reasoning as `ticket-to-pr` itself: the per-run worktree sits inside the
+  target repo's own directory tree so direnv activates real secrets there.
 
 ## Output
 
