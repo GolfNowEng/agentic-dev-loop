@@ -98,6 +98,10 @@ const CONNECTION_STRING_CREDENTIALS_PATTERN =
 const MIN_ENV_VALUE_LENGTH = 8;
 const MIN_PATTERN_VALUE_LENGTH = 6;
 
+/** Matches a value that's itself a URL (`scheme://...`) -- see the skip
+ * check in redactQuoted/redactUnquoted below for why. */
+const URL_SHAPED_VALUE = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
+
 /**
  * Redacts secret-shaped values (API keys, tokens, passwords, credentials)
  * from any string before it's printed to a terminal or written to a log.
@@ -133,6 +137,7 @@ export function redactSecrets(text: string): string {
   ): string => {
     if (!SECRET_NAME_PATTERN.test(name)) return match;
     if (!isRedactableValue(value)) return match;
+    if (URL_SHAPED_VALUE.test(value)) return match;
     return `${prefix}"REDACTED_SECRET"`;
   };
 
@@ -144,6 +149,7 @@ export function redactSecrets(text: string): string {
   ): string => {
     if (!SECRET_NAME_PATTERN.test(name)) return match;
     if (!isRedactableValue(value)) return match;
+    if (URL_SHAPED_VALUE.test(value)) return match;
     return `${prefix}REDACTED_SECRET`;
   };
 
