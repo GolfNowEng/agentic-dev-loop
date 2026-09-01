@@ -15,3 +15,144 @@ export function redactPII(text: string): string {
   result = result.replace(EMAIL_PATTERN, "REDACTED_EMAIL");
   return result;
 }
+
+/**
+ * Name fragment shared by every env-var name this module treats as
+ * secret-shaped -- deliberately broad (matches CLIENT_SECRET, API_KEY,
+ * JIRA_API_TOKEN, PRIVATE_KEY, etc.) since a false positive here just
+ * redacts a value that wasn't actually sensitive, while a false negative
+ * leaks a real credential. That said, this pattern is NOT a bare `KEY`
+ * wildcard -- an earlier draft used one and it matched `issueIdOrKey`, a
+ * field present on nearly every Jira API call/response, which would make
+ * containsSecret() (see below) deny legitimate calls. `KEY` here is
+ * deliberately anchored to compound forms (`SIGNING_KEY`, `ACCOUNT_KEY`,
+ * etc.) and a standalone `^KEY$` case, never an unanchored substring.
+ */
+const SECRET_NAME_PATTERN =
+  /SECRET|TOKEN|API[_-]?KEY|PASSWORD|PASSWD|PRIVATE[_-]?KEY|CREDENTIAL|ACCESS[_-]?KEY|AUTH|SIGNING[_-]?KEY|ACCOUNT[_-]?KEY|ROLE[_-]?KEY|ENCRYPTION[_-]?KEY|^KEY$|DSN|CONNECTION[_-]?STRING|CONN[_-]?STR|DATABASE[_-]?URL|DB[_-]?URL|URI|COOKIE|SESSION/i;
+
+/**
+ * `NAME=value` / `export NAME=value` -- env-style, so the name is required
+ * to look like an env var (snake case, case-insensitive -- a target repo's
+ * own .envrc/shell scripts can use lowercase names like `github_token=`) to
+ * avoid matching arbitrary prose like "Authorization: Bearer ...".
+ *
+ * Split into quoted/unquoted variants rather than one pattern with an
+ * optional trailing quote: an optional quote is ambiguous about where the
+ * value ends, which let it either stop at the first comma inside a quoted
+ * JSON-shaped value, or (when unquoted) consume a following nested `{`,
+ * permanently desyncing the regex and silently skipping every key after it.
+ *
+ * The quoted variant is JSON/shell-escape aware (`(?:[^"\\]|\\.)*`) so an
+ * escaped `\"` inside the value doesn't terminate it early. The unquoted
+ * variant excludes `{`, `[`, and `"` so it can never wander into a
+ * following value's opening delimiter -- but, unlike the JSON variants,
+ * deliberately does NOT exclude comma, since shell `NAME=value` text has no
+ * comma-as-delimiter convention and excluding it would truncate a
+ * legitimate value like `TOKEN=abcdefgh,ijklmnop`, leaking the remainder.
+ */
+const ENV_QUOTED_PATTERN =
+  /((?:export\s+)?\b([A-Za-z][A-Za-z0-9_]*)\s*=\s*)"((?:[^"\\]|\\.)*)"/g;
+const ENV_UNQUOTED_PATTERN =
+  /((?:export\s+)?\b([A-Za-z][A-Za-z0-9_]*)\s*=\s*)([^\s;"{}[\]]+)/g;
+
+/**
+ * JSON `"name": "value"` -- the quoted key is what makes this unambiguous.
+ * Same quoted/unquoted split and reasoning as the env-style patterns above,
+ * except here comma IS excluded from the unquoted value class since comma
+ * is a real syntactic delimiter in JSON.
+ */
+const JSON_QUOTED_PATTERN =
+  /("([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*)"((?:[^"\\]|\\.)*)"/g;
+const JSON_UNQUOTED_PATTERN =
+  /("([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*)([^\s",{}[\]]+)/g;
+
+const AWS_KEY_PATTERN = /AKIA[0-9A-Z]{16}/g;
+const JWT_PATTERN = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
+
+/**
+ * Credentials embedded in a connection string/DSN (e.g.
+ * `postgres://user:pass@host`) -- the var name here (`DATABASE_URL`, say)
+ * won't match SECRET_NAME_PATTERN at all, so without this backstop the
+ * embedded password leaks completely. Applied unconditionally, like the
+ * AWS-key and JWT backstops above.
+ */
+const CONNECTION_STRING_CREDENTIALS_PATTERN =
+  /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/g;
+
+const MIN_ENV_VALUE_LENGTH = 8;
+const MIN_PATTERN_VALUE_LENGTH = 6;
+
+/**
+ * Redacts secret-shaped values (API keys, tokens, passwords, credentials)
+ * from any string before it's printed to a terminal or written to a log.
+ * Two layers: known values currently held in this process's own env (so an
+ * inherited secret echoed back by a child process is caught even with no
+ * matching name in the text), and a name/value pattern pass for secrets
+ * that never touched this process's own env (e.g. a target repo's own
+ * `.envrc`/`.env` dumped by a child Bash call). Pure, defensive: never
+ * throws, and a string with nothing to redact is returned unchanged.
+ */
+export function redactSecrets(text: string): string {
+  let result = text;
+
+  for (const [name, value] of Object.entries(process.env)) {
+    if (!value || value.length < MIN_ENV_VALUE_LENGTH) continue;
+    if (!SECRET_NAME_PATTERN.test(name)) continue;
+    result = result.split(value).join("REDACTED_SECRET");
+  }
+
+  const isRedactableValue = (value: string): boolean => {
+    if (value === "true" || value === "false") return false;
+    if (/^-?\d+(\.\d+)?$/.test(value)) return false;
+    if (value.length < MIN_PATTERN_VALUE_LENGTH) return false;
+    return true;
+  };
+
+  const redactQuoted = (
+    match: string,
+    prefix: string,
+    name: string,
+    value: string,
+  ): string => {
+    if (!SECRET_NAME_PATTERN.test(name)) return match;
+    if (!isRedactableValue(value)) return match;
+    return `${prefix}"REDACTED_SECRET"`;
+  };
+
+  const redactUnquoted = (
+    match: string,
+    prefix: string,
+    name: string,
+    value: string,
+  ): string => {
+    if (!SECRET_NAME_PATTERN.test(name)) return match;
+    if (!isRedactableValue(value)) return match;
+    return `${prefix}REDACTED_SECRET`;
+  };
+
+  // Quoted variants run first so an already-redacted "REDACTED_SECRET"
+  // can't be re-matched by an unquoted pattern (which excludes `"`).
+  result = result.replace(ENV_QUOTED_PATTERN, redactQuoted);
+  result = result.replace(JSON_QUOTED_PATTERN, redactQuoted);
+  result = result.replace(ENV_UNQUOTED_PATTERN, redactUnquoted);
+  result = result.replace(JSON_UNQUOTED_PATTERN, redactUnquoted);
+
+  result = result.replace(AWS_KEY_PATTERN, "REDACTED_SECRET");
+  result = result.replace(JWT_PATTERN, "REDACTED_SECRET");
+  result = result.replace(
+    CONNECTION_STRING_CREDENTIALS_PATTERN,
+    "$1REDACTED_SECRET@",
+  );
+
+  return result;
+}
+
+/**
+ * The single funnel callers outside this module should use: PII redaction
+ * followed by secret redaction, so any text printed to a terminal or
+ * written to a log has both passes applied.
+ */
+export function redactSensitive(text: string): string {
+  return redactSecrets(redactPII(text));
+}

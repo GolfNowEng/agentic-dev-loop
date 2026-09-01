@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { homedir } from "node:os";
-import { redactPII } from "../src/redact.ts";
+import { redactPII, redactSecrets, redactSensitive } from "../src/redact.ts";
 
 describe("redactPII", () => {
   it("redacts a bare email address", () => {
@@ -44,5 +44,178 @@ describe("redactPII", () => {
   it("never throws on empty input", () => {
     expect(() => redactPII("")).not.toThrow();
     expect(redactPII("")).toBe("");
+  });
+});
+
+describe("redactSecrets", () => {
+  const SECRET_VAR = "SOME_API_TOKEN";
+  const SECRET_VALUE = "abc123superlongfakevalue";
+
+  beforeEach(() => {
+    process.env[SECRET_VAR] = SECRET_VALUE;
+  });
+
+  afterEach(() => {
+    delete process.env[SECRET_VAR];
+  });
+
+  it("redacts a literal occurrence of a secret-shaped env var's current value", () => {
+    expect(redactSecrets(`token is ${SECRET_VALUE} in the log`)).toBe(
+      "token is REDACTED_SECRET in the log",
+    );
+  });
+
+  it("redacts an export line for a secret-shaped var, keeping the key name", () => {
+    expect(redactSecrets(`export ${SECRET_VAR}=${SECRET_VALUE}`)).toBe(
+      `export ${SECRET_VAR}=REDACTED_SECRET`,
+    );
+  });
+
+  it("redacts a bare NAME=value line for a secret-shaped var not in process.env", () => {
+    expect(redactSecrets("CLIENT_SECRET=zzz999anothersecretvalue")).toBe(
+      "CLIENT_SECRET=REDACTED_SECRET",
+    );
+  });
+
+  it("redacts a JSON-quoted secret value, keeping the key name", () => {
+    expect(redactSecrets('{"clientSecret":"zzz999anothersecretvalue"}')).toBe(
+      '{"clientSecret":"REDACTED_SECRET"}',
+    );
+  });
+
+  it("does not touch a boolean value for a secret-shaped key", () => {
+    expect(redactSecrets('{"hasClientSecret":true}')).toBe(
+      '{"hasClientSecret":true}',
+    );
+  });
+
+  it("does not touch a numeric value for a secret-shaped key", () => {
+    expect(redactSecrets('{"clientSecretLength":16}')).toBe(
+      '{"clientSecretLength":16}',
+    );
+  });
+
+  it("does not touch a non-secret-shaped var", () => {
+    expect(redactSecrets("PORT=5001")).toBe("PORT=5001");
+    expect(redactSecrets("NODE_ENV=development")).toBe("NODE_ENV=development");
+  });
+
+  it("redacts an AWS-shaped access key with no matching var name", () => {
+    expect(redactSecrets("key: AKIAABCDEFGHIJKLMNOP")).toBe(
+      "key: REDACTED_SECRET",
+    );
+  });
+
+  it("redacts a JWT with no matching var name", () => {
+    const jwt =
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+    expect(redactSecrets(`Authorization: Bearer ${jwt}`)).toBe(
+      "Authorization: Bearer REDACTED_SECRET",
+    );
+  });
+
+  it("never throws on empty input", () => {
+    expect(() => redactSecrets("")).not.toThrow();
+    expect(redactSecrets("")).toBe("");
+  });
+
+  it("redacts a JSON value containing a comma without corrupting the JSON", () => {
+    const result = redactSecrets('{"apiKey":"secret,value"}');
+    expect(() => JSON.parse(result)).not.toThrow();
+    expect(result).toBe('{"apiKey":"REDACTED_SECRET"}');
+  });
+
+  it("redacts a secret nested inside a JSON object, and still redacts a sibling key after it", () => {
+    const result = redactSecrets(
+      '{"nested":{"clientSecret":"zzz999anothersecretvalue"},"apiKey":"anotherlongsecretvalue"}',
+    );
+    expect(result).toBe(
+      '{"nested":{"clientSecret":"REDACTED_SECRET"},"apiKey":"REDACTED_SECRET"}',
+    );
+  });
+
+  it("redacts the full value of a comma-containing env-style secret, not just up to the comma", () => {
+    expect(redactSecrets("TOKEN=abcdefgh,ijklmnop")).toBe("TOKEN=REDACTED_SECRET");
+  });
+
+  it("does not touch a non-secret comma-separated env value", () => {
+    expect(redactSecrets("PORT=5001,3000")).toBe("PORT=5001,3000");
+  });
+
+  it("redacts a JSON secret value containing an escaped quote", () => {
+    const result = redactSecrets('{"apiKey":"sec\\"retvalue123"}');
+    expect(() => JSON.parse(result)).not.toThrow();
+    expect(result).toBe('{"apiKey":"REDACTED_SECRET"}');
+  });
+
+  it("redacts a lowercase-named secret-shaped env var", () => {
+    expect(redactSecrets("github_token=zzz999anothersecretvalue")).toBe(
+      "github_token=REDACTED_SECRET",
+    );
+  });
+
+  it("redacts a SIGNING_KEY-named value", () => {
+    expect(redactSecrets("SIGNING_KEY=abcdefghijklmnop")).toBe(
+      "SIGNING_KEY=REDACTED_SECRET",
+    );
+  });
+
+  it("redacts a bare KEY-named value", () => {
+    expect(redactSecrets("KEY=abcdefghijklmnop")).toBe("KEY=REDACTED_SECRET");
+  });
+
+  it("does not treat issueIdOrKey as a secret-shaped name", () => {
+    expect(redactSecrets('{"issueIdOrKey":"TARS-1301abcdefgh"}')).toBe(
+      '{"issueIdOrKey":"TARS-1301abcdefgh"}',
+    );
+  });
+
+  it("redacts a SUPABASE_SERVICE_ROLE_KEY-named value", () => {
+    expect(redactSecrets("SUPABASE_SERVICE_ROLE_KEY=abcdefghijklmnop")).toBe(
+      "SUPABASE_SERVICE_ROLE_KEY=REDACTED_SECRET",
+    );
+  });
+
+  it("redacts a value under an ENCRYPTION_KEY-named var", () => {
+    expect(redactSecrets("ENCRYPTION_KEY=abcdefghijklmnop")).toBe(
+      "ENCRYPTION_KEY=REDACTED_SECRET",
+    );
+  });
+
+  it("redacts a COOKIE-named value", () => {
+    expect(redactSecrets("COOKIE=abcdefghijklmnop")).toBe(
+      "COOKIE=REDACTED_SECRET",
+    );
+  });
+
+  it("redacts a SESSION-named value", () => {
+    expect(redactSecrets("SESSION=abcdefghijklmnop")).toBe(
+      "SESSION=REDACTED_SECRET",
+    );
+  });
+
+  it("redacts embedded credentials in a connection-string/DSN value", () => {
+    expect(
+      redactSecrets("DATABASE_URL=postgres://user:pass@host:5432/db"),
+    ).toBe("DATABASE_URL=postgres://REDACTED_SECRET@host:5432/db");
+  });
+
+  it("leaves a connection-string value with no embedded credentials untouched", () => {
+    expect(redactSecrets("postgres://host:5432/db")).toBe(
+      "postgres://host:5432/db",
+    );
+  });
+});
+
+describe("redactSensitive", () => {
+  it("redacts both PII and secrets in one pass", () => {
+    expect(
+      redactSensitive('contact bob@example.com; {"apiKey":"zzz999anothersecretvalue"}'),
+    ).toBe('contact REDACTED_EMAIL; {"apiKey":"REDACTED_SECRET"}');
+  });
+
+  it("never throws on empty input", () => {
+    expect(() => redactSensitive("")).not.toThrow();
+    expect(redactSensitive("")).toBe("");
   });
 });
