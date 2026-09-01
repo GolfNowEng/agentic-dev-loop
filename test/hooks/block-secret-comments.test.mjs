@@ -113,6 +113,36 @@ function check(name, condition, detail) {
   }
 }
 
+// --- Case 6: CLAUDE_PROJECT_DIR unset/empty fails closed (exit 2), not exit 1 ---
+// Under `set -u`, an unguarded `$CLAUDE_PROJECT_DIR` reference would abort
+// the script with exit 1 if the var were ever unset -- and Claude Code
+// treats a hook exiting 1 as non-blocking (lets the tool call proceed),
+// which would be a fail-OPEN on exactly the command class this hook
+// exists to guard. The fix is `${CLAUDE_PROJECT_DIR:-}` so `set -u`
+// doesn't abort, and the existing "checker file missing" branch handles
+// the rest by denying with exit 2.
+{
+  const stdin = JSON.stringify({
+    tool_name: "Bash",
+    tool_input: { command: 'gh pr create --title "TARS-1" --body "CLIENT_SECRET=abcdefghijklmnop"' },
+  });
+  // runHook()'s helper sets CLAUDE_PROJECT_DIR: REPO_ROOT before spreading
+  // the env override in -- since object spread lets later keys win, this
+  // override actually takes effect (verified: it is not clobbered back to
+  // REPO_ROOT).
+  const result = runHook(stdin, { CLAUDE_PROJECT_DIR: "" });
+  check(
+    "CLAUDE_PROJECT_DIR unset: exit code is 2 (fail closed), not 1 (fail open)",
+    result.status === 2,
+    `got ${result.status}, stderr: ${result.stderr}`,
+  );
+  check(
+    "CLAUDE_PROJECT_DIR unset: stderr is non-empty",
+    result.stderr.trim().length > 0,
+    result.stderr,
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

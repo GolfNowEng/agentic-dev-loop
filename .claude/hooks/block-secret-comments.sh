@@ -79,7 +79,7 @@ if ! printf '%s' "$COMMAND" | grep -Eqw "create|edit"; then
   exit 0
 fi
 
-CHECKER="$CLAUDE_PROJECT_DIR/scripts/check-secret-in-tool-input.ts"
+CHECKER="${CLAUDE_PROJECT_DIR:-}/scripts/check-secret-in-tool-input.ts"
 
 EXIT_CODE=2
 if [ -f "$CHECKER" ]; then
