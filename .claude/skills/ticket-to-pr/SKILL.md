@@ -278,7 +278,23 @@ Commit once all Phase 2 tests pass
    this machine's home directory is an email address, so an absolute path
    leaks PII into a PR anyone with repo access can see. Refer to files by
    repo-relative path only (e.g. `src/client/App.jsx`, not
-   `/Users/<email>/Desktop/repo/src/client/App.jsx`).
+   `/Users/<email>/Desktop/repo/src/client/App.jsx`). The same rule extends
+   to any raw env var value, `.envrc`/`.env` content, or credential/token/
+   key/password value — Ground/Red/Green run inside a per-run worktree
+   nested inside the target repo's own directory tree specifically so
+   direnv picks up its real local `.envrc`/`.env` (see "Target repo"
+   below), so real secrets are reachable there too. Report presence/shape
+   only, mirroring whatever `hasClientSecret`/length-only pattern the
+   target repo's own app logging already uses (e.g. "reads `API_KEY` from
+   env" or "token present, 42 chars"), never the literal value.
+
+   **This rule now has a code-level backstop** — a `PreToolUse` hook
+   (`.claude/hooks/block-secret-comments.sh`) denies any `gh pr create`/
+   `gh pr edit` command whose content matches a known secret name or
+   format pattern (see `CHANGELOG.md`'s "Round 2" entry) — but that hook
+   is a heuristic backstop, not a replacement for following this rule; it
+   won't catch every shape a secret could take.
+
 3. Write `verdict.json` in `RUN_DIR` (see schema below) with
    `outcome: "landed"`, `phase_reached: "pr"`, the PR URL, and all recorded
    metrics.
