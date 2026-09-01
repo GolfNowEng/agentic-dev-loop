@@ -22,6 +22,8 @@
  * process, which has this repo's real credentials in its environment.
  */
 
+import { pathToFileURL } from "node:url";
+
 import { containsSecret } from "../src/redact.ts";
 
 /**
@@ -89,7 +91,15 @@ async function main(): Promise<void> {
 }
 
 // Only run as a script when invoked directly (not when imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Uses pathToFileURL() rather than a string-templated `file://${...}`
+// comparison: if the repo path contains characters Node percent-encodes
+// in a file:// URL (e.g. a space), import.meta.url would contain the
+// encoded form while the naive template would not, making this guard
+// false, skipping main() entirely, and exiting 0 -- a fail-OPEN the hook
+// would read as "clean, allow." pathToFileURL() percent-encodes argv[1]
+// the same way import.meta.url is already encoded, so the comparison is
+// robust regardless of path contents.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   // Belt-and-suspenders fail-closed guard: an exception anywhere in this
   // process must still report exit code 2 ("check failed"), never fall
   // through to whatever exit code Node happens to produce on its own.

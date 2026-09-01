@@ -293,7 +293,10 @@ Commit once all Phase 2 tests pass
    `gh pr edit` command whose content matches a known secret name or
    format pattern (see `CHANGELOG.md`'s "Round 2" entry) — but that hook
    is a heuristic backstop, not a replacement for following this rule; it
-   won't catch every shape a secret could take.
+   won't catch every shape a secret could take. The hook requires `jq` on
+   PATH (its only external binary dependency); if `jq` is missing it fails
+   closed and denies every Bash call, not just PR writes, with a message
+   naming `jq` specifically.
 
 3. Write `verdict.json` in `RUN_DIR` (see schema below) with
    `outcome: "landed"`, `phase_reached: "pr"`, the PR URL, and all recorded

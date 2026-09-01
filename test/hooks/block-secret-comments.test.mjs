@@ -8,7 +8,8 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { writeFileSync, unlinkSync, renameSync } from "node:fs";
+import { writeFileSync, unlinkSync, renameSync, mkdtempSync, symlinkSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..");
@@ -141,6 +142,49 @@ function check(name, condition, detail) {
     result.stderr.trim().length > 0,
     result.stderr,
   );
+}
+
+// --- Case 7: jq missing from PATH fails closed (exit 2) with a message
+// distinguishable from the malformed-JSON case ---
+// Builds a PATH pointing at a temp dir containing symlinks to every binary
+// the script needs (bash, cat, grep, printf, node) EXCEPT jq, so `command
+// -v jq` reliably fails inside the hook's own process without breaking
+// anything else the script does before reaching the jq check.
+{
+  const noJqDir = mkdtempSync(join(tmpdir(), "no-jq-path-"));
+  const binsToLink = {
+    bash: "/bin/bash",
+    cat: "/bin/cat",
+    grep: "/usr/bin/grep",
+    node: process.execPath,
+  };
+  try {
+    for (const [name, target] of Object.entries(binsToLink)) {
+      try {
+        symlinkSync(target, join(noJqDir, name));
+      } catch {
+        // best-effort -- if a given real binary path doesn't exist on this
+        // host, skip it rather than fail the whole test setup.
+      }
+    }
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: 'gh pr create --title "TARS-1" --body "irrelevant"' },
+    });
+    const result = runHook(stdin, { PATH: noJqDir });
+    check(
+      "jq missing from PATH: exit code is 2 (fail closed, unchanged behavior)",
+      result.status === 2,
+      `got ${result.status}, stderr: ${result.stderr}`,
+    );
+    check(
+      "jq missing from PATH: stderr mentions jq/not found, not malformed JSON",
+      /jq/i.test(result.stderr) && /not found/i.test(result.stderr) && !/malformed JSON/i.test(result.stderr),
+      result.stderr,
+    );
+  } finally {
+    rmSync(noJqDir, { recursive: true, force: true });
+  }
 }
 
 if (failures > 0) {

@@ -1,6 +1,12 @@
 #!/bin/bash
 # block-secret-comments.sh — PreToolUse hook for Bash calls.
 #
+# Requires `jq` on PATH -- the only external (non-Node, non-git) binary
+# dependency this hook introduces into dev-loop. If `jq` is missing, the
+# hook denies (exit 2) with a message naming `jq` specifically, distinct
+# from its separate malformed-JSON message, so a missing binary is never
+# mistaken for bad input.
+#
 # dev-loop's outward write surface for a landed ticket is the PR title/
 # body, created via `gh pr create`/`gh pr edit` (a Bash tool call, not a
 # named MCP tool the way research-loop's Jira-comment writes are) -- so
@@ -56,6 +62,11 @@
 set -u
 
 INPUT=$(cat)
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "BLOCKED: jq not found on PATH (required by the secret-scan hook) -- install jq. Denying to stay fail-closed." >&2
+  exit 2
+fi
 
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 JQ_EXIT=$?
