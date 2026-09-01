@@ -26,7 +26,7 @@ import { countRunsToday } from "./runs-log.ts";
 import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.ts";
 import { extractUsage } from "./claude-usage.ts";
 import { readVerdictFile, agentErrorVerdict } from "./verdict.ts";
-import { redactPII } from "./redact.ts";
+import { redactSensitive } from "./redact.ts";
 
 const SKILL_NAME = "ticket-to-pr";
 const MODEL = "sonnet";
@@ -81,18 +81,23 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Redacting wrappers around console.log/console.error -- every line this
- * process prints goes through redactPII() first, so an email address (and,
- * on machines where $HOME is email-shaped, any absolute path containing
- * it) never reaches the terminal or a captured log, regardless of whether
- * it came from our own message or from something a spawned `claude`
- * process/subagent tool call printed.
+ * process prints goes through redactSensitive() first, so an email address
+ * (and, on machines where $HOME is email-shaped, any absolute path
+ * containing it) or a secret-shaped value never reaches the terminal or a
+ * captured log, regardless of whether it came from our own message or
+ * from something a spawned `claude` process/subagent tool call printed --
+ * including an env/printenv dump or a `cat .envrc` run from inside the
+ * per-run worktree, which sits inside the target repo's own directory
+ * tree specifically so direnv activates its real local .envrc/.env (see
+ * SKILL.md's "Target repo" section) and therefore has real secrets
+ * reachable from any Bash tool call the skill makes.
  */
 function log(message: string): void {
-  console.log(redactPII(message));
+  console.log(redactSensitive(message));
 }
 
 function logError(message: string): void {
-  console.error(redactPII(message));
+  console.error(redactSensitive(message));
 }
 
 /**
@@ -193,9 +198,16 @@ function spawnClaude(args: string[], env: NodeJS.ProcessEnv): Promise<string> {
  * input/content so a large file read/write doesn't flood the terminal.
  */
 function printStreamEvent(parsed: unknown, ticketKey: string): void {
+  // Redact *before* truncating, not after: a secret cut mid-value by
+  // truncation loses its closing quote, so redact.ts's patterns (which
+  // require a real closing quote/delimiter) never match the now-unquoted
+  // prefix, and it prints in the clear. log() below also runs
+  // redactSensitive() on the final line -- harmless, since re-redacting
+  // an already-substituted REDACTED_SECRET string is a no-op.
   const truncate = (value: unknown): string => {
     const text = typeof value === "string" ? value : JSON.stringify(value);
-    return text.length > 200 ? `${text.slice(0, 200)}...` : text;
+    const redacted = redactSensitive(text);
+    return redacted.length > 200 ? `${redacted.slice(0, 200)}...` : redacted;
   };
 
   if (typeof parsed !== "object" || parsed === null) return;
@@ -366,6 +378,12 @@ async function main(): Promise<void> {
     } else {
       verdict = agentErrorVerdict("no run directory appeared for this ticket");
     }
+    // verdict.detail is the skill's own self-report and could in principle
+    // echo back a secret-shaped value it encountered during Ground/Red/
+    // Green; this is what ultimately lands in runs.jsonl's `detail` field
+    // via buildRunLogLine, so it must never carry one through unredacted,
+    // even though runs.jsonl itself is local/gitignored.
+    verdict = { ...verdict, detail: redactSensitive(verdict.detail) };
 
     if (!runDirName || verdict.failure_category === "agent_error") {
       // No verdict.json (or a malformed one) means the skill stopped
