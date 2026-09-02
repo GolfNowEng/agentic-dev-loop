@@ -171,7 +171,17 @@ export async function runLoopIteration(
       // it, not left empty.
       const fields = buildCodeReviewFields(config, buildQaNotesAdf(verdict));
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.prOpen, fields);
-    } else if (verdict.outcome === "bounced") {
+    } else if (verdict.outcome === "bounced" && verdict.pr === null) {
+      // A genuine blocker (spec_ambiguous, too_large, env_setup, etc.)
+      // always happens before Phase 5 (PR) and therefore never has
+      // verdict.pr set -- that's the only case Blocked should signal. A
+      // bounced verdict WITH a pr means intake found this ticket's work
+      // already landed (nothing to do, not a blocker); transitioning that
+      // to Blocked would stomp a status the ticket may have already
+      // correctly moved past. Confirmed live on TARS-1389: the poll-loop
+      // race (see poll-loop.ts) produced a second run that bounced cleanly
+      // with an existing PR, and this unconditional transition clobbered
+      // the ticket's just-set Code Review status back to Blocked.
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
     }
   } catch (err) {
