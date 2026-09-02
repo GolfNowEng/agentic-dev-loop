@@ -564,6 +564,8 @@ describe("runLoopIteration", () => {
           outcome: "bounced",
           failure_category: "spec_ambiguous",
           detail: "Acceptance criteria conflict with existing behavior.",
+          // A genuine blocker never reaches Phase 5 (PR) -- pr is null.
+          pr: null,
         }),
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:19:40Z",
@@ -580,6 +582,44 @@ describe("runLoopIteration", () => {
         expect(result.logLine.outcome).toBe("bounced");
       }
       expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+      // A real blocker (no PR yet) DOES transition to the configured
+      // "bounced" status -- this is the genuine-blocker case Blocked
+      // exists for.
+      expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
+        "PROJ-7",
+        config.jira.statusNames.bounced,
+      );
+    });
+  });
+
+  it("a bounced verdict that already has a PR (e.g. intake found this ticket's work already landed, nothing to do) does NOT transition to Blocked -- that would stomp a status the ticket may have already correctly moved past. Confirmed live on TARS-1389: a race produced a second run that bounced cleanly with an existing PR, and the unconditional transition clobbered the ticket's just-set Code Review status back to Blocked.", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket = makeTicket({ key: "TARS-1389" });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+      });
+      const config = makeConfig();
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({
+          outcome: "bounced",
+          failure_category: "blocked",
+          detail:
+            "PR #400 already open for TARS-1389; ticket status is already Code Review. No new worktree created, no duplicate work performed.",
+          pr: "https://github.com/fandango/webtarsthree/pull/400",
+        }),
+        started: "2026-09-02T02:49:16Z",
+        ended: "2026-09-02T02:50:42Z",
+        costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
+      }));
+
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+
+      const result = await runLoopIteration(deps);
+
+      expect(result.kind).toBe("ran");
+      expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+      expect(jiraClient.transitionStatus).not.toHaveBeenCalled();
     });
   });
 
