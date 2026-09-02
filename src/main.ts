@@ -11,7 +11,7 @@
  */
 
 import { spawn, execFileSync } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   loadConfig,
@@ -309,6 +309,8 @@ async function main(): Promise<void> {
   await mkdir("runs", { recursive: true });
   const runsLogPath = join("runs", `${slug}.jsonl`);
   const runsBaseDir = join(".pipeline", slug, "runs");
+  const rawUsageDir = join(".pipeline", slug, "raw-usage");
+  await mkdir(rawUsageDir, { recursive: true });
 
   const skillVersion = gitFileSha(SKILL_MD_PATH);
   const jql = buildRefineJql(config);
@@ -380,6 +382,25 @@ async function main(): Promise<void> {
 
     const endedAt = new Date().toISOString();
     await tail.stop();
+
+    // Persist claude -p's raw stdout unconditionally, before attempting to
+    // parse it -- extractUsage() deliberately returns zeros on a parse
+    // failure rather than throwing (a usage-parsing bug must never crash
+    // the loop), which otherwise means the *real* cost/token numbers for
+    // this run are gone forever the moment this function returns: stdout
+    // only ever lived in this local variable. Writing it to disk first
+    // means a parse failure loses nothing -- the real usage can still be
+    // recovered later (manually, or by a fixed extractUsage) from this file.
+    try {
+      await writeFile(
+        join(rawUsageDir, `${ticket.key}-${startedAt.replace(/[:.]/g, "")}.json`),
+        redactSensitive(stdout),
+        "utf8",
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError(`[${SKILL_NAME}] ${ticket.key}: failed to persist raw usage: ${message}`);
+    }
 
     let usageRaw: unknown = null;
     try {
