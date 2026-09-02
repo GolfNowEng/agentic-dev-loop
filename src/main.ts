@@ -23,6 +23,7 @@ import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./
 import type { JiraTicket } from "./jira-client.ts";
 import { runLoopIteration } from "./loop-runner.ts";
 import type { RunSkillFn, RunSkillResult } from "./loop-runner.ts";
+import { decideNextAction } from "./poll-loop.ts";
 import { buildRefineJql } from "./jql.ts";
 import { countRunsToday } from "./runs-log.ts";
 import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.ts";
@@ -50,7 +51,13 @@ const SKILL_MD_PATH = ".claude/skills/ticket-refine/SKILL.md";
  * repo constantly, and Edit itself refuses to touch a file that hasn't
  * been Read first in-session -- the same gap that stalled dev-loop's
  * ticket-to-pr headless runs (see dev-loop's CHANGELOG.md, 2026-08-27)
- * with no verdict.json ever written.
+ * with no verdict.json ever written. Also allow the read-only Rovo/
+ * Confluence lookups (search, getConfluencePage, searchConfluenceUsingCql)
+ * -- Interpret's "exhaust available Jira/Confluence context" step and
+ * Ground's precedent-checking both reach for these when a ticket
+ * references prior art or a linked doc, and their absence produced a
+ * real agent_error (verdict.json never written) on TARS-1391's first
+ * attempt on 2026-09-02, confirmed via that run's own permission_denials.
  */
 const ALLOWED_TOOLS = [
   "mcp__atlassian__getAccessibleAtlassianResources",
@@ -58,6 +65,9 @@ const ALLOWED_TOOLS = [
   "mcp__atlassian__searchJiraIssuesUsingJql",
   "mcp__atlassian__addCommentToJiraIssue",
   "mcp__atlassian__editJiraIssue",
+  "mcp__atlassian__search",
+  "mcp__atlassian__getConfluencePage",
+  "mcp__atlassian__searchConfluenceUsingCql",
   "Bash",
   "Read",
   "Grep",
@@ -482,12 +492,9 @@ async function main(): Promise<void> {
         log(
           `[${SKILL_NAME}] queue empty, sleeping ${loopConfig.pollIntervalSec}s`,
         );
-        if (once) return;
-        await sleep(loopConfig.pollIntervalSec * 1000);
         break;
       case "claim-raced":
         log(`[${SKILL_NAME}] claim raced on ${result.ticket}, retrying`);
-        if (once) return;
         break;
       case "processed":
         log(`[${SKILL_NAME}] ${result.ticket}: ${result.logLine?.detail}`);
@@ -496,11 +503,24 @@ async function main(): Promise<void> {
             `[${SKILL_NAME}] ${result.ticket}: WARNING -- Jira epic/status update failed (${result.jiraSyncError}). The run is logged in runs.jsonl, but Jira's epic/status may not reflect it -- check and fix manually.`,
           );
         }
-        if (once) return;
+        log(
+          `[${SKILL_NAME}] waiting ${loopConfig.postRunDelaySec}s before re-polling, so Jira's search index catches up with the just-written status transition`,
+        );
         break;
       case "paused-ceiling":
         logError(`[${SKILL_NAME}] PAUSED: ${result.pauseReason}`);
         process.exit(1);
+    }
+
+    const nextAction = decideNextAction(result.action, loopConfig, once);
+    switch (nextAction.kind) {
+      case "exit":
+        return;
+      case "sleep":
+        await sleep(nextAction.ms);
+        break;
+      case "continue":
+        break;
     }
   }
 }

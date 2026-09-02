@@ -10,7 +10,7 @@
     "epicLinkField": "parent",
     "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" }
   },
-  "ceilings": { "maxRunsPerDay": 10, "maxCostPerRunUsd": 20, "runTimeoutMin": 45 },
+  "ceilings": { "maxRunsPerDay": 100, "maxCostPerRunUsd": 20, "runTimeoutMin": 45 },
   "autoPromoteLabel": "auto-promote",
   "targetRepo": {
     "url": "git@github.com:fandango/webtarsthree.git",

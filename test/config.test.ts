@@ -101,11 +101,12 @@ describe("loadLoopConfig", () => {
   it("reads and parses pipeline.loop.config.json from the current directory by default", async () => {
     await fs.writeFile(
       path.join(dir, "pipeline.loop.config.json"),
-      JSON.stringify({ pollIntervalSec: 60 }),
+      JSON.stringify({ pollIntervalSec: 60, postRunDelaySec: 5 }),
       "utf8",
     );
     const loopConfig = await loadLoopConfig();
     expect(loopConfig.pollIntervalSec).toBe(60);
+    expect(loopConfig.postRunDelaySec).toBe(5);
   });
 
   it("reads from an explicit path when given one", async () => {

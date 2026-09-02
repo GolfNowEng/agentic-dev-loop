@@ -5,6 +5,57 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-02 — Ported dev-loop's postRunDelaySec race fix; closed a missing-tool agent_error; raised maxRunsPerDay to 100
+
+dev-loop raised its own `maxRunsPerDay` from 10 to 100 the day before
+(see dev-loop's `CHANGELOG.md`, 2026-09-02), explicitly conditioned on
+fixing what was actually burning through the old ceiling first ("100 is
+the deliberate new floor going forward, not a temporary bump" — only
+*after* the underlying `agent_error` cause was fixed). Checked whether
+that same precondition held here before copying the number over, rather
+than bumping it on faith:
+
+1. **The `--add-dir`/Edit-Write bug dev-loop fixed doesn't apply.**
+   `ticket-refine`'s `ALLOWED_TOOLS` has no `Edit`/`Write` at all — this
+   skill is read-only against the target repo. Not a live risk here.
+2. **But the identical *class* of bug was live**: `ALLOWED_TOOLS` in
+   `src/main.ts` was missing `mcp__atlassian__search`,
+   `mcp__atlassian__getConfluencePage`, and
+   `mcp__atlassian__searchConfluenceUsingCql`. Confirmed via
+   `.pipeline/webtarsthree/raw-usage/TARS-1391-2026-09-02T180226955Z.json`'s
+   own `permission_denials` — TARS-1391's first pickup that day
+   `agent_error`'d (no `verdict.json`, $0.44 spent) because it hit
+   unapprovable prompts for exactly these tools and gave up; two other
+   runs the same day (TARS-1392, TARS-1397) hit the same denial but
+   happened to find a different path and still landed.
+3. **The poll-loop race dev-loop fixed with `postRunDelaySec` was never
+   ported here.** `src/main.ts`'s `for(;;)` loop re-polled immediately
+   after a `"processed"` result, with no delay — same zero-delay shape
+   dev-loop confirmed live caused a duplicate run to land within ~2s of
+   a status transition, before Jira Cloud's search index caught up.
+   research-loop hadn't hit this live yet, but the mechanism is
+   identical (both repos share the same claim-then-poll composition-root
+   pattern), so it was fixed preemptively rather than waiting for a real
+   incident, same precedent as the 2026-08-27 `Read`/`Grep`/`Glob` entry
+   below.
+4. **dev-loop's bad-`Blocked`-transition fix does not port**: that fix
+   gates the transition on `verdict.pr === null`, but `ticket-refine`'s
+   bounced path has no `pr` concept at all (it never opens a PR) — no
+   change needed here.
+
+**Fix**: added `mcp__atlassian__search`, `mcp__atlassian__getConfluencePage`,
+and `mcp__atlassian__searchConfluenceUsingCql` to `ALLOWED_TOOLS`
+(`src/main.ts`). Added `src/poll-loop.ts` (`decideNextAction()`, mirroring
+dev-loop's own module) plus a new `postRunDelaySec` field on
+`pipeline.loop.config.json`/`LoopConfig` (`src/types.ts`) — a
+`"processed"` result now sleeps for `postRunDelaySec` (5s) before the next
+poll instead of looping straight back in; `main()`'s `for(;;)` loop now
+delegates its post-iteration branch entirely to `decideNextAction()`
+rather than an inline switch. `test/poll-loop.test.ts` covers all four
+`LoopIterationAction` cases. Only after both fixes landed: raised
+`pipeline.webtarsthree.config.json`'s `maxRunsPerDay` from 10 to 100,
+matching dev-loop's new floor.
+
 ## 2026-09-01 — Redaction covered PII only, not secret-shaped env values
 
 Ground's per-run worktree is deliberately nested inside the target repo's

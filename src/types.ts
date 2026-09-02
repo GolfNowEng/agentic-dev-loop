@@ -101,6 +101,13 @@ export interface Verdict {
 export interface LoopConfig {
   /** Seconds to sleep between polls when the queue is empty. */
   pollIntervalSec: number;
+  /**
+   * Seconds to wait after a run completes before polling again -- gives
+   * Jira's search index time to reflect a just-written status transition
+   * before the next poll can re-match the same ticket (same race dev-loop
+   * confirmed live and fixed; see dev-loop's CHANGELOG.md, 2026-09-02).
+   */
+  postRunDelaySec: number;
 }
 
 /** Shape of pipeline.config.json. */
