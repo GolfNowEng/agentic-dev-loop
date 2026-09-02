@@ -91,6 +91,18 @@ export interface Verdict {
    * derive this from context rather than trusting the verdict.
    */
   loop?: "refine" | "dev";
+  /**
+   * Optional sequential manual-testing steps for a human QA reviewer --
+   * e.g. "Navigate to `/rotten-tomatoes/critics?query=...`", "Expected:
+   * the Self-Service badge appears next to the critic's name". Rendered
+   * into Jira's QA Notes field (see loop-runner.ts's buildQaNotesAdf) as a
+   * bold "Manual testing steps:" header + ordered list, matching the
+   * retired interactive qa-notes/push-branch skills' ADF shape. Distinct
+   * from the PR body's own terse "## QA Notes" pass/fail summary -- do not
+   * conflate the two. Absent/empty on older verdicts or bounced runs;
+   * loop-runner falls back to the PR-link stub in that case.
+   */
+  qa_notes?: string[];
 }
 
 /** Claim-status transition pair, e.g. { from: "Ready", to: "In Progress" }. */

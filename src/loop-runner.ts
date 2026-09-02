@@ -239,18 +239,49 @@ export function decideEpicMove(
 }
 
 /**
- * Build the QA-notes Atlassian Document (ADF) from the verdict's own
- * fields -- mirrors what push-branch writes into Jira's "QA Notes" field
- * and the PR body's "## QA Notes" section, but sourced purely from
- * verdict.json rather than a separate skill contract. No skill
- * involvement, no new verdict field.
+ * Build the QA-notes Atlassian Document (ADF) for Jira's QA Notes field
+ * (customfield_14226).
+ *
+ * When the skill reported `qa_notes` (sequential manual-testing steps --
+ * see the Verdict type's own doc comment), render a bold "Manual testing
+ * steps:" header followed by an ordered list, one listItem per entry --
+ * the same ADF shape the retired interactive qa-notes/push-branch skills
+ * built by hand. Any entry starting with "Expected:" gets that prefix
+ * bold-marked, matching that same convention, so a human QA reviewer can
+ * scan action steps vs. expected results at a glance. This is genuinely
+ * useful, step-by-step content -- distinct from, and never derived from,
+ * the PR body's own terse "## QA Notes" pass/fail summary.
+ *
+ * When `qa_notes` is absent or empty (older verdicts, or a bounce with no
+ * notes to give), fall back to the previous PR-link stub.
  *
  * customfield_14226 is a rich-text field: Jira rejects a plain string for
  * it ("Operation value must be an Atlassian Document"), confirmed against
- * a real transition attempt -- so this returns a full ADF doc, one
- * paragraph per line, not a string.
+ * a real transition attempt -- so this always returns a full ADF doc, not
+ * a string.
  */
 export function buildQaNotesAdf(verdict: Verdict): Record<string, unknown> {
+  if (verdict.qa_notes && verdict.qa_notes.length > 0) {
+    return {
+      type: "doc",
+      version: 1,
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "Manual testing steps:", marks: [{ type: "strong" }] }],
+        },
+        {
+          type: "orderedList",
+          attrs: { order: 1 },
+          content: verdict.qa_notes.map((step) => ({
+            type: "listItem",
+            content: [{ type: "paragraph", content: qaNoteStepContent(step) }],
+          })),
+        },
+      ],
+    };
+  }
+
   const lines = [`PR: ${verdict.pr ?? "(none)"}`, `Verify loops: ${verdict.verify_loops}`];
   return {
     type: "doc",
@@ -260,6 +291,22 @@ export function buildQaNotesAdf(verdict: Verdict): Record<string, unknown> {
       content: [{ type: "text", text }],
     })),
   };
+}
+
+/**
+ * Split one qa_notes entry into ADF text nodes. An "Expected:" prefix gets
+ * its own bold-marked node followed by a plain node for the rest of the
+ * line; every other entry is a single plain node.
+ */
+function qaNoteStepContent(step: string): Array<Record<string, unknown>> {
+  const EXPECTED_PREFIX = "Expected:";
+  if (step.startsWith(EXPECTED_PREFIX)) {
+    return [
+      { type: "text", text: EXPECTED_PREFIX, marks: [{ type: "strong" }] },
+      { type: "text", text: step.slice(EXPECTED_PREFIX.length) },
+    ];
+  }
+  return [{ type: "text", text: step }];
 }
 
 /**
