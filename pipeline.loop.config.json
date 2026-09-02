@@ -1,3 +1,4 @@
 {
-  "pollIntervalSec": 60
+  "pollIntervalSec": 60,
+  "postRunDelaySec": 5
 }

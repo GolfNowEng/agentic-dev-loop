@@ -18,6 +18,7 @@ import {
   loadLoopConfig,
   assertNoPlaceholders,
   repoSlugFromUrl,
+  targetRepoAddDir,
 } from "./config.ts";
 import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./jira-client.ts";
 import { runLoopIteration } from "./loop-runner.ts";
@@ -27,6 +28,7 @@ import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.ts";
 import { extractUsage } from "./claude-usage.ts";
 import { readVerdictFile, agentErrorVerdict } from "./verdict.ts";
 import { redactSensitive } from "./redact.ts";
+import { decideNextAction } from "./poll-loop.ts";
 
 const SKILL_NAME = "ticket-to-pr";
 const MODEL = "sonnet";
@@ -311,6 +313,13 @@ async function main(): Promise<void> {
     log(`[${SKILL_NAME}] claimed ${ticketKey}, running...`);
     const tail = startProgressTail(runsBaseDir, ticketKey, before);
 
+    // --permission-mode acceptEdits only auto-answers the Edit/Write
+    // permission *prompt* -- it does not grant tool access to a directory
+    // outside this process's cwd. ticket-to-pr's worktrees live inside
+    // targetRepo.path (when set), not inside dev-loop's own tree, so
+    // without --add-dir every Edit/Write into the worktree is denied
+    // (confirmed live on TARS-1393: 4 Edit denials, no verdict.json).
+    const addDir = targetRepoAddDir(config);
     const claudeArgs = [
       "-p",
       `/${SKILL_NAME} ${ticketKey}`,
@@ -318,6 +327,7 @@ async function main(): Promise<void> {
       MODEL,
       "--permission-mode",
       "acceptEdits",
+      ...(addDir ? ["--add-dir", addDir] : []),
       "--allowedTools",
       ALLOWED_TOOLS,
       "--output-format",
@@ -426,12 +436,9 @@ async function main(): Promise<void> {
         log(
           `[${SKILL_NAME}] queue empty, sleeping ${loopConfig.pollIntervalSec}s`,
         );
-        if (once) return;
-        await sleep(loopConfig.pollIntervalSec * 1000);
         break;
       case "skipped-race":
         log(`[${SKILL_NAME}] claim raced on ${result.ticket}, retrying`);
-        if (once) return;
         break;
       case "ran":
         log(`[${SKILL_NAME}] ${result.ticket}: ${result.logLine.detail}`);
@@ -440,12 +447,18 @@ async function main(): Promise<void> {
             `[${SKILL_NAME}] ${result.ticket}: WARNING -- Jira epic/status update failed (${result.jiraSyncError}). The run is logged in runs.jsonl, but Jira's epic/status may not reflect it -- check and fix manually.`,
           );
         }
-        if (once) return;
+        log(
+          `[${SKILL_NAME}] waiting ${loopConfig.postRunDelaySec}s before polling again (lets Jira's search index catch up with the just-written status)`,
+        );
         break;
       case "paused":
         logError(`[${SKILL_NAME}] PAUSED: ${result.reason}`);
         process.exit(1);
     }
+
+    const action = decideNextAction(result.kind, loopConfig, once);
+    if (action.kind === "exit") return;
+    if (action.kind === "sleep") await sleep(action.ms);
   }
 }
 

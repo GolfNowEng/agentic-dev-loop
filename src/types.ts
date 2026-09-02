@@ -182,6 +182,13 @@ export interface TargetRepoConfig {
 export interface LoopConfig {
   /** Seconds to sleep between polls when the queue is empty. */
   pollIntervalSec: number;
+  /**
+   * Seconds to wait after a run completes before polling again -- gives
+   * Jira's search index time to reflect a just-written status transition
+   * before the next poll can re-match the same ticket (confirmed cause of
+   * a duplicate run landing ~2s after TARS-1389/1390/1393 each landed).
+   */
+  postRunDelaySec: number;
 }
 
 /**
