@@ -50,6 +50,22 @@ export function repoSlugFromUrl(url: string): string {
   return lastSegment;
 }
 
+/**
+ * The directory to grant the spawned `claude -p` session access to via
+ * `--add-dir`, beyond dev-loop's own cwd. When `targetRepo.path` is set,
+ * ticket-to-pr's per-run worktrees are created inside that checkout (see
+ * docs/logging.md), which sits outside dev-loop's own directory tree --
+ * without an explicit grant, every Edit/Write into the worktree is denied
+ * regardless of `--permission-mode acceptEdits` (that flag only
+ * auto-answers the permission *prompt* for Edit/Write, it doesn't grant
+ * directory access). Returns null when `targetRepo.path` is unset, since
+ * the clone-based flow's worktrees live under `.pipeline/<slug>/repo`,
+ * already inside dev-loop's own cwd.
+ */
+export function targetRepoAddDir(config: Config): string | null {
+  return config.targetRepo.path ?? null;
+}
+
 /** Field paths (dot-notation) worth checking for leftover "___" placeholders. */
 const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
   ["jira.readyEpic", (c) => c.jira.readyEpic],

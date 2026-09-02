@@ -5,6 +5,7 @@ import {
   findPlaceholders,
   assertNoPlaceholders,
   repoSlugFromUrl,
+  targetRepoAddDir,
 } from "../src/config.ts";
 import type { Config } from "../src/types.ts";
 import * as fs from "node:fs/promises";
@@ -56,6 +57,26 @@ describe("repoSlugFromUrl", () => {
     expect(repoSlugFromUrl("git@github.com:org/catalog-ui-management")).toBe(
       "catalog-ui-management",
     );
+  });
+});
+
+describe("targetRepoAddDir", () => {
+  it("returns targetRepo.path when set, so the spawned claude session can be granted directory access to it", () => {
+    const config = makeConfig({
+      targetRepo: {
+        url: "git@github.com:fandango/webtarsthree.git",
+        defaultBranch: "master",
+        path: "/Users/me/Repos/webtarsthree",
+      },
+    });
+    expect(targetRepoAddDir(config)).toBe("/Users/me/Repos/webtarsthree");
+  });
+
+  it("returns null when targetRepo.path is unset (clone-based flow stays inside dev-loop's own cwd)", () => {
+    const config = makeConfig({
+      targetRepo: { url: "git@github.com:fandango/webtarsthree.git", defaultBranch: "master" },
+    });
+    expect(targetRepoAddDir(config)).toBeNull();
   });
 });
 

@@ -6,6 +6,72 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-02 — Immediate re-poll raced Jira's index and could clobber a just-set status; Jira QA Notes were a useless two-line stub
+
+Diagnosing why TARS-1389 sat in `Blocked` despite a landed, mergeable PR
+(#400) turned up two related bugs plus a separately-flagged content gap:
+
+1. **Race**: `src/main.ts`'s `for(;;)` poll loop re-polled immediately
+   after a `"ran"` result, with no delay — only `"idle"` ever slept.
+   Jira Cloud's search index lags slightly behind a write, so the very
+   next poll could still match a ticket whose status was *just*
+   transitioned. Confirmed live: a duplicate `ticket-to-pr` run landed on
+   TARS-1389, TARS-1390, and TARS-1393 within ~2s of each one landing.
+2. **Bad `Blocked` transition**: `src/loop-runner.ts` transitioned *any*
+   `bounced` verdict to `statusNames.bounced` ("Blocked") unconditionally.
+   For TARS-1389, the race above produced a second run whose verdict
+   correctly bounced with "PR already open, nothing to do" — a benign
+   no-op, not a real blocker — but the unconditional transition still
+   stomped the ticket's just-set `Code Review` status back to `Blocked`.
+   TARS-1390/1393 avoided this only because their redundant runs happened
+   to crash before writing a valid `verdict.json` (`agent_error`, which
+   never touches Jira status).
+3. **Useless QA Notes**: every landed ticket's Jira `customfield_14226`
+   ("QA Notes") field ended up as a two-line stub (`PR: <url>` / `Verify
+   loops: N`), because `buildQaNotesAdf()` could only build from fields
+   already on `Verdict`. Not the same content as the PR body's own
+   `## QA Notes` section (a terse pass/fail summary, left unchanged) — this
+   field is meant for a human QA reviewer's actual manual-testing steps.
+
+**Fix**: `src/poll-loop.ts` (new) centralizes what the poll loop does after
+each result kind; a `"ran"` result now sleeps for the new
+`pipeline.loop.config.json`'s `postRunDelaySec` (5s) instead of looping
+straight into another poll. `loop-runner.ts` now only transitions a
+bounced verdict to `Blocked` when `verdict.pr === null` — a genuine
+blocker never reaches Phase 5 (PR) and so never has `pr` set, which
+distinguishes it from the "already landed, nothing to do" case without an
+extra Jira read. `Verdict` gained an optional `qa_notes: string[]` field;
+`ticket-to-pr` (SKILL.md Phase 4) now writes real sequential manual-testing
+steps into it from the ticket's own Acceptance Criteria, and
+`buildQaNotesAdf()` renders those as a bold "Manual testing steps:" header
++ ordered list (falling back to the old stub when absent/empty) —
+matching the ADF shape the retired interactive `qa-notes`/`push-branch`
+skills built by hand.
+
+## 2026-09-02 — Spawned claude session had no directory grant for the target repo worktree, every Edit/Write denied
+
+When `targetRepo.path` is set, `ticket-to-pr`'s per-run worktrees are
+created inside that checkout, not inside dev-loop's own directory tree
+(see `docs/logging.md`). `src/main.ts` spawned `claude -p` with
+`--permission-mode acceptEdits` but no `--add-dir`, on the (wrong)
+assumption that `acceptEdits` alone was enough. `acceptEdits` only
+auto-answers the Edit/Write permission *prompt* — it does not grant tool
+access to a directory outside the process's cwd. Confirmed live on
+TARS-1393: every `Edit` call into the worktree was denied ("you haven't
+g[ranted]..."), the skill never reached a commit, no `verdict.json` was
+ever written, and the run logged `agent_error`. TARS-1389 and TARS-1390
+hit the same failure repeatedly (10+ `agent_error` runs each), leaving
+enough stale incomplete run dirs that a later run correctly detected
+"concurrent run in progress" and bounced with `blocked` — the tickets
+themselves were fine; the loop's own tooling never got far enough to do
+real work.
+
+**Fix**: added `targetRepoAddDir()` to `src/config.ts` (returns
+`config.targetRepo.path`, or `null` when unset — the clone-based flow's
+worktrees already live under `.pipeline/<slug>/repo`, inside dev-loop's
+own cwd, so no extra grant is needed there). `src/main.ts` now passes
+`--add-dir <path>` in `claudeArgs` whenever it's non-null.
+
 ## 2026-09-01 — Redaction covered PII, not secrets, despite real credentials being reachable from every run
 
 Ground/Red/Green/Verify run inside a per-run git worktree nested inside
