@@ -242,6 +242,24 @@ Commit once all Phase 2 tests pass
    a real finding. If after 3 verify loops issues persist, bounce with
    `verify_rejected` and the QA agent's findings.
 5. Record `verify_loops` (final count) for `verdict.json`.
+6. **Write `qa_notes`** — sequential manual-testing steps for a human QA
+   reviewer, one action per AC (or more if an AC has multiple observable
+   steps): a concrete action ("Navigate to `<url>`", "Click X", "Type Y
+   into Z") followed by an `Expected: <result>` entry describing what
+   should happen. Build these from the Refined Spec comment's Acceptance
+   Criteria text directly — that comment already names concrete
+   routes/URLs and expected outcomes for every ticket seen so far, and this
+   skill already trusts it literally per its "no inference" rule, so no
+   new heuristic (diff-scanning, route-guessing) is needed here. Use real
+   paths (e.g. `` `/rotten-tomatoes/critics?query=tina+kakad` ``), never a
+   page name in prose. This becomes `verdict.json`'s `qa_notes` array (see
+   schema below) and is rendered into Jira's QA Notes field as a "Manual
+   testing steps:" list — **do not** derive this from, or duplicate into,
+   the PR body's own `## QA Notes` section below (Phase 5): that section is
+   a terse pass/fail summary for a different audience (test counts,
+   lint/build status, QA agent verdict) and must stay as-is. The two lists
+   serve different purposes and must never be conflated or copy-pasted
+   from one another.
 
 ### Phase 5 — PR
 
@@ -377,7 +395,11 @@ from this exact path):
   "model": "sonnet",
   "pr": "https://github.com/fandango/webtarsthree/pull/123",
   "cost_usd": 0,
-  "tokens": { "in": 0, "out": 0 }
+  "tokens": { "in": 0, "out": 0 },
+  "qa_notes": [
+    "Navigate to `/rotten-tomatoes/critics?query=tina+kakad`",
+    "Expected: the Self-Service badge appears next to the critic's name"
+  ]
 }
 ```
 
@@ -385,6 +407,12 @@ from this exact path):
 runner derives the real values from `claude -p --output-format json`'s own
 usage report, not from anything this skill self-reports (a skill cannot
 reliably know its own total cost from inside the run).
+
+`qa_notes` is optional — omit it (or write an empty array) on a `bounced`
+or `error` outcome with nothing to report; the loop runner falls back to
+a PR-link stub in that case. On a `landed` outcome, always populate it per
+Phase 4 step 6 above. This is distinct from, and never derived from, the
+PR body's own `## QA Notes` section (Phase 5) — see that phase for why.
 
 ## Invocation (for the loop runner)
 

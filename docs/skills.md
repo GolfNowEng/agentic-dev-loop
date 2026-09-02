@@ -91,3 +91,14 @@ from this verdict.
 updating the pipeline spec: `spec_ambiguous · spec_contradicted · blocked ·
 too_large · tests_flaky · env_setup · verify_rejected · subagent_stall ·
 merge_conflict · agent_error · killed_ceiling`.
+
+**`qa_notes` (optional `string[]`)** — sequential manual-testing steps for
+a human QA reviewer (real routes/URLs, one action + one `Expected:` result
+per Acceptance Criterion), written by `ticket-to-pr` in Phase 4 (see
+SKILL.md). The loop runner's `buildQaNotesAdf()` renders this into Jira's
+QA Notes field (`codeReviewFields.qaNotesField`) as a bold "Manual testing
+steps:" header + ordered list, with `Expected:` entries bold-marked —
+falling back to a terse `PR: <url>` / `Verify loops: N` stub when absent
+or empty. This is distinct from, and never derived from, the PR body's own
+`## QA Notes` section (a pass/fail summary for a different audience) — the
+two must never be conflated.
