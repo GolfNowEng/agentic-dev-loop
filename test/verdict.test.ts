@@ -66,6 +66,30 @@ describe("parseVerdict", () => {
   });
 });
 
+describe("parseVerdict: qa_notes (optional manual-testing-steps field)", () => {
+  it("accepts a verdict with qa_notes present as an array of strings", () => {
+    const json = JSON.stringify({
+      ...JSON.parse(validVerdictJson),
+      qa_notes: [
+        "Navigate to `/rotten-tomatoes/critics?query=tina+kakad`",
+        "Expected: the Self-Service badge appears next to the critic's name",
+      ],
+    });
+    const verdict = parseVerdict(json);
+    expect(verdict.outcome).toBe("landed");
+    expect(verdict.qa_notes).toEqual([
+      "Navigate to `/rotten-tomatoes/critics?query=tina+kakad`",
+      "Expected: the Self-Service badge appears next to the critic's name",
+    ]);
+  });
+
+  it("accepts a verdict with qa_notes absent -- back-compat with verdicts written before this field existed", () => {
+    const verdict = parseVerdict(validVerdictJson);
+    expect(verdict.outcome).toBe("landed");
+    expect(verdict.qa_notes).toBeUndefined();
+  });
+});
+
 describe("agentErrorVerdict", () => {
   it("builds a canonical error verdict with the given detail", () => {
     const verdict = agentErrorVerdict("verdict.json was missing");

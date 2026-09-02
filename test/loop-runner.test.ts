@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { runLoopIteration } from "../src/loop-runner.ts";
+import { runLoopIteration, buildQaNotesAdf } from "../src/loop-runner.ts";
 import type { RunSkillFn, LoopIterationDeps, LoopIterationResult } from "../src/loop-runner.ts";
 import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
 import type { Config, Verdict } from "../src/types.ts";
@@ -690,6 +690,103 @@ describe("runLoopIteration", () => {
 
       expect(pollOldestMatching).toHaveBeenCalled();
       expect(runSkill).toHaveBeenCalledWith("PROJ-9");
+    });
+  });
+});
+
+describe("buildQaNotesAdf", () => {
+  it("with qa_notes set: builds a bold 'Manual testing steps:' header followed by an ordered list, one listItem per entry, with Expected: entries bold-marked -- matching the retired interactive qa-notes/push-branch skills' ADF shape, not the PR-link stub", () => {
+    const verdict = makeVerdict({
+      qa_notes: [
+        "Navigate to `/rotten-tomatoes/critics?query=tina+kakad`",
+        "Expected: the Self-Service badge appears next to the critic's name",
+      ],
+    });
+
+    const adf = buildQaNotesAdf(verdict) as {
+      type: string;
+      content: Array<Record<string, unknown>>;
+    };
+
+    expect(adf.type).toBe("doc");
+    expect(adf.content[0]).toEqual({
+      type: "paragraph",
+      content: [{ type: "text", text: "Manual testing steps:", marks: [{ type: "strong" }] }],
+    });
+
+    const orderedList = adf.content[1] as {
+      type: string;
+      attrs: { order: number };
+      content: Array<Record<string, unknown>>;
+    };
+    expect(orderedList.type).toBe("orderedList");
+    expect(orderedList.content).toHaveLength(2);
+
+    // Plain step: no bold mark.
+    expect(orderedList.content[0]).toEqual({
+      type: "listItem",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "Navigate to `/rotten-tomatoes/critics?query=tina+kakad`" },
+          ],
+        },
+      ],
+    });
+
+    // "Expected:" step: that prefix is bold-marked, rest is plain.
+    expect(orderedList.content[1]).toEqual({
+      type: "listItem",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "Expected:", marks: [{ type: "strong" }] },
+            {
+              type: "text",
+              text: " the Self-Service badge appears next to the critic's name",
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("with qa_notes absent: falls back to the existing PR-link stub, unchanged -- regression guard for verdicts that predate this field or a bounce with no notes to give", () => {
+    const verdict = makeVerdict({ pr: "https://github.com/org/repo/pull/42", verify_loops: 2 });
+    delete (verdict as Partial<Verdict>).qa_notes;
+
+    const adf = buildQaNotesAdf(verdict) as {
+      type: string;
+      content: Array<Record<string, unknown>>;
+    };
+
+    expect(adf).toEqual({
+      type: "doc",
+      version: 1,
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "PR: https://github.com/org/repo/pull/42" }],
+        },
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "Verify loops: 2" }],
+        },
+      ],
+    });
+  });
+
+  it("with qa_notes an empty array: falls back to the PR-link stub, same as absent", () => {
+    const verdict = makeVerdict({ qa_notes: [] });
+
+    const adf = buildQaNotesAdf(verdict) as { content: Array<Record<string, unknown>> };
+
+    expect(adf.content).toHaveLength(2);
+    expect(adf.content[0]).toEqual({
+      type: "paragraph",
+      content: [{ type: "text", text: expect.stringContaining("PR:") }],
     });
   });
 });
