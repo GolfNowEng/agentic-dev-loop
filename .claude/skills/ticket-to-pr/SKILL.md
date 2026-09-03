@@ -237,10 +237,17 @@ Commit once all Phase 2 tests pass
 4. Spawn `qa-agent` (see `.claude/agents/qa-agent.md`) as a genuine
    fresh-context subagent — it must not be told how the fix was
    implemented, only given the ticket and the diff. Pass it the ticket key
-   and the branch name. If it reports issues, address them and re-run this
-   phase (increment a `verify_loops` counter each time); do not paper over
-   a real finding. If after 3 verify loops issues persist, bounce with
-   `verify_rejected` and the QA agent's findings.
+   and the branch name. Each `qa-agent` invocation is one verify loop —
+   increment `verify_loops` when it runs, not when a fix is committed. If
+   it reports issues, address them and invoke `qa-agent` again for another
+   loop; do not paper over a real finding. **The 3rd `qa-agent` invocation
+   is the last one this run gets**: if it reports `pass`, continue to step
+   5; if it reports `fail`, bounce immediately with `verify_rejected` and
+   its findings — do not fix-and-re-check a 4th time. (Confirmed live on
+   TARS-1399: a run that fixed the 3rd loop's finding and re-checked with a
+   4th `qa-agent` invocation before bouncing ran to 87 minutes and tripped
+   `runTimeoutMin` — the budget is 3 checks total, not 3 fix cycles plus a
+   confirmation check.)
 5. Record `verify_loops` (final count) for `verdict.json`.
 6. **Write `qa_notes`** — sequential manual-testing steps for a human QA
    reviewer, one action per AC (or more if an AC has multiple observable

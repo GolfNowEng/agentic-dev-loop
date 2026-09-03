@@ -6,6 +6,26 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-02 — Verify phase ran a 4th qa-agent check before bouncing, tripping runTimeoutMin
+
+`SKILL.md` Phase 4 step 4's wording ("If after 3 verify loops issues
+persist, bounce") was ambiguous between "after the 3rd `qa-agent` check"
+and "after 3 fix cycles, run a confirmation check." Confirmed live on
+TARS-1399: a first run correctly bounced right after its 3rd `qa-agent`
+invocation reported `fail` (46 min total). A second run instead fixed the
+3rd loop's finding and then spawned a *4th* `qa-agent` invocation to
+re-check before bouncing — an unbudgeted extra loop that pushed the run to
+87 minutes and tripped `ceilings.ts`'s `runTimeoutMin` (45 min), pausing
+the poll loop (`process.exit(1)` in `main.ts`) after the run had already
+completed. Both bounces were themselves legitimate — `qa-agent` found a
+genuinely new stale-async-state defect each time — this was a budget-
+counting bug, not a false-positive verify gate.
+
+**Fix**: reworded Phase 4 step 4 to make the budget explicit — each
+`qa-agent` invocation is one verify loop, and the 3rd invocation is the
+last one a run gets; a `fail` on that 3rd check bounces immediately, with
+no further fix-and-re-check cycle.
+
 ## 2026-09-02 — Immediate re-poll raced Jira's index and could clobber a just-set status; Jira QA Notes were a useless two-line stub
 
 Diagnosing why TARS-1389 sat in `Blocked` despite a landed, mergeable PR
