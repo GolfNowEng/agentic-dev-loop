@@ -51,6 +51,7 @@ function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
     transitionStatus: vi.fn(async () => {}),
     moveToEpic: vi.fn(async () => {}),
     assignTicket: vi.fn(async () => {}),
+    addComment: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -592,6 +593,122 @@ describe("runLoopIteration", () => {
     });
   });
 
+  it("a genuine bounce (no PR yet) posts the verdict's evidence as a Jira comment before transitioning to Blocked -- otherwise the ticket goes Blocked with no trace of why, which is the whole reason a human can't tell what happened from Jira alone", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket = makeTicket({ key: "PROJ-7b" });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+      });
+      const config = makeConfig();
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({
+          outcome: "bounced",
+          failure_category: "spec_ambiguous",
+          detail:
+            "AC2 and AC4 pass against unmodified baseline code -- can't confirm RED for the right reason.",
+          pr: null,
+        }),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
+      }));
+
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+
+      await runLoopIteration(deps);
+
+      expect(jiraClient.addComment).toHaveBeenCalledTimes(1);
+      const [commentTicket, commentBody] = (jiraClient.addComment as ReturnType<typeof vi.fn>)
+        .mock.calls[0];
+      expect(commentTicket).toBe("PROJ-7b");
+      // Must be an ADF doc (Jira rejects a plain string for comment bodies,
+      // same constraint buildQaNotesAdf already documents for QA Notes),
+      // and must actually carry the bounce's own evidence -- not a generic
+      // "this was bounced" stub that would be just as opaque as no comment.
+      expect(commentBody).toMatchObject({ type: "doc" });
+      expect(JSON.stringify(commentBody)).toContain("spec_ambiguous");
+      expect(JSON.stringify(commentBody)).toContain(
+        "AC2 and AC4 pass against unmodified baseline code",
+      );
+
+      // The comment must be posted before the status transition happens,
+      // so a transient failure after the comment (e.g. a bad Blocked
+      // transition) still leaves the evidence on the ticket.
+      const addCommentOrder = (jiraClient.addComment as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0];
+      const transitionOrder = (jiraClient.transitionStatus as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0];
+      expect(addCommentOrder).toBeLessThan(transitionOrder);
+    });
+  });
+
+  it("a landed verdict never posts a bounce-evidence comment", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket = makeTicket({ key: "PROJ-7c" });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+      });
+      const config = makeConfig();
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({ outcome: "landed" }),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
+      }));
+
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+
+      await runLoopIteration(deps);
+
+      expect(jiraClient.addComment).not.toHaveBeenCalled();
+    });
+  });
+
+  it("a bounce-evidence comment failure never throws out of runLoopIteration -- surfaced via jiraSyncError, and the Blocked transition still happens so the ticket isn't left silently stuck In Progress", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket = makeTicket({ key: "PROJ-7d" });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+        addComment: vi.fn(async () => {
+          throw new Error("POST ... -> 400 Bad Request");
+        }),
+      });
+      const config = makeConfig();
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({
+          outcome: "bounced",
+          failure_category: "spec_ambiguous",
+          detail: "Acceptance criteria conflict with existing behavior.",
+          pr: null,
+        }),
+        started: "2026-08-16T14:02:11Z",
+        ended: "2026-08-16T14:19:40Z",
+        costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
+      }));
+
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+
+      let result: LoopIterationResult | undefined;
+      await expect(
+        (async () => {
+          result = await runLoopIteration(deps);
+        })(),
+      ).resolves.not.toThrow();
+
+      expect(result!.kind).toBe("ran");
+      if (result!.kind === "ran") {
+        expect(result!.jiraSyncError).toMatch(/400 Bad Request/);
+      }
+      expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
+        "PROJ-7d",
+        config.jira.statusNames.bounced,
+      );
+    });
+  });
+
   it("a bounced verdict that already has a PR (e.g. intake found this ticket's work already landed, nothing to do) does NOT transition to Blocked -- that would stomp a status the ticket may have already correctly moved past. Confirmed live on TARS-1389: a race produced a second run that bounced cleanly with an existing PR, and the unconditional transition clobbered the ticket's just-set Code Review status back to Blocked.", async () => {
     await withTempRunsLog(async (runsLogPath) => {
       const ticket = makeTicket({ key: "TARS-1389" });
@@ -669,12 +786,14 @@ describe("runLoopIteration", () => {
       const transitionStatus = vi.fn(async () => {});
       const moveToEpic = vi.fn(async () => {});
       const assignTicket = vi.fn(async () => {});
+      const addComment = vi.fn(async () => {});
       const jiraClient: JiraClient = {
         pollOldestMatching,
         claimTicket,
         transitionStatus,
         moveToEpic,
         assignTicket,
+        addComment,
       };
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict(),

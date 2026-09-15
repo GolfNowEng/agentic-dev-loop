@@ -302,4 +302,23 @@ describe("RealJiraClient", () => {
       /401/,
     );
   });
+
+  it("addComment POSTs the given ADF body to the issue's comment endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 201 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const bodyAdf = {
+      type: "doc",
+      version: 1,
+      content: [{ type: "paragraph", content: [{ type: "text", text: "Bounced." }] }],
+    };
+    await client.addComment("PROJ-1", bodyAdf);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      "https://example.atlassian.net/rest/api/3/issue/PROJ-1/comment",
+    );
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ body: bodyAdf });
+  });
 });
