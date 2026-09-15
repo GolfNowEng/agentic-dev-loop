@@ -36,6 +36,17 @@ Core rule: this skill **never edits the spec**. Any ambiguity, contradiction,
 or oversized scope is `research-loop`'s problem to fix upstream — this skill
 bounces with evidence instead of guessing.
 
+**A bounce's evidence reaches the ticket itself, not just runs.jsonl.**
+`ticket-to-pr` has no Jira-write tool of its own (see "Model policy" below,
+and `ALLOWED_TOOLS` in `src/main.ts`) — it only writes `verdict.detail`
+into `verdict.json`. The loop runner (`runLoopIteration` in
+`src/loop-runner.ts`) is what turns a genuine bounce (`verdict.pr === null`)
+into a Jira comment, via `buildBounceCommentAdf()` + `JiraClient.addComment`,
+posted immediately before the existing Blocked transition. Before this
+existed, a bounce's only trace was the local `runs/<project>.jsonl` line —
+the ticket itself went Blocked with nothing explaining why, which is exactly
+what made TARS-1441/TARS-1438 look opaque on 2026-09-14 (see CHANGELOG).
+
 **Ticket content protocol**: the ticket's description is the stakeholder's
 original, untouched by `research-loop`, and is background context only —
 never authoritative for AC/Scope. The `Refined Spec — ready for

@@ -6,6 +6,34 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-14 — A bounced ticket went Blocked with no trace anywhere in Jira of why
+
+`ticket-to-pr` has no Jira-write tool (by design — see the 2026-09-01
+entry below on why this pipeline keeps its write surface narrow); a
+genuine bounce's only output was `verdict.detail`, read by
+`runLoopIteration` (`src/loop-runner.ts`) and appended to the local
+`runs/<project>.jsonl` audit log before transitioning the ticket to
+`Blocked`. The evidence never reached the ticket itself. Surfaced when
+TARS-1441 (bounced at Red, `spec_ambiguous`: two ACs' tests trivially
+passed against unmodified baseline code, so RED couldn't be confirmed)
+and TARS-1438 (bounced at Plan, `spec_ambiguous`: an AC pointed at an
+`App.test.jsx` testing pattern that doesn't exist in that file) both
+sat in Blocked with nothing on the ticket explaining why — a human had
+to go read this repo's local `runs.jsonl` to find out.
+
+**Fix**: added `JiraClient.addComment(ticketKey, bodyAdf)`
+(`src/jira-client.ts`; `RealJiraClient` POSTs to
+`/rest/api/3/issue/:key/comment`, `StubJiraClient` throws
+not-configured like every other method). `runLoopIteration` now calls
+it via the new `buildBounceCommentAdf()` immediately before the
+existing Blocked transition, whenever a bounce is genuine
+(`verdict.pr === null` — the same condition that already gates the
+transition itself). The comment-post has its own try/catch, separate
+from the transition: a failed comment must never block the Blocked
+transition (that would leave the ticket silently stuck In Progress
+over a comment failure alone), so both failure modes independently
+merge into `jiraSyncError` instead.
+
 ## 2026-09-02 — Verify phase ran a 4th qa-agent check before bouncing, tripping runTimeoutMin
 
 `SKILL.md` Phase 4 step 4's wording ("If after 3 verify loops issues
