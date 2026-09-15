@@ -182,6 +182,26 @@ export async function runLoopIteration(
       // race (see poll-loop.ts) produced a second run that bounced cleanly
       // with an existing PR, and this unconditional transition clobbered
       // the ticket's just-set Code Review status back to Blocked.
+      //
+      // Post the verdict's own evidence as a comment BEFORE the status
+      // transition -- a bounce used to leave the ticket in Blocked with no
+      // trace of why anywhere in Jira (the evidence only ever existed in
+      // this repo's local runs.jsonl); posting first means a human reading
+      // the ticket sees the reason even if the transition itself then
+      // fails. Its own try/catch, independent of the transition below: a
+      // failed comment must never block the Blocked transition itself --
+      // that would leave the ticket silently stuck In Progress over a
+      // comment-post failure alone, a worse outcome than "Blocked with no
+      // comment." Both failures still merge into jiraSyncError.
+      try {
+        await jiraClient.addComment(ticket.key, buildBounceCommentAdf(verdict));
+      } catch (commentErr) {
+        const commentErrorMessage =
+          commentErr instanceof Error ? commentErr.message : String(commentErr);
+        jiraSyncError = jiraSyncError
+          ? `${jiraSyncError}; ${commentErrorMessage}`
+          : commentErrorMessage;
+      }
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
     }
   } catch (err) {
@@ -307,6 +327,32 @@ function qaNoteStepContent(step: string): Array<Record<string, unknown>> {
     ];
   }
   return [{ type: "text", text: step }];
+}
+
+/**
+ * Build the Jira comment ADF posted on a genuine bounce (see
+ * runLoopIteration's Blocked branch), so a human reading the ticket sees
+ * why it's blocked without having to go find this repo's local
+ * runs.jsonl -- the same evidence already lands in the run log, this is
+ * just the copy that reaches Jira. Bold "failure_category" label followed
+ * by the skill's own one-line detail, matching the plain-paragraph shape
+ * of buildQaNotesAdf's PR-link-stub fallback (no rich structure needed for
+ * a single line).
+ */
+export function buildBounceCommentAdf(verdict: Verdict): Record<string, unknown> {
+  return {
+    type: "doc",
+    version: 1,
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: `Bounced (${verdict.failure_category}): `, marks: [{ type: "strong" }] },
+          { type: "text", text: verdict.detail },
+        ],
+      },
+    ],
+  };
 }
 
 /**

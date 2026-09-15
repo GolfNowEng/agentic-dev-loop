@@ -59,6 +59,15 @@ export interface JiraClient {
    * itself does not check, it just performs the assignment.
    */
   assignTicket(ticketKey: string, accountId: string): Promise<void>;
+
+  /**
+   * Post a comment to a ticket. `bodyAdf` must be a full Atlassian Document
+   * Format doc (`{ type: "doc", version: 1, content: [...] }`), not a plain
+   * string -- Jira's v3 comment endpoint rejects a bare string body the
+   * same way its transition-screen rich-text fields do (see
+   * buildQaNotesAdf's doc comment in loop-runner.ts).
+   */
+  addComment(ticketKey: string, bodyAdf: Record<string, unknown>): Promise<void>;
 }
 
 /**
@@ -104,6 +113,13 @@ export class StubJiraClient implements JiraClient {
 
   async assignTicket(_ticketKey: string, _accountId: string): Promise<void> {
     throw StubJiraClient.notConfigured("assignTicket");
+  }
+
+  async addComment(
+    _ticketKey: string,
+    _bodyAdf: Record<string, unknown>,
+  ): Promise<void> {
+    throw StubJiraClient.notConfigured("addComment");
   }
 }
 
@@ -308,6 +324,16 @@ export class RealJiraClient implements JiraClient {
     await this.request(`/rest/api/3/issue/${ticketKey}`, {
       method: "PUT",
       body: JSON.stringify({ fields: { assignee: { accountId } } }),
+    });
+  }
+
+  async addComment(
+    ticketKey: string,
+    bodyAdf: Record<string, unknown>,
+  ): Promise<void> {
+    await this.request(`/rest/api/3/issue/${ticketKey}/comment`, {
+      method: "POST",
+      body: JSON.stringify({ body: bodyAdf }),
     });
   }
 }
