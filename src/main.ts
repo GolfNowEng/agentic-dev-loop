@@ -465,7 +465,7 @@ async function main(): Promise<void> {
         log(`[${SKILL_NAME}] ${result.ticket}: ${result.logLine.detail}`);
         if (result.jiraSyncError) {
           logError(
-            `[${SKILL_NAME}] ${result.ticket}: WARNING -- Jira epic/status update failed (${result.jiraSyncError}). The run is logged in runs.jsonl, but Jira's epic/status may not reflect it -- check and fix manually.`,
+            `[${SKILL_NAME}] ${result.ticket}: WARNING -- Jira label/status update failed (${result.jiraSyncError}). The run is logged in runs.jsonl, but Jira's label/status may not reflect it -- check and fix manually.`,
           );
         }
         log(

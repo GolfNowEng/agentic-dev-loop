@@ -175,7 +175,6 @@ interface JiraSearchResponse {
     fields: {
       status: { name: string };
       assignee: { accountId: string } | null;
-      [key: string]: unknown;
     };
   }>;
 }

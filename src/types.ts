@@ -88,9 +88,9 @@ export interface Verdict {
   };
   /**
    * Optional hint from the skill about which loop produced this verdict
-   * ("refine" vs "dev"), used together with autoPromoteLabel to decide
-   * which epic a "landed" ticket should move to. The loop runner may also
-   * derive this from context rather than trusting the verdict.
+   * ("refine" vs "dev"). Currently unread by this repo's own code (the
+   * loop runner derives loopKind from its own invocation context, not
+   * from this field) -- kept only for verdict.json schema shape.
    */
   loop?: "refine" | "dev";
   /**

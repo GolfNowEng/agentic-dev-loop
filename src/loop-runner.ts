@@ -1,5 +1,5 @@
 // The dev-loop iteration itself: poll -> claim -> spawn skill -> read
-// verdict -> transition + move epic -> log -> check ceilings.
+// verdict -> transition -> log -> check ceilings.
 //
 // Every side-effecting dependency (Jira access, spawning "claude -p") is
 // injected so this module and its tests never touch a real process or a
@@ -55,7 +55,7 @@ export type LoopIterationResult =
 
 /**
  * Which polling loop this invocation is for - determines which JQL
- * template and which epic-move mapping applies.
+ * template applies.
  */
 export type LoopKind = "refine" | "dev";
 
@@ -87,7 +87,7 @@ export interface LoopIterationDeps {
  *   4. read the verdict it wrote (missing/malformed -> "error" /
  *      "agent_error", handled by verdict.ts before this is called or
  *      within runSkill itself)
- *   5. transition the ticket and move its epic per the verdict
+ *   5. transition the ticket per the verdict
  *   6. append exactly one line to runs.jsonl
  *   7. enforce ceilings (max runs/day, max cost/run, run timeout); on
  *      breach, PAUSE (return a "paused" result), never silently continue
@@ -95,8 +95,8 @@ export interface LoopIterationDeps {
  * No atomic claim step: this MVP assumes exactly one dev-loop instance is
  * ever running against a given project at a time (confirmed with the
  * user), so there's no race to guard against. dev-loop's poll JQL itself
- * (status "In Progress" + assignee match, inside the ready epic) is what
- * scopes which tickets are eligible -- see docs/config.md's "Future:
+ * (labels = "pipeline:dev" + assignee match) is what scopes which tickets
+ * are eligible, no epic involved -- see docs/config.md's "Future:
  * multiple concurrent loop instances" note for what real coordination
  * (e.g. a per-instance label) would need to look like if this is ever
  * relaxed.
@@ -143,8 +143,8 @@ export async function runLoopIteration(
   // Record this run's real consequences BEFORE checking the post-run
   // ceiling. A completed run already produced a real verdict -- a
   // ceiling breach must pause the loop from starting the NEXT run, but
-  // must never discard work that already happened (epic move, audit
-  // log). Checking the ceiling first would silently drop a genuine
+  // must never discard work that already happened (status transition,
+  // audit log). Checking the ceiling first would silently drop a genuine
   // "landed" verdict just because it happened to cost/take more than
   // expected, which defeats the purpose of the audit trail.
   //
@@ -152,19 +152,16 @@ export async function runLoopIteration(
   // a transient API error here must never throw out of this function --
   // that would propagate out of the caller's poll loop and kill the
   // entire unattended process over what is otherwise a real, completed
-  // run. The run still gets logged either way; only the epic/status may
-  // be out of sync with what runs.jsonl says happened.
+  // run. The run still gets logged either way; only the status may be
+  // out of sync with what runs.jsonl says happened.
   let jiraSyncError: string | undefined = assignSyncError;
   try {
     if (loopKind === "dev" && verdict.outcome === "landed") {
-      // A landed PR gets its status transitioned to Code Review -- never
-      // its epic. The epic (Pipeline: dev-loop) already means "dev-loop
-      // is authorized to work this ticket"; moving it anywhere else would
-      // make epic placement ambiguous depending on which ticket you're
-      // looking at. Status alone -- In Progress -> Code Review -- is the
-      // "needs code review" signal. That transition has a required Jira
-      // screen (PII/QA-notes fields), so the fields must be sent alongside
-      // it, not left empty.
+      // A landed PR gets its status transitioned to Code Review. Status
+      // alone -- In Progress -> Code Review -- is the "needs code review"
+      // signal; nothing here moves an epic or label. That transition has
+      // a required Jira screen (PII/QA-notes fields), so the fields must
+      // be sent alongside it, not left empty.
       const fields = buildCodeReviewFields(config, buildQaNotesAdf(verdict));
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.prOpen, fields);
     } else if (verdict.outcome === "bounced" && verdict.pr === null) {
@@ -201,10 +198,10 @@ export async function runLoopIteration(
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
     }
   } catch (err) {
-    const epicMoveError = err instanceof Error ? err.message : String(err);
+    const jiraWriteError = err instanceof Error ? err.message : String(err);
     jiraSyncError = jiraSyncError
-      ? `${jiraSyncError}; ${epicMoveError}`
-      : epicMoveError;
+      ? `${jiraSyncError}; ${jiraWriteError}`
+      : jiraWriteError;
   }
 
   const logLine = buildRunLogLine(ticket.key, verdict, started, ended, costUsd, tokens);

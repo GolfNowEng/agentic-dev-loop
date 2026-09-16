@@ -1,6 +1,6 @@
 {
   "jira": {
-    "triggerLabel": "pipeline:research",
+    "triggerLabel": "pipeline:dev",
     "handoffLabel": "pipeline:dev",
     "claimStatus": { "from": "To Do", "to": "In Progress" },
     "pollJql": {
