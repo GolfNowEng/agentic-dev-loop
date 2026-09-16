@@ -5,14 +5,13 @@ import type { Config } from "../src/types.ts";
 function makeConfig(): Config {
   return {
     jira: {
-      intakeEpics: ["EPIC-1", "EPIC-2"],
-      readyEpic: "EPIC-READY",
+      triggerLabel: "pipeline:research",
+      handoffLabel: "pipeline:dev",
       claimStatus: { from: "Backlog", to: "In Progress" },
       pollJql: {
-        refine: 'epic in ({epics}) AND status = "Backlog" ORDER BY created ASC',
-        dev: 'epic = {epic} AND status = "Backlog" ORDER BY created ASC',
+        refine: 'labels = "{label}" AND status = "Backlog" ORDER BY created ASC',
+        dev: 'labels = "{label}" ORDER BY created ASC',
       },
-      epicLinkField: "customfield_10014",
       statusNames: { bounced: "Blocked", prOpen: "In Progress" },
     },
     ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
@@ -22,11 +21,10 @@ function makeConfig(): Config {
 }
 
 describe("buildRefineJql", () => {
-  it("substitutes intakeEpics into the refine template", () => {
+  it("substitutes triggerLabel into the refine template", () => {
     const jql = buildRefineJql(makeConfig());
-    expect(jql).toContain("EPIC-1");
-    expect(jql).toContain("EPIC-2");
-    expect(jql).not.toContain("{epics}");
+    expect(jql).toContain("pipeline:research");
+    expect(jql).not.toContain("{label}");
   });
 
   it("preserves the ORDER BY oldest-first clause from the template", () => {
@@ -36,10 +34,10 @@ describe("buildRefineJql", () => {
 });
 
 describe("buildDevJql", () => {
-  it("substitutes readyEpic into the dev template", () => {
+  it("substitutes handoffLabel into the dev template", () => {
     const jql = buildDevJql(makeConfig());
-    expect(jql).toContain("EPIC-READY");
-    expect(jql).not.toContain("{epic}");
+    expect(jql).toContain("pipeline:dev");
+    expect(jql).not.toContain("{label}");
   });
 
   it("preserves the ORDER BY oldest-first clause from the template", () => {
