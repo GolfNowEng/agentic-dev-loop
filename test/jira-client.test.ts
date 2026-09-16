@@ -13,6 +13,7 @@ function makeConfig(overrides: Partial<Config["jira"]> = {}): Config {
       triggerLabel: "pipeline:research",
       handoffLabel: "pipeline:dev",
       repoLabel: "repo:org-repo",
+      mentionAccountId: "user-123",
       claimStatus: { from: "Backlog", to: "In Progress" },
       pollJql: { refine: 'labels = "{label}"', dev: 'labels = "{label}"' },
       statusNames: { bounced: "Blocked", prOpen: "In Progress" },
@@ -21,6 +22,7 @@ function makeConfig(overrides: Partial<Config["jira"]> = {}): Config {
     ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
     autoPromoteLabel: "auto-promote",
     targetRepo: { url: "git@github.com:org/repo.git", defaultBranch: "main" },
+    github: { repo: "org/repo" },
   };
 }
 

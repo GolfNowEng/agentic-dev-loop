@@ -17,6 +17,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
       triggerLabel: "pipeline:research",
       handoffLabel: "pipeline:dev",
       repoLabel: "repo:webtarsthree",
+      mentionAccountId: "user-123",
       claimStatus: { from: "To Do", to: "In Progress" },
       pollJql: {
         refine: 'labels = "{label}" ORDER BY created ASC',
@@ -28,6 +29,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 45 },
     autoPromoteLabel: "auto-promote",
     targetRepo: { url: "git@github.com:fandango/webtarsthree.git", defaultBranch: "master" },
+    github: { repo: "fandango/webtarsthree" },
     ...overrides,
   };
 }
@@ -141,6 +143,20 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
     });
     const missing = findPlaceholders(config);
     expect(missing).toContain("jira.repoLabel");
+  });
+
+  it("lists jira.mentionAccountId when it's still set to the placeholder value", () => {
+    const config = makeConfig({
+      jira: { ...makeConfig().jira, mentionAccountId: "___" },
+    });
+    const missing = findPlaceholders(config);
+    expect(missing).toContain("jira.mentionAccountId");
+  });
+
+  it("lists github.repo when it's still set to the placeholder value", () => {
+    const config = makeConfig({ github: { repo: "___" } });
+    const missing = findPlaceholders(config);
+    expect(missing).toContain("github.repo");
   });
 
   it("assertNoPlaceholders does not throw on a fully-bound config", () => {

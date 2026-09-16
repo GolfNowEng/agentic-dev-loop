@@ -55,6 +55,7 @@ const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
   ["jira.triggerLabel", (c) => c.jira.triggerLabel],
   ["jira.handoffLabel", (c) => c.jira.handoffLabel],
   ["jira.repoLabel", (c) => c.jira.repoLabel],
+  ["jira.mentionAccountId", (c) => c.jira.mentionAccountId],
   ["jira.claimStatus.from", (c) => c.jira.claimStatus.from],
   ["jira.claimStatus.to", (c) => c.jira.claimStatus.to],
   ["jira.pollJql.refine", (c) => c.jira.pollJql.refine],
@@ -64,6 +65,7 @@ const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
   ["autoPromoteLabel", (c) => c.autoPromoteLabel],
   ["targetRepo.url", (c) => c.targetRepo.url],
   ["targetRepo.defaultBranch", (c) => c.targetRepo.defaultBranch],
+  ["github.repo", (c) => c.github.repo],
 ];
 
 /**

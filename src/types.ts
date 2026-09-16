@@ -140,6 +140,16 @@ export interface Config {
      * field (see dev-loop's CHANGELOG.md, 2026-09-16).
      */
     repoLabel: string;
+    /**
+     * Jira accountId to @-mention in every Jira-worthy comment this repo
+     * writes (per the routing rule -- see SKILL.md's "Ticket content
+     * protocol"). Sourced the same way JIRA_ASSIGNEE_ACCOUNT_ID/
+     * assigneeAccountIdFromEnv already works in jira-client.ts, but this
+     * is a config field, not an env var, since the person to mention is a
+     * per-project decision (who owns this project's tickets), not a
+     * per-machine/per-runner-identity setting.
+     */
+    mentionAccountId: string;
     claimStatus: {
       from: string;
       to: string;
@@ -161,6 +171,19 @@ export interface Config {
       bounced: string;
       prOpen: string;
     };
+  };
+  /**
+   * Phase 1 of the Jira-label-trigger design (docs/future-enhancements.md):
+   * this pipeline mirrors every claimed ticket into a GitHub Issue and
+   * posts recon/attack/verify/working-note content there instead of Jira,
+   * per the routing rule in SKILL.md. One target repo per project config,
+   * same granularity as targetRepo -- derived from the same codebase this
+   * skill grounds tickets against, not a separate system.
+   */
+  github: {
+    /** "owner/repo" shorthand, e.g. "fandango/webtarsthree" -- passed
+     * directly to `gh`'s own --repo flag, which accepts this exact shape. */
+    repo: string;
   };
   ceilings: {
     maxRunsPerDay: number;
