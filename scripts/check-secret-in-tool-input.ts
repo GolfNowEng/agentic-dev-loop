@@ -28,6 +28,23 @@
 import { containsSecret } from "../src/redact.ts";
 
 /**
+ * Whole-word membership check -- mirrors dev-loop's own isGhPrWrite
+ * recognizer (scripts/check-secret-in-tool-input.ts in that repo), adapted
+ * for "gh issue create/edit/comment" instead of "gh pr create/edit".
+ * Over-matching here is harmless (see that repo's own comment for why) --
+ * it just costs one extra scan pass, never a missed detection.
+ */
+function isGhIssueWrite(command: string): boolean {
+  const hasWord = (word: string): boolean =>
+    new RegExp(`(?:^|\\W)${word}(?:$|\\W)`).test(command);
+  return (
+    hasWord("gh") &&
+    hasWord("issue") &&
+    (hasWord("create") || hasWord("edit") || hasWord("comment"))
+  );
+}
+
+/**
  * Pure decision function, unit-testable without touching stdin/process.
  * `stdin` is the raw JSON string the hook receives from Claude Code.
  */
@@ -45,6 +62,16 @@ export function decideExitCode(stdin: string): 0 | 1 | 2 {
   try {
     const toolInput = (payload as Record<string, unknown> | null)?.tool_input;
     if (toolInput === null || toolInput === undefined) return 0;
+
+    const record = payload as Record<string, unknown> | null;
+    const toolName = record?.tool_name;
+    if (toolName === "Bash") {
+      const command = (toolInput as Record<string, unknown>)?.command;
+      if (typeof command !== "string" || command.length === 0) return 0;
+      if (!isGhIssueWrite(command)) return 0;
+      return containsSecret(command) ? 1 : 0;
+    }
+
     const scanned = JSON.stringify(toolInput);
     if (!scanned) return 0;
     return containsSecret(scanned) ? 1 : 0;
