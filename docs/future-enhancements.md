@@ -34,6 +34,43 @@ than after); how much to shrink Attack (skip entirely vs. drop just the
 empirical-build sub-step); whether this should be a new Step 0 branch or
 a flag Ground/Attack read.
 
+## `claim()` doesn't send a claim-transition's required screen fields
+
+**Idea**: `RealJiraClient.claim` (`src/jira-client.ts:216`) transitions a
+ticket via whatever transition leads to `claimStatus.to`, but only ever
+sends `{ transition: { id } }` — no `fields`. If that transition's screen
+has a field Jira enforces as required at submit time, the claim call
+throws and the whole loop iteration dies uncaught (see the `main.ts:480`
+stack trace from the fatal-error run below), rather than being treated as
+a per-ticket skip/bounce the way a lost claim race already is.
+
+**Why**: hit live on `TARS-1460` (a real smoke-test ticket for the Phase 0
+label-trigger change) — its `claimStatus` transition in TARS's workflow is
+"Start Development" (id `421`, `To Do` → `In Progress`), whose screen has
+a `Story Points` (`customfield_10002`) field. `getTransitionsForJiraIssue`
+reports that field as `required: false` in its own metadata, but the live
+`POST .../transitions` call rejected the same transition with `400 Bad
+Request: "Field 'Story Points is required.'"`. Same *class* of bug as the
+undocumented parent-Epic requirement already known for Bug/Story/Tech
+Story create calls (`configs/TARS.json` in the sibling `skills` repo's
+`jira-create-ticket`) — Jira's create/transition metadata under-reporting
+a real requirement — just hitting a different operation (claim/transition
+in research-loop itself, not issue creation in `jira-create-ticket`).
+Worked around for this one ticket by setting Story Points directly via
+`editJiraIssue` before retrying the loop; not yet fixed in `claim()`.
+
+**Not yet scoped**: whether to have `claim()` fetch the target
+transition's screen fields (same call shape as `getTransitionsForJiraIssue`
+already returns) and supply a configured default for any it finds
+required, or something narrower (e.g. a config-level "extra transition
+fields" map per project, since "what value" has no universal right
+answer — Story Points has no meaningful default for a research-loop-only
+ticket). Also unscoped: whether a claim failure of this shape should
+become a new terminal outcome (distinct from today's clean lost-race
+`false` return) or whether the loop runner should catch it and treat it
+as `outcome: "error"` for that iteration rather than crashing the whole
+process — right now it's an uncaught throw all the way out of `main`.
+
 ## Jira label-based trigger (both repos) + split Jira (PM) / GitHub Issues (research & dev)
 
 **Idea**: replace Jira's epic-parent trigger with a Jira label-based
@@ -222,17 +259,17 @@ correction, see below):
   `autoPromoteLabel`-gated-automatic rule, and that swap is now the real
   handoff mechanism between the two repos. TDD'd in both repos; epics
   remain in Jira for board/PM use only, read by neither loop.
-- **Phase 1 (research-loop creates/mirrors GitHub, dual-write)**: Jira
-  keeps getting the full `Refined Spec` comment unchanged — dev-loop keeps
-  reading it as its work order, untouched (only its trigger changed in
-  phase 0). research-loop also creates/mirrors the GitHub Issue and posts
-  full recon/attack/verify detail there per the routing rule. Requires the
-  GitHub secret-redaction hook to already exist before any of this content
-  ships — a prerequisite gate inside phase 1's rollout, not a later
-  fast-follow. Also introduces dev-loop's startup-time merge-
-  reconciliation pass: once a GitHub Issue exists per ticket, "PR merged"
-  has both a Jira label and a GitHub Issue that need to move to
-  `pipeline:merged`, so the reconciliation skill lands here.
+- **Phase 1 (research-loop creates/mirrors GitHub, dual-write) — DONE, see
+  CHANGELOG.md.** Jira keeps getting the full `Refined Spec` comment
+  unchanged — dev-loop keeps reading it as its work order, untouched (only
+  its trigger changed in phase 0). research-loop also creates/mirrors the
+  GitHub Issue and posts full recon/attack/verify detail there per the
+  routing rule. The GitHub secret-redaction hook landed as a prerequisite
+  gate before any of this content shipped, per the plan. dev-loop's
+  startup-time merge-reconciliation pass (once a GitHub Issue exists per
+  ticket, moving both a Jira label and a GitHub Issue to
+  `pipeline:merged`) did not land in this phase and remains open — see
+  below.
 - **Phase 2 (Jira decluttered — dev-loop migrated)**: once dev-loop's
   `ticket-to-pr` is changed to read its work order from the GitHub Issue
   instead of the Jira comment, the Jira `Refined Spec` comment shrinks to
@@ -268,12 +305,23 @@ closed without merge — the reconciliation pass only handles
 `merged=true`, so a closed-without-merge PR leaves a ticket stuck at
 `pipeline:dev`/`pipeline:pr-open` indefinitely; PR replaced by a new one;
 multiple branches mapping to the same Jira key/GitHub Issue); Jira
-parent/child subtasks mapping to one vs. many GitHub Issues; exact step in
-ticket-refine where GitHub Issue creation happens; GitHub's concurrency-
-safe claim mechanism (needed once dev-loop polls GitHub directly in phase
-2); exact content/thresholds for the Jira-comment-shape hook; whether
-dev-loop reads/writes the same Issue or gets its own linked Issue in phase
-2; whether dev-loop needs status labels of its own beyond
+parent/child subtasks mapping to one vs. many GitHub Issues; GitHub's
+concurrency-safe claim mechanism (needed once dev-loop polls GitHub
+directly in phase 2); exact content/thresholds for the Jira-comment-shape
+hook; whether dev-loop reads/writes the same Issue or gets its own linked
+Issue in phase 2; whether dev-loop needs status labels of its own beyond
 `pipeline:pr-open` (`devStatusLabels` in the config sketch above is
 deliberately left open for this — dev-loop's `SKILL.md`/verdict
-categories haven't been checked for a 1:1 fit).
+categories haven't been checked for a 1:1 fit); dev-loop's startup-time
+merge-reconciliation pass itself (Phase 1's own description called for it,
+but it targets dev-loop, not research-loop, and did not land as part of
+this plan).
+
+**Resolved by this plan** (design decisions the doc above had left open,
+now settled): (a) GitHub Issue creation happens in `main.ts`'s composition
+root, right after claim — not inside `ticket-refine`'s own Step 0/intake
+turn — so the skill can assume the mirrored Issue already exists by the
+time it runs; (b) the cross-link format is exactly the plain URL in a
+comment on both sides already sketched above — no structured remote-link
+tool was added, since none was needed beyond what the doc already
+specified.

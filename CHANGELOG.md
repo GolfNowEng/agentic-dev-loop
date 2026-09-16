@@ -5,6 +5,32 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-16 — Jira label-based trigger, Phase 1: GitHub Issue mirror + content routing
+
+Per `docs/future-enhancements.md`'s "Jira label-based trigger" entry,
+Phase 1 ("research-loop creates/mirrors GitHub, dual-write") has landed.
+Added `GitHubClient` (`src/github-client.ts`), mirroring `JiraClient`'s
+injected-interface style, backed by the `gh` CLI. GitHub Issue creation
+is wired into `main.ts`'s composition root right after claim — before
+`ticket-refine` runs, not inside the skill's own Step 0/intake turn — so
+every downstream skill run can assume the mirrored Issue already exists;
+this also settles the doc's own "exact step" open question in favor of
+the loop-runner, not the skill. Creation is idempotent (checks for an
+existing Issue for the Jira key before creating one). Added
+`.claude/hooks/block-github-secret-writes.sh`, a mandatory `PreToolUse`
+launch-blocker on the new GitHub write surface — landed *before*
+`SKILL.md`'s routing-rule rewrite below, per the doc's own prerequisite-
+gate requirement, since GitHub carries real ticket/codebase content from
+day one. Rewrote `SKILL.md`'s Jira/GitHub content-routing rule: Jira is
+now narrowed to four content types (a blocking ambiguity needing a human
+product decision, a scope call, an explicit confirmation request, or a
+passing-verdict pointer), GitHub carries everything else (recon findings,
+attack findings, verifier results, working/interpretation notes, bounce
+evidence detail), and any comment that does reach Jira must now
+@-mention the assignee (`Config.jira.mentionAccountId`) — a new
+requirement with no prior convention. Cross-link between the two systems
+is the plain URL in a comment on both sides the doc had already sketched.
+
 ## 2026-09-16 — jira.repoLabel: disambiguate repos that share one Jira project
 
 When more than one target repo shares a single Jira project (e.g.,
