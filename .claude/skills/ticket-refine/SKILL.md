@@ -31,14 +31,15 @@ ready for ticket-to-pr` comment? Two cases:
   below as a fresh refinement. The ticket's description is never touched —
   it's the stakeholder's original and stays exactly as written, permanently.
 - **Re-pickup after human comments** (ticket status was reset to `To Do`
-  with a steering comment added, still in this same epic — research-loop's
-  intake and spec-review territory is one combined epic, not two, so
-  there's no epic to move between): read the human's comment(s) as
-  steering input, and **revise** the existing refinement rather than
-  starting over from scratch. Re-run only the steps the comment calls into
-  question (e.g. if the human flagged an incorrect fault-domain call,
-  redo Step 0's fault-domain determination and Step 6's synthesis; you
-  don't need to redo Step 2's codebase grounding if it wasn't disputed).
+  with a steering comment added, still carrying `triggerLabel` —
+  research-loop's intake and spec-review territory is one combined label
+  state, not two, so there's no label to swap between at this point): read
+  the human's comment(s) as steering input, and **revise** the existing
+  refinement rather than starting over from scratch. Re-run only the steps
+  the comment calls into question (e.g. if the human flagged an incorrect
+  fault-domain call, redo Step 0's fault-domain determination and Step 6's
+  synthesis; you don't need to redo Step 2's codebase grounding if it
+  wasn't disputed).
 
 ## Setup: run directories and progress logging
 
@@ -326,8 +327,8 @@ produced the ticket rubber-stamping itself.
 
 - If it passes: write the `Refined Spec — ready for ticket-to-pr` comment
   (see ticket content protocol), set `verdict.outcome: "ready"`. The
-  ticket stays in this same epic, refined and awaiting human approval
-  (the loop runner only moves it to dev-loop's epic if `autoPromoteLabel`
+  ticket stays at `triggerLabel`, refined and awaiting human approval (the
+  loop runner only swaps the label to `handoffLabel` if `autoPromoteLabel`
   is present — this skill just reports the verdict either way).
 - If it fails: classify the failure before deciding what to do with it —
   see "Self-heal vs. bounce" below. Never skip this classification and

@@ -26,7 +26,8 @@ ticket it pulls from Jira, it:
 
 A passing verdict from this loop means the ticket is ready for the human
 review gate — not ready for dev directly. Only after human review does a
-ticket move to the "ready" epic that dev-loop consumes.
+ticket's label swap from `pipeline:research` to `pipeline:dev`, the label
+dev-loop polls for.
 
 ## Current status: structural scaffold
 

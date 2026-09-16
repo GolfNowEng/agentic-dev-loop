@@ -5,22 +5,20 @@
 `src/types.ts`'s `Config` interface is the source of truth for
 `pipeline.<project>.config.json`'s shape:
 
-- `jira.intakeEpics` / `readyEpic` — the two pipeline epics a ticket moves
-  through. `intakeEpics` ("Pipeline: review-loop") is this loop's whole
-  territory — fresh, unrefined tickets *and* already-refined tickets
-  awaiting Justin's approval both live here; there is no separate epic for
-  "awaiting approval" (that distinction is a comment on the ticket itself
-  — presence of `Refined Spec — ready for ticket-to-pr` — not an epic).
-  `readyEpic` ("Pipeline: dev-loop") is dev-loop's territory; this loop
-  only ever *writes* to it (on an auto-promoted verdict), never polls it.
+- `jira.triggerLabel` / `handoffLabel` — the two pipeline-stage labels a
+  ticket moves through. `triggerLabel` (`"pipeline:research"`) is this
+  loop's own poll target — fresh, unrefined tickets *and* already-refined
+  tickets awaiting Justin's approval both carry it; there is no separate
+  label for "awaiting approval" (that distinction is a comment on the
+  ticket itself — presence of `Refined Spec — ready for ticket-to-pr` —
+  not a label). `handoffLabel` (`"pipeline:dev"`) is dev-loop's poll
+  target; this loop only ever *writes* it (on an auto-promoted verdict, by
+  swapping it in for `triggerLabel`), never polls for it.
 - `jira.claimStatus.{from,to}` — the status transition this loop uses to
   atomically claim a ticket (race-safe: `JiraClient.claim` returns `false`,
   never throws, if another process already claimed it).
-- `jira.pollJql.{refine,dev}` — JQL templates with `{epics}` / `{epic}`
-  placeholders, filled in by `src/jql.ts`. This repo only ever polls with
-  `refine`.
-- `jira.epicLinkField` — `"parent"` for team-managed Jira projects, or a
-  custom field id (e.g. `"customfield_10014"`) for company-managed projects.
+- `jira.pollJql.{refine,dev}` — JQL templates with a `{label}` placeholder,
+  filled in by `src/jql.ts`. This repo only ever polls with `refine`.
 - `jira.statusNames.{bounced,prOpen}` — this Jira instance has no literal
   "bounced" status, so these map the loop's terminal outcomes onto whatever
   statuses actually exist in the *child ticket's* (Bug/Story/Task) workflow.
@@ -56,9 +54,10 @@ before Ground ends).
 Once this loop claims a ticket (`claimStatus.from` → `claimStatus.to`,
 typically `To Do` → `In Progress`), status stays at `claimStatus.to` for the
 rest of the pipeline's lifecycle — this loop never transitions it back
-toward `claimStatus.from`, even on a passing verdict. The **epic move**
-(`intakeEpics` → `readyEpic`, on human approval or `autoPromoteLabel`) is
-the real human-approval gate; status is not overloaded to also signal that.
+toward `claimStatus.from`, even on a passing verdict. The **label swap**
+(`triggerLabel` → `handoffLabel`, on human approval or `autoPromoteLabel`)
+is the real human-approval gate; status is not overloaded to also signal
+that.
 
 This matters for `dev-loop`, which has no atomic claim step of its own and
 instead polls directly for `status = claimStatus.to` (typically
@@ -91,23 +90,16 @@ Every Jira-specific value above starts as the literal placeholder string
 `"___"` in a fresh `pipeline.<project>.config.json`. `findPlaceholders()` /
 `assertNoPlaceholders()` in `src/config.ts` detect leftover placeholders —
 `RealJiraClient` refuses to make a Jira call while any remain. Filling these
-in for a real project means: creating (or identifying) the two pipeline
-epics in Jira (this loop's, dev-loop's), checking the *child ticket*
-workflow for real status names, and confirming `epicLinkField` against
-whether the project is team-managed or company-managed.
-
-**Known tradeoff of the two-epic model**: the board no longer shows
-"still being refined" vs. "refined, awaiting approval" as two different
-epics — both look identical (same epic, same status) until you open the
-ticket. The real signal for which is the presence of a `Refined Spec —
-ready for ticket-to-pr` comment. Not solved here; revisit only if this
-becomes a real problem in practice.
+in for a real project means: confirming the two pipeline label strings
+(this loop's `triggerLabel`, dev-loop's `handoffLabel`) and checking the
+*child ticket* workflow for real status names.
 
 ## Adding a new project
 
 1. Copy an existing `pipeline.<project>.config.json` to
    `pipeline.<new-project>.config.json`.
-2. Fill in that project's own Jira epics, statuses, JQL, and `targetRepo`.
+2. Fill in that project's own label strings, statuses, JQL, and
+   `targetRepo`.
 3. Point the loop runner at that file (`loadConfig(path)` — `loadConfig` has
    no default path on purpose, so there's no implicit single-project
    coupling).

@@ -207,20 +207,20 @@ correction, see below):
   duplicate swap or a re-close error on an already-closed Issue.
 
 **Phased rollout** — three phases, not combined into one change:
-- **Phase 0 (Jira-only, both repos, no GitHub involved yet)**: replace
-  epic-parent polling with label polling in both research-loop and
-  dev-loop together — research-loop's `src/jql.ts` templates change from
-  `parent in ({epics})` to a `pipeline:research` label match; dev-loop's
-  poll JQL changes from `parent = {epic} AND status = "In Progress"` to a
-  `pipeline:dev` label match. Without this, once research-loop's approval
-  step stops moving the epic, dev-loop's existing trigger would never fire
-  again — there's no "later" for dev-loop's trigger, so both repos must
-  move together. The claim step is unchanged; the "approval" step (today:
-  move epic to `readyEpic`, gated by `autoPromoteLabel`) becomes the
-  `pipeline:research`→`pipeline:dev` label swap, governed by the exact
-  same manual-default/`autoPromoteLabel`-gated-automatic rule, and that
-  swap is now the real handoff mechanism between the two repos. TDD'd and
-  verified against real Jira in both repos before phase 1 starts. Epics
+- **Phase 0 (Jira-only, both repos, no GitHub involved yet) — DONE, see
+  CHANGELOG.md.** Replaced epic-parent polling with label polling in both
+  research-loop and dev-loop together — research-loop's `src/jql.ts`
+  templates changed from `parent in ({epics})` to a `pipeline:research`
+  label match; dev-loop's poll JQL changed from `parent = {epic} AND
+  status = "In Progress"` to a `pipeline:dev` label match. Without this,
+  once research-loop's approval step stopped moving the epic, dev-loop's
+  existing trigger would never fire again — there's no "later" for
+  dev-loop's trigger, so both repos moved together. The claim step was
+  unchanged; the "approval" step (previously: move epic to `readyEpic`,
+  gated by `autoPromoteLabel`) became the `pipeline:research`→
+  `pipeline:dev` label swap, governed by the exact same manual-default/
+  `autoPromoteLabel`-gated-automatic rule, and that swap is now the real
+  handoff mechanism between the two repos. TDD'd in both repos; epics
   remain in Jira for board/PM use only, read by neither loop.
 - **Phase 1 (research-loop creates/mirrors GitHub, dual-write)**: Jira
   keeps getting the full `Refined Spec` comment unchanged — dev-loop keeps

@@ -5,6 +5,27 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-16 — Jira label-based trigger, Phase 0: epic-parent polling replaced with label polling
+
+Per `docs/future-enhancements.md`'s "Jira label-based trigger" entry and
+its Phase 0 design spec
+(`docs/superpowers/specs/2026-09-15-jira-label-trigger-phase0-design.md`),
+replaced the epic-parent trigger with a Jira label trigger, landed
+together with the matching change in `dev-loop` (both repos must move
+together — see the spec's "Why"). `Config.jira` drops
+`intakeEpics`/`readyEpic`/`epicLinkField` in favor of two plain strings,
+`triggerLabel` (`"pipeline:research"`) and `handoffLabel`
+(`"pipeline:dev"`). `src/jql.ts`'s templates now substitute a single
+`{label}` placeholder instead of `{epics}`/`{epic}`.
+`JiraClient.moveToEpic` is replaced by `swapLabel(ticketKey, from, to)`,
+implemented as one Jira `PUT` using the `update.labels` array-of-ops
+shape — no GET-then-merge needed, since Jira's labels field supports this
+directly. `loop-runner.ts`'s landed-verdict branch now calls `swapLabel`
+in the exact same `autoPromoteLabel`-gated spot `moveToEpic` used to
+occupy — unchanged manual-by-default behavior, just acting on a label
+instead of an epic. Epics remain in Jira for board/PM visibility only,
+untouched by any code from either repo.
+
 ## 2026-09-02 — Ported dev-loop's postRunDelaySec race fix; closed a missing-tool agent_error; raised maxRunsPerDay to 100
 
 dev-loop raised its own `maxRunsPerDay` from 10 to 100 the day before
