@@ -21,6 +21,7 @@ import {
 } from "./config.ts";
 import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./jira-client.ts";
 import type { JiraTicket } from "./jira-client.ts";
+import { RealGitHubClient, realExecGh } from "./github-client.ts";
 import { runLoopIteration } from "./loop-runner.ts";
 import type { RunSkillFn, RunSkillResult } from "./loop-runner.ts";
 import { decideNextAction } from "./poll-loop.ts";
@@ -314,6 +315,7 @@ async function main(): Promise<void> {
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();
   const jiraClient = new RealJiraClient(credentials, config);
+  const githubClient = new RealGitHubClient(config.github, realExecGh());
 
   const slug = repoSlugFromUrl(config.targetRepo.url);
   await mkdir("runs", { recursive: true });
@@ -334,6 +336,33 @@ async function main(): Promise<void> {
     const before = await snapshotRunDirs(runsBaseDir, ticket.key);
 
     log(`[${SKILL_NAME}] claimed ${ticket.key}, running...`);
+
+    try {
+      const existingIssue = await githubClient.findIssueByJiraKey(ticket.key);
+      if (existingIssue) {
+        log(
+          `[${SKILL_NAME}] ${ticket.key}: GitHub Issue already exists (${existingIssue.url}), skipping creation`,
+        );
+      } else {
+        const issue = await githubClient.createIssue({
+          title: `${ticket.key}: (refinement in progress)`,
+          body: `Mirror of Jira ticket ${ticket.key}. ticket-refine is running -- this Issue will be updated with recon/attack/verify findings per the routing rule as the run progresses.`,
+          jiraKey: ticket.key,
+        });
+        log(`[${SKILL_NAME}] ${ticket.key}: created GitHub Issue ${issue.url}`);
+      }
+    } catch (err) {
+      // A GitHub Issue creation failure must never block the actual
+      // ticket-refine run -- same "never throw out of runSkill" contract
+      // every other I/O boundary in this function already follows (spawn
+      // failure, raw-usage persistence). Log it and let ticket-refine run
+      // without a mirror Issue this time; a human can create one by hand,
+      // or a future run will retry (findIssueByJiraKey will find nothing
+      // and try again).
+      const message = err instanceof Error ? err.message : String(err);
+      logError(`[${SKILL_NAME}] ${ticket.key}: GitHub Issue creation/lookup failed: ${message}`);
+    }
+
     const tail = startProgressTail(runsBaseDir, ticket.key, before);
 
     const claudeArgs = [
