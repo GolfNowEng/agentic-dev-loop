@@ -28,9 +28,9 @@
 - `ceilings.{maxRunsPerDay,maxCostPerRunUsd,runTimeoutMin}` — enforced by
   `src/ceilings.ts`; a breach pauses the loop, it never silently continues.
 - `autoPromoteLabel` — a ticket label that lets a passing verdict skip
-  human approval and move straight to `readyEpic`. Without it, a passing
-  verdict leaves the ticket in place (`intakeEpics`), refined and awaiting
-  approval.
+  human approval and swap the ticket straight from `triggerLabel` to
+  `handoffLabel`. Without it, a passing verdict leaves the ticket at
+  `triggerLabel`, refined and awaiting approval.
 - `targetRepo.{url,defaultBranch}` — the codebase `ticket-refine` grounds
   tickets against (not this pipeline repo itself). Read-only for this repo.
 - `targetRepo.path` (optional) — local filesystem path to an existing
@@ -60,11 +60,12 @@ is the real human-approval gate; status is not overloaded to also signal
 that.
 
 This matters for `dev-loop`, which has no atomic claim step of its own and
-instead polls directly for `status = claimStatus.to` (typically
-`"In Progress"`) plus an assignee match inside the ready epic — see
-dev-loop's own `docs/config.md` for its "Future: multiple concurrent loop
-instances" note, which applies to this loop too (this MVP assumes exactly
-one research-loop instance running against a project at a time).
+instead polls directly for `labels = "pipeline:dev"` (the `handoffLabel`
+this loop swaps in) plus an assignee match — no status clause at all, since
+the label now signals pipeline stage directly — see dev-loop's own
+`docs/config.md` for its "Future: multiple concurrent loop instances" note,
+which applies to this loop too (this MVP assumes exactly one research-loop
+instance running against a project at a time).
 
 ## Assignee bookkeeping
 
