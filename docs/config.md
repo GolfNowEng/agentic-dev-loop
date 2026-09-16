@@ -31,8 +31,12 @@
   rejects an empty payload.
 - `ceilings.{maxRunsPerDay,maxCostPerRunUsd,runTimeoutMin}` — enforced by
   `src/ceilings.ts`; a breach pauses the loop, it never silently continues.
-- `autoPromoteLabel` — a ticket label that lets a passing research-loop
-  verdict skip human approval and move straight to `readyEpic`.
+- `autoPromoteLabel` — the field research-loop's own config reads to decide
+  whether to auto-swap a ticket straight to `handoffLabel` (`"pipeline:dev"`)
+  without human approval, skipping the manual-review gate. This repo's own
+  config carries the same field name for shape symmetry with research-loop's
+  Config, but dev-loop's own runtime never reads it for a label-swap
+  decision — only research-loop's `loop-runner.ts` does.
 - `targetRepo.{url,defaultBranch}` — the codebase this pipeline operates on
   (not this pipeline repo itself).
 - `targetRepo.path` (optional) — local filesystem path to an existing
