@@ -14,11 +14,23 @@
   not a label). `handoffLabel` (`"pipeline:dev"`) is dev-loop's poll
   target; this loop only ever *writes* it (on an auto-promoted verdict, by
   swapping it in for `triggerLabel`), never polls for it.
+- `jira.repoLabel` — a second, always-paired label naming which repo a
+  ticket belongs to (e.g. `"repo:catalog-ui-management"`), ANDed into both
+  `pollJql` templates alongside the stage label. Needed because more than
+  one target repo can share a single Jira project — `catalog-ui-management`
+  and `catalog-ui-public` both file into project `MC` — so the stage label
+  alone (`triggerLabel`/`handoffLabel`) can't tell which repo a given
+  ticket actually belongs to. Unlike `triggerLabel`/`handoffLabel`,
+  `repoLabel` never changes across a ticket's lifecycle. A project with
+  only one target repo (e.g. `webtarsthree`/`TARS`) doesn't strictly need
+  this for disambiguation, but every `pipeline.<project>.config.json` sets
+  it anyway for a uniform scheme across projects. Ported from dev-loop's
+  identical field (see dev-loop's `CHANGELOG.md`, 2026-09-16).
 - `jira.claimStatus.{from,to}` — the status transition this loop uses to
   atomically claim a ticket (race-safe: `JiraClient.claim` returns `false`,
   never throws, if another process already claimed it).
-- `jira.pollJql.{refine,dev}` — JQL templates with a `{label}` placeholder,
-  filled in by `src/jql.ts`. This repo only ever polls with `refine`.
+- `jira.pollJql.{refine,dev}` — JQL templates with `{label}` and `{repoLabel}`
+  placeholders, filled in by `src/jql.ts`. This repo only ever polls with `refine`.
 - `jira.statusNames.{bounced,prOpen}` — this Jira instance has no literal
   "bounced" status, so these map the loop's terminal outcomes onto whatever
   statuses actually exist in the *child ticket's* (Bug/Story/Task) workflow.
@@ -91,8 +103,8 @@ Every Jira-specific value above starts as the literal placeholder string
 `"___"` in a fresh `pipeline.<project>.config.json`. `findPlaceholders()` /
 `assertNoPlaceholders()` in `src/config.ts` detect leftover placeholders —
 `RealJiraClient` refuses to make a Jira call while any remain. Filling these
-in for a real project means: confirming the two pipeline label strings
-(this loop's `triggerLabel`, dev-loop's `handoffLabel`) and checking the
+in for a real project means: confirming the three pipeline label strings
+(`triggerLabel`, `handoffLabel`, `repoLabel`) and checking the
 *child ticket* workflow for real status names.
 
 ## Adding a new project

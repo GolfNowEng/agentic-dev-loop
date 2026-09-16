@@ -15,7 +15,9 @@ import type { Config } from "./types.ts";
  * the label to match.
  */
 export function buildRefineJql(config: Config): string {
-  return config.jira.pollJql.refine.replace("{label}", config.jira.triggerLabel);
+  return config.jira.pollJql.refine
+    .replace("{label}", config.jira.triggerLabel)
+    .replace("{repoLabel}", config.jira.repoLabel);
 }
 
 /**
@@ -27,5 +29,7 @@ export function buildRefineJql(config: Config): string {
  * testability.
  */
 export function buildDevJql(config: Config): string {
-  return config.jira.pollJql.dev.replace("{label}", config.jira.handoffLabel);
+  return config.jira.pollJql.dev
+    .replace("{label}", config.jira.handoffLabel)
+    .replace("{repoLabel}", config.jira.repoLabel);
 }

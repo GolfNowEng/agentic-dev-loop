@@ -7,10 +7,11 @@ function makeConfig(): Config {
     jira: {
       triggerLabel: "pipeline:research",
       handoffLabel: "pipeline:dev",
+      repoLabel: "repo:webtarsthree",
       claimStatus: { from: "Backlog", to: "In Progress" },
       pollJql: {
-        refine: 'labels = "{label}" AND status = "Backlog" ORDER BY created ASC',
-        dev: 'labels = "{label}" ORDER BY created ASC',
+        refine: 'labels = "{label}" AND labels = "{repoLabel}" AND status = "Backlog" ORDER BY created ASC',
+        dev: 'labels = "{label}" AND labels = "{repoLabel}" ORDER BY created ASC',
       },
       statusNames: { bounced: "Blocked", prOpen: "In Progress" },
     },
@@ -27,6 +28,12 @@ describe("buildRefineJql", () => {
     expect(jql).not.toContain("{label}");
   });
 
+  it("substitutes repoLabel into the refine template, disambiguating repos that share one Jira project", () => {
+    const jql = buildRefineJql(makeConfig());
+    expect(jql).toContain("repo:webtarsthree");
+    expect(jql).not.toContain("{repoLabel}");
+  });
+
   it("preserves the ORDER BY oldest-first clause from the template", () => {
     const jql = buildRefineJql(makeConfig());
     expect(jql).toContain("ORDER BY created ASC");
@@ -38,6 +45,12 @@ describe("buildDevJql", () => {
     const jql = buildDevJql(makeConfig());
     expect(jql).toContain("pipeline:dev");
     expect(jql).not.toContain("{label}");
+  });
+
+  it("substitutes repoLabel into the dev template", () => {
+    const jql = buildDevJql(makeConfig());
+    expect(jql).toContain("repo:webtarsthree");
+    expect(jql).not.toContain("{repoLabel}");
   });
 
   it("preserves the ORDER BY oldest-first clause from the template", () => {

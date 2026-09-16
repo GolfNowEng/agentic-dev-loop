@@ -2,6 +2,7 @@
   "jira": {
     "triggerLabel": "pipeline:research",
     "handoffLabel": "pipeline:dev",
+    "repoLabel": "repo:webtarsthree",
     "claimStatus": { "from": "To Do", "to": "In Progress" },
     "pollJql": {
       "refine": "labels = \"{label}\" AND status = \"To Do\" ORDER BY created ASC",

@@ -5,6 +5,21 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-16 — jira.repoLabel: disambiguate repos that share one Jira project
+
+When more than one target repo shares a single Jira project (e.g.,
+`catalog-ui-management` and `catalog-ui-public` both file into project
+`MC`), the stage label alone (`triggerLabel`/`handoffLabel`) can't tell
+which repo a given ticket belongs to. Added `Config.jira.repoLabel` — an
+always-paired second label naming the repo (e.g. `"repo:catalog-ui-management"`)
+— ANDed into `pollJql.refine` (the only template this repo polls actively).
+`buildRefineJql()` now substitutes both `{label}` and `{repoLabel}`
+placeholders. A project with only one target repo (e.g. `webtarsthree`)
+doesn't strictly need this for disambiguation, but every
+`pipeline.<project>.config.json` sets it anyway for a uniform scheme
+across projects, mirroring dev-loop's identical field (see dev-loop's
+`CHANGELOG.md`, 2026-09-16).
+
 ## 2026-09-16 — Jira label-based trigger, Phase 0: epic-parent polling replaced with label polling
 
 Per `docs/future-enhancements.md`'s "Jira label-based trigger" entry and

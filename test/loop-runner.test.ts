@@ -15,6 +15,7 @@ function makeConfig(overrides: Partial<Config["ceilings"]> = {}): Config {
     jira: {
       triggerLabel: "pipeline:research",
       handoffLabel: "pipeline:dev",
+      repoLabel: "repo:org-repo",
       claimStatus: { from: "Backlog", to: "In Progress" },
       pollJql: { refine: 'labels = "{label}"', dev: 'labels = "{label}"' },
       statusNames: { bounced: "Blocked", prOpen: "In Progress" },

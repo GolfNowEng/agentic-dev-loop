@@ -128,6 +128,18 @@ export interface Config {
      * performs the swap in Phase 0.
      */
     handoffLabel: string;
+    /**
+     * A second, always-paired label naming which repo a ticket belongs to
+     * -- e.g. "repo:catalog-ui-management". Needed because more than one
+     * target repo can share the same Jira project (catalog-ui-management
+     * and catalog-ui-public both file into project MC): the stage label
+     * alone (triggerLabel/handoffLabel) can't tell those two apart, so
+     * pollJql ANDs this label in too. Unlike triggerLabel/handoffLabel,
+     * repoLabel never changes across a ticket's lifecycle -- it identifies
+     * the repo, not the pipeline stage. Ported from dev-loop's identical
+     * field (see dev-loop's CHANGELOG.md, 2026-09-16).
+     */
+    repoLabel: string;
     claimStatus: {
       from: string;
       to: string;

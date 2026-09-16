@@ -16,6 +16,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     jira: {
       triggerLabel: "pipeline:research",
       handoffLabel: "pipeline:dev",
+      repoLabel: "repo:webtarsthree",
       claimStatus: { from: "To Do", to: "In Progress" },
       pollJql: {
         refine: 'labels = "{label}" ORDER BY created ASC',
@@ -132,6 +133,14 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
     const missing = findPlaceholders(config);
     expect(missing).toContain("jira.triggerLabel");
     expect(missing).toContain("jira.handoffLabel");
+  });
+
+  it("lists jira.repoLabel when it's still set to the placeholder value", () => {
+    const config = makeConfig({
+      jira: { ...makeConfig().jira, repoLabel: "___" },
+    });
+    const missing = findPlaceholders(config);
+    expect(missing).toContain("jira.repoLabel");
   });
 
   it("assertNoPlaceholders does not throw on a fully-bound config", () => {

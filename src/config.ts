@@ -54,6 +54,7 @@ export function repoSlugFromUrl(url: string): string {
 const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
   ["jira.triggerLabel", (c) => c.jira.triggerLabel],
   ["jira.handoffLabel", (c) => c.jira.handoffLabel],
+  ["jira.repoLabel", (c) => c.jira.repoLabel],
   ["jira.claimStatus.from", (c) => c.jira.claimStatus.from],
   ["jira.claimStatus.to", (c) => c.jira.claimStatus.to],
   ["jira.pollJql.refine", (c) => c.jira.pollJql.refine],
