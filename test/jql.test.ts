@@ -4,14 +4,13 @@ import type { Config } from "../src/types.ts";
 
 const config: Config = {
   jira: {
-    intakeEpics: ["EPIC-1", "EPIC-2"],
-    readyEpic: "EPIC-READY",
+    triggerLabel: "pipeline:research",
+    handoffLabel: "pipeline:dev",
     claimStatus: { from: "Ready", to: "In Progress" },
     pollJql: {
-      refine: 'epic in ({epics}) AND status = "To Refine" ORDER BY created ASC',
-      dev: 'epic = {readyEpic} AND status = "Ready" AND assignee = "{assignee}" ORDER BY created ASC',
+      refine: 'labels = "{label}" AND status = "To Refine" ORDER BY created ASC',
+      dev: 'labels = "{label}" AND assignee = "{assignee}" ORDER BY created ASC',
     },
-    epicLinkField: "customfield_10014",
     statusNames: { bounced: "Blocked", prOpen: "In Progress" },
     codeReviewFields: {
       piiField: "customfield_13504",
@@ -25,11 +24,10 @@ const config: Config = {
 };
 
 describe("buildRefineJql", () => {
-  it("interpolates the intake epics into the refine template", () => {
+  it("interpolates triggerLabel into the refine template", () => {
     const jql = buildRefineJql(config);
-    expect(jql).toContain("EPIC-1");
-    expect(jql).toContain("EPIC-2");
-    expect(jql).not.toContain("{epics}");
+    expect(jql).toContain("pipeline:research");
+    expect(jql).not.toContain("{label}");
   });
 
   it("returns a non-empty string", () => {
@@ -40,12 +38,17 @@ describe("buildRefineJql", () => {
 });
 
 describe("buildDevJql", () => {
-  it("interpolates the ready epic and assignee accountId into the dev template", () => {
+  it("interpolates handoffLabel and the assignee accountId into the dev template", () => {
     const jql = buildDevJql(config, "user-123");
-    expect(jql).toContain("EPIC-READY");
-    expect(jql).not.toContain("{readyEpic}");
+    expect(jql).toContain("pipeline:dev");
+    expect(jql).not.toContain("{label}");
     expect(jql).toContain("user-123");
     expect(jql).not.toContain("{assignee}");
+  });
+
+  it("no longer carries a status clause -- the label signals pipeline stage directly", () => {
+    const jql = buildDevJql(config, "user-123");
+    expect(jql).not.toContain("status");
   });
 
   it("returns a non-empty string", () => {
