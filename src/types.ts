@@ -72,11 +72,12 @@ export interface RunLogLine {
  * What a skill writes to verdict.json. This is the skill's self-report of
  * what happened during its run -- the loop trusts it, combines it with
  * run-level bookkeeping (ticket id, timestamps, skill_version, model) it
- * did not need to report itself, and derives a RunLogLine plus an
- * epic-move decision from it.
+ * did not need to report itself, and derives a RunLogLine from it -- no
+ * epic-or-label-move decision is derived at all beyond the loop's own
+ * fixed outcome->action mapping (see loop-runner.ts).
  *
- * Every field the loop needs to act on a verdict (transition status, move
- * epic, log the run) must be derivable from this interface alone.
+ * Every field the loop needs to act on a verdict (transition status, swap
+ * label, log the run) must be derivable from this interface alone.
  */
 export interface Verdict {
   outcome: VerdictOutcome;
@@ -155,8 +156,10 @@ export interface Config {
     runTimeoutMin: number;
   };
   /**
-   * Label that, when present on a ticket, allows a passing refine verdict
-   * to skip human approval and go straight to the ready epic.
+   * A ticket label that lets a passing verdict skip human approval and
+   * swap the ticket straight from `triggerLabel` to `handoffLabel`.
+   * Without it, a passing verdict leaves the ticket at `triggerLabel`,
+   * refined and awaiting approval.
    */
   autoPromoteLabel: string;
   /**

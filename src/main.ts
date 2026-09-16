@@ -43,7 +43,7 @@ const SKILL_MD_PATH = ".claude/skills/ticket-refine/SKILL.md";
  * for approval, which hangs/fails in headless -p mode with no human to
  * answer it. Explicitly allow the specific Atlassian MCP tools this
  * skill actually uses (read + comment + description writes --
- * ticket-refine never transitions status or moves epics itself, the loop
+ * ticket-refine never transitions status or swaps labels itself, the loop
  * runner's REST client does that) plus Bash broadly, since Ground's
  * whole design assumes real command execution inside the isolated
  * per-run worktree. Read/Grep/Glob are allowed for the same reason:
@@ -500,7 +500,7 @@ async function main(): Promise<void> {
         log(`[${SKILL_NAME}] ${result.ticket}: ${result.logLine?.detail}`);
         if (result.jiraSyncError) {
           logError(
-            `[${SKILL_NAME}] ${result.ticket}: WARNING -- Jira epic/status update failed (${result.jiraSyncError}). The run is logged in runs.jsonl, but Jira's epic/status may not reflect it -- check and fix manually.`,
+            `[${SKILL_NAME}] ${result.ticket}: WARNING -- Jira label/status update failed (${result.jiraSyncError}). The run is logged in runs.jsonl, but Jira's label/status may not reflect it -- check and fix manually.`,
           );
         }
         log(

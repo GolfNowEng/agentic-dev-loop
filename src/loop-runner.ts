@@ -10,7 +10,8 @@
  *      never a real process from this module)
  *   4. read the verdict.json it wrote (missing/malformed -> outcome
  *      "error", failure_category "agent_error", via verdict.ts)
- *   5. transition the ticket and move its epic per the verdict
+ *   5. transition the ticket and swap its pipeline-stage label per the
+ *      verdict
  *   6. append exactly one line to runs.jsonl (via runs-log.ts)
  *   7. enforce ceilings (via ceilings.ts); on breach, PAUSE -- never
  *      silently continue
@@ -77,7 +78,7 @@ export interface LoopIterationResult {
    * threw -- e.g. a malformed request, a transient API error. The run
    * itself still completed and is still logged; this only means Jira's
    * state may now be out of sync with runs.jsonl (the ticket may still
-   * sit in its old epic/status). Surfaced so a caller can alert a human,
+   * sit at its old label/status). Surfaced so a caller can alert a human,
    * but never thrown -- one Jira write failing must not kill the loop or
    * discard an otherwise-real, already-completed run.
    */
@@ -104,7 +105,8 @@ export interface RunLoopIterationDeps {
 
 /**
  * Run exactly one iteration of the loop: poll, claim, run the skill, read
- * its verdict, transition + move epic, log the run, and check ceilings.
+ * its verdict, transition status + swap label, log the run, and check
+ * ceilings.
  * Does not sleep and does not loop -- callers own the poll/sleep cadence.
  */
 export async function runLoopIteration(
@@ -149,13 +151,13 @@ export async function runLoopIteration(
 
   // ticket-refine reports its own passing verdict as "ready" (a refined
   // ticket, not a PR) -- normalize to "landed" for the shared RunOutcome
-  // schema before anything downstream (epic move, runs.jsonl) sees it.
+  // schema before anything downstream (the label swap, runs.jsonl) sees it.
   const outcome = verdict.outcome === "ready" ? "landed" : verdict.outcome;
 
   // Record this run's real consequences BEFORE checking the post-run
   // ceiling. A completed run already produced a real verdict -- a
   // ceiling breach must pause the loop from starting the NEXT run, but
-  // must never discard work that already happened (epic move, audit
+  // must never discard work that already happened (the label swap, audit
   // log). Checking the ceiling first would silently drop a genuine
   // "landed" verdict just because it happened to cost/take more than
   // expected, which defeats the purpose of the audit trail.
@@ -164,7 +166,7 @@ export async function runLoopIteration(
   // a transient API error here must never throw out of this function --
   // that would propagate out of the caller's poll loop and kill the
   // entire unattended process over what is otherwise a real, completed
-  // run. The run still gets logged either way; only the epic/status may
+  // run. The run still gets logged either way; only the label/status may
   // be out of sync with what runs.jsonl says happened.
   let jiraSyncError: string | undefined = assignSyncError;
   try {
@@ -185,10 +187,10 @@ export async function runLoopIteration(
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
     }
   } catch (err) {
-    const epicMoveError = err instanceof Error ? err.message : String(err);
+    const jiraWriteError = err instanceof Error ? err.message : String(err);
     jiraSyncError = jiraSyncError
-      ? `${jiraSyncError}; ${epicMoveError}`
-      : epicMoveError;
+      ? `${jiraSyncError}; ${jiraWriteError}`
+      : jiraWriteError;
   }
 
   const logLine: RunLogLine = {

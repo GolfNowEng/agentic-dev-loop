@@ -57,8 +57,8 @@ export interface JiraClient {
 
 const UNCONFIGURED_MESSAGE = (method: string): string =>
   `JiraClient.${method}: Jira instance is not configured. ` +
-  `Appendix A of the pipeline spec (pipeline.config.json epic IDs, ` +
-  `statuses, and JQL) is still unfilled -- this needs real Jira binding ` +
+  `Appendix A of the pipeline spec (pipeline.config.json triggerLabel/` +
+  `handoffLabel, statuses, and JQL) is still unfilled -- this needs real Jira binding ` +
   `values before any Jira call can be made.`;
 
 /**
@@ -142,7 +142,6 @@ interface JiraSearchResponse {
       status: { name: string };
       labels: string[];
       assignee: { accountId: string } | null;
-      [key: string]: unknown;
     };
   }>;
 }
