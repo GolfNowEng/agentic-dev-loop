@@ -34,43 +34,6 @@ than after); how much to shrink Attack (skip entirely vs. drop just the
 empirical-build sub-step); whether this should be a new Step 0 branch or
 a flag Ground/Attack read.
 
-## `claim()` doesn't send a claim-transition's required screen fields
-
-**Idea**: `RealJiraClient.claim` (`src/jira-client.ts:216`) transitions a
-ticket via whatever transition leads to `claimStatus.to`, but only ever
-sends `{ transition: { id } }` — no `fields`. If that transition's screen
-has a field Jira enforces as required at submit time, the claim call
-throws and the whole loop iteration dies uncaught (see the `main.ts:480`
-stack trace from the fatal-error run below), rather than being treated as
-a per-ticket skip/bounce the way a lost claim race already is.
-
-**Why**: hit live on `TARS-1460` (a real smoke-test ticket for the Phase 0
-label-trigger change) — its `claimStatus` transition in TARS's workflow is
-"Start Development" (id `421`, `To Do` → `In Progress`), whose screen has
-a `Story Points` (`customfield_10002`) field. `getTransitionsForJiraIssue`
-reports that field as `required: false` in its own metadata, but the live
-`POST .../transitions` call rejected the same transition with `400 Bad
-Request: "Field 'Story Points is required.'"`. Same *class* of bug as the
-undocumented parent-Epic requirement already known for Bug/Story/Tech
-Story create calls (`configs/TARS.json` in the sibling `skills` repo's
-`jira-create-ticket`) — Jira's create/transition metadata under-reporting
-a real requirement — just hitting a different operation (claim/transition
-in research-loop itself, not issue creation in `jira-create-ticket`).
-Worked around for this one ticket by setting Story Points directly via
-`editJiraIssue` before retrying the loop; not yet fixed in `claim()`.
-
-**Not yet scoped**: whether to have `claim()` fetch the target
-transition's screen fields (same call shape as `getTransitionsForJiraIssue`
-already returns) and supply a configured default for any it finds
-required, or something narrower (e.g. a config-level "extra transition
-fields" map per project, since "what value" has no universal right
-answer — Story Points has no meaningful default for a research-loop-only
-ticket). Also unscoped: whether a claim failure of this shape should
-become a new terminal outcome (distinct from today's clean lost-race
-`false` return) or whether the loop runner should catch it and treat it
-as `outcome: "error"` for that iteration rather than crashing the whole
-process — right now it's an uncaught throw all the way out of `main`.
-
 ## Jira label-based trigger (both repos) + split Jira (PM) / GitHub Issues (research & dev)
 
 **Idea**: replace Jira's epic-parent trigger with a Jira label-based
