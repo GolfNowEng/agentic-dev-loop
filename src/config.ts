@@ -68,12 +68,12 @@ export function targetRepoAddDir(config: Config): string | null {
 
 /** Field paths (dot-notation) worth checking for leftover "___" placeholders. */
 const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
-  ["jira.readyEpic", (c) => c.jira.readyEpic],
+  ["jira.triggerLabel", (c) => c.jira.triggerLabel],
+  ["jira.handoffLabel", (c) => c.jira.handoffLabel],
   ["jira.claimStatus.from", (c) => c.jira.claimStatus.from],
   ["jira.claimStatus.to", (c) => c.jira.claimStatus.to],
   ["jira.pollJql.refine", (c) => c.jira.pollJql.refine],
   ["jira.pollJql.dev", (c) => c.jira.pollJql.dev],
-  ["jira.epicLinkField", (c) => c.jira.epicLinkField],
   ["jira.statusNames.bounced", (c) => c.jira.statusNames.bounced],
   ["jira.statusNames.prOpen", (c) => c.jira.statusNames.prOpen],
   ["jira.codeReviewFields.piiField", (c) => c.jira.codeReviewFields.piiField],

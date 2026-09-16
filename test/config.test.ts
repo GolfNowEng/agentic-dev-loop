@@ -15,14 +15,13 @@ import * as path from "node:path";
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
     jira: {
-      intakeEpics: ["EPIC-1"],
-      readyEpic: "EPIC-READY",
+      triggerLabel: "pipeline:research",
+      handoffLabel: "pipeline:dev",
       claimStatus: { from: "To Do", to: "In Progress" },
       pollJql: {
-        refine: '"parent" in ({epics}) ORDER BY created ASC',
-        dev: '"parent" = {epic} ORDER BY created ASC',
+        refine: 'labels = "{label}" ORDER BY created ASC',
+        dev: 'labels = "{label}" AND assignee = "{assignee}" ORDER BY created ASC',
       },
-      epicLinkField: "parent",
       statusNames: { bounced: "Blocked", prOpen: "Code Review" },
       codeReviewFields: {
         piiField: "customfield_13504",
@@ -96,7 +95,7 @@ describe("loadConfig", () => {
     await fs.writeFile(filePath, JSON.stringify(makeConfig()), "utf8");
     const config = await loadConfig(filePath);
     expect(config.targetRepo.url).toBe("git@github.com:fandango/webtarsthree.git");
-    expect(config.jira.readyEpic).toBe("EPIC-READY");
+    expect(config.jira.handoffLabel).toBe("pipeline:dev");
   });
 
   it("throws if the file does not exist", async () => {
@@ -153,11 +152,11 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
 
   it("lists every field still set to the placeholder value", () => {
     const config = makeConfig({
-      jira: { ...makeConfig().jira, readyEpic: "___", epicLinkField: "___" },
+      jira: { ...makeConfig().jira, triggerLabel: "___", handoffLabel: "___" },
     });
     const missing = findPlaceholders(config);
-    expect(missing).toContain("jira.readyEpic");
-    expect(missing).toContain("jira.epicLinkField");
+    expect(missing).toContain("jira.triggerLabel");
+    expect(missing).toContain("jira.handoffLabel");
   });
 
   it("lists codeReviewFields sub-fields still set to the placeholder value", () => {

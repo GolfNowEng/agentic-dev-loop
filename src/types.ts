@@ -118,17 +118,23 @@ export interface PollJqlConfig {
 }
 
 export interface JiraConfig {
-  intakeEpics: string[];
-  readyEpic: string;
+  /**
+   * The label this repo's own poll matches on -- "pipeline:dev". Mutually
+   * exclusive with triggerLabel-as-research-loop-sees-it: a ticket carries
+   * exactly one pipeline-stage label at a time.
+   */
+  triggerLabel: string;
+  /**
+   * The label a passing research-loop verdict swaps a ticket to, handing
+   * it off to this repo -- "pipeline:dev". Carried here for config-shape
+   * symmetry with research-loop's own Config (mirroring how this repo's
+   * Config already carries pollJql.refine today even though this repo's
+   * runtime never polls with it), even though only research-loop's
+   * loop-runner.ts performs the swap in Phase 0.
+   */
+  handoffLabel: string;
   claimStatus: ClaimStatusConfig;
   pollJql: PollJqlConfig;
-  /**
-   * How a ticket is linked to its epic in this Jira instance: either the
-   * literal string "parent" (team-managed projects) or a custom field id
-   * such as "customfield_10014" (company-managed projects). Placeholder
-   * "___" until Appendix A of the pipeline spec is filled in.
-   */
-  epicLinkField: string;
   /**
    * Which existing Jira status names the loop runner's terminal outcomes
    * map onto -- this Jira instance has no literal "bounced" or "pr-open"
