@@ -13,11 +13,10 @@ const ASSIGNEE_ACCOUNT_ID = "user-123";
 function makeConfig(overrides: Partial<Config["ceilings"]> = {}): Config {
   return {
     jira: {
-      intakeEpics: ["EPIC-1"],
-      readyEpic: "EPIC-READY",
+      triggerLabel: "pipeline:research",
+      handoffLabel: "pipeline:dev",
       claimStatus: { from: "Backlog", to: "In Progress" },
-      pollJql: { refine: "epic in ({epics})", dev: "epic = {epic}" },
-      epicLinkField: "customfield_10014",
+      pollJql: { refine: 'labels = "{label}"', dev: 'labels = "{label}"' },
       statusNames: { bounced: "Blocked", prOpen: "In Progress" },
     },
     ceilings: {
@@ -36,7 +35,6 @@ function makeTicket(overrides: Partial<JiraTicket> = {}): JiraTicket {
   return {
     key: "PROJ-142",
     status: "Backlog",
-    epic: "EPIC-1",
     labels: [],
     assignee: ASSIGNEE_ACCOUNT_ID,
     ...overrides,
@@ -49,7 +47,7 @@ function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
     pollOldestMatching: vi.fn(async () => makeTicket()),
     claim: vi.fn(async () => true),
     transitionStatus: vi.fn(async () => undefined),
-    moveToEpic: vi.fn(async () => undefined),
+    swapLabel: vi.fn(async () => undefined),
     assignTicket: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -261,7 +259,7 @@ describe("runLoopIteration", () => {
     // The verdict was real and passing -- its consequences must still happen,
     // not be thrown away just because the ceiling was breached after the fact.
     // No autoPromoteLabel -- ticket stays in place, no epic move.
-    expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+    expect(jiraClient.swapLabel).not.toHaveBeenCalled();
     const lines = await readRunLog(runsLogPath);
     expect(lines).toHaveLength(1);
     expect(lines[0].outcome).toBe("landed");
@@ -282,7 +280,7 @@ describe("runLoopIteration", () => {
     expect(result.pauseReason).toBeTruthy();
   });
 
-  it("a passing verdict without autoPromoteLabel never moves the epic -- research-loop's intake+review territory is one combined epic, so the ticket just stays in place, refined, awaiting human approval", async () => {
+  it("a passing verdict without autoPromoteLabel never swaps the label -- the ticket stays at triggerLabel, refined, awaiting human approval", async () => {
     const jiraClient = makeMockJiraClient();
     const runSkill: RunSkillFn = vi.fn(async () =>
       makeRunSkillResult({
@@ -298,10 +296,10 @@ describe("runLoopIteration", () => {
 
     await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
 
-    expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+    expect(jiraClient.swapLabel).not.toHaveBeenCalled();
   });
 
-  it("a passing verdict with autoPromoteLabel present moves the ticket to the ready epic", async () => {
+  it("a passing verdict with autoPromoteLabel present swaps triggerLabel to handoffLabel", async () => {
     const jiraClient = makeMockJiraClient({
       pollOldestMatching: vi.fn(async () =>
         makeTicket({ key: "PROJ-142", labels: ["auto-promote"] }),
@@ -321,7 +319,11 @@ describe("runLoopIteration", () => {
 
     await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
 
-    expect(jiraClient.moveToEpic).toHaveBeenCalledWith("PROJ-142", config.jira.readyEpic);
+    expect(jiraClient.swapLabel).toHaveBeenCalledWith(
+      "PROJ-142",
+      config.jira.triggerLabel,
+      config.jira.handoffLabel,
+    );
   });
 
   it("a verdict with outcome \"ready\" (ticket-refine's own passing outcome) logs as \"landed\" and, without autoPromoteLabel, never moves the epic", async () => {
@@ -340,7 +342,7 @@ describe("runLoopIteration", () => {
 
     const result = await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
 
-    expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+    expect(jiraClient.swapLabel).not.toHaveBeenCalled();
     expect(result.logLine?.outcome).toBe("landed");
   });
 
@@ -361,19 +363,19 @@ describe("runLoopIteration", () => {
     const result = await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
 
     expect(result.logLine?.outcome).toBe("bounced");
-    expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+    expect(jiraClient.swapLabel).not.toHaveBeenCalled();
   });
 
-  it("a moveToEpic failure (e.g. a malformed Jira request) never throws out of runLoopIteration -- the run still gets logged, and the failure is surfaced via jiraSyncError, not by killing the caller", async () => {
+  it("a swapLabel failure (e.g. a malformed Jira request) never throws out of runLoopIteration -- the run still gets logged, and the failure is surfaced via jiraSyncError, not by killing the caller", async () => {
     const jiraClient = makeMockJiraClient({
-      // auto-promote label is required to exercise moveToEpic at all --
+      // auto-promote label is required to exercise swapLabel at all --
       // a non-auto-promoted landed verdict never calls it (see the
-      // "never moves the epic" test above).
+      // "never swaps the label" test above).
       pollOldestMatching: vi.fn(async () =>
         makeTicket({ key: "PROJ-142", labels: ["auto-promote"] }),
       ),
-      moveToEpic: vi.fn(async () => {
-        throw new Error('PUT ... -> 400 Bad Request. {"errors":{"parent":"data was not an object"}}');
+      swapLabel: vi.fn(async () => {
+        throw new Error('PUT ... -> 400 Bad Request. {"errors":{"labels":"..."}}');
       }),
     });
     const runSkill: RunSkillFn = vi.fn(async () =>
@@ -397,7 +399,6 @@ describe("runLoopIteration", () => {
 
     expect(result!.action).toBe("processed");
     expect(result!.jiraSyncError).toMatch(/400 Bad Request/);
-    // The run itself is still recorded, even though the Jira write failed.
     const lines = await readRunLog(runsLogPath);
     expect(lines).toHaveLength(1);
     expect(lines[0].outcome).toBe("landed");

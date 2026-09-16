@@ -73,7 +73,7 @@ export interface LoopIterationResult {
   /** Present when action is "paused-ceiling". */
   pauseReason?: string;
   /**
-   * Present if the post-verdict Jira write (moveToEpic/transitionStatus)
+   * Present if the post-verdict Jira write (swapLabel/transitionStatus)
    * threw -- e.g. a malformed request, a transient API error. The run
    * itself still completed and is still logged; this only means Jira's
    * state may now be out of sync with runs.jsonl (the ticket may still
@@ -169,15 +169,17 @@ export async function runLoopIteration(
   let jiraSyncError: string | undefined = assignSyncError;
   try {
     if (outcome === "landed") {
-      // Only an auto-promoted verdict moves the epic (straight to
-      // readyEpic, skipping human approval). A non-auto-promoted landed
-      // verdict leaves the ticket in place -- research-loop's intake and
-      // spec-review territory is a single combined epic, not two, so
-      // there's nowhere new to move to; the ticket just sits there,
-      // refined, until a human manually moves it to readyEpic.
+      // Only an auto-promoted verdict swaps the label (straight to
+      // handoffLabel, skipping human approval). A non-auto-promoted
+      // landed verdict leaves the ticket at triggerLabel -- the ticket
+      // just sits there, refined, until a human manually swaps the label.
       const autoPromote = ticket.labels.includes(config.autoPromoteLabel);
       if (autoPromote) {
-        await jiraClient.moveToEpic(ticket.key, config.jira.readyEpic);
+        await jiraClient.swapLabel(
+          ticket.key,
+          config.jira.triggerLabel,
+          config.jira.handoffLabel,
+        );
       }
     } else if (outcome === "bounced") {
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
