@@ -114,15 +114,19 @@ export interface LoopConfig {
 export interface Config {
   jira: {
     /**
-     * research-loop's combined territory -- fresh, unrefined tickets and
-     * already-refined tickets awaiting human approval both live here (no
-     * separate epic for "awaiting approval"; that distinction is a
-     * comment on the ticket -- presence of "Refined Spec -- ready for
-     * ticket-to-pr" -- not an epic).
+     * The label this repo's own poll matches on -- "pipeline:research".
+     * Mutually exclusive with handoffLabel: a ticket carries exactly one
+     * pipeline-stage label at a time.
      */
-    intakeEpics: string[];
-    /** Epic a ticket moves to when ready for dev-loop to pick up. */
-    readyEpic: string;
+    triggerLabel: string;
+    /**
+     * The label a passing, human-approved (or autoPromoteLabel-gated)
+     * verdict swaps a ticket to, handing it off to dev-loop --
+     * "pipeline:dev". Carried here for config-shape symmetry with
+     * dev-loop's own Config, even though only this repo's loop-runner.ts
+     * performs the swap in Phase 0.
+     */
+    handoffLabel: string;
     claimStatus: {
       from: string;
       to: string;
@@ -133,13 +137,6 @@ export interface Config {
       /** JQL template for the dev-loop poll. */
       dev: string;
     };
-    /**
-     * How a ticket is linked to its epic in this Jira instance: either the
-     * literal string "parent" (team-managed projects) or a custom field id
-     * such as "customfield_10014" (company-managed projects). Placeholder
-     * "___" until Appendix A of the pipeline spec is filled in.
-     */
-    epicLinkField: string;
     /**
      * Which existing Jira status names the loop runner's terminal outcomes
      * map onto -- this Jira instance has no literal "bounced" or "pr-open"

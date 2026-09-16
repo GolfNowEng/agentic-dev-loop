@@ -5,11 +5,10 @@ import type { Config } from "../src/types.ts";
 function makeConfig(overrides: Partial<Config["ceilings"]> = {}): Config {
   return {
     jira: {
-      intakeEpics: ["EPIC-1"],
-      readyEpic: "EPIC-READY",
+      triggerLabel: "pipeline:research",
+      handoffLabel: "pipeline:dev",
       claimStatus: { from: "Backlog", to: "In Progress" },
-      pollJql: { refine: "epic in ({epics})", dev: "epic = {epic}" },
-      epicLinkField: "customfield_10014",
+      pollJql: { refine: 'labels = "{label}"', dev: 'labels = "{label}"' },
       statusNames: { bounced: "Blocked", prOpen: "In Progress" },
     },
     ceilings: {
