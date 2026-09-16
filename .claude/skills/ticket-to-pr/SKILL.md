@@ -156,12 +156,12 @@ Each phase's `progress.jsonl` events use the phase name shown.
 ### Phase 0 — Intake
 
 1. Fetch the ticket (`getJiraIssue`, fields: summary, description, comments,
-   status) for `$ARGUMENTS`.
+   status, issuetype) for `$ARGUMENTS`.
 2. Find the comment titled exactly `Refined Spec — ready for ticket-to-pr`.
    If no such comment exists, or it exists but doesn't follow the
    definition-of-ready template from `ticket-refine` (`### Overview`,
    `### Acceptance Criteria`, `### Scope`) — this ticket should never have
-   reached the Ready epic — bounce immediately with
+   carried the `pipeline:dev` label — bounce immediately with
    `failure_category: "spec_ambiguous"` and detail noting the missing
    comment/sections. Do not attempt to proceed on an unreadied ticket.
 3. Read every Acceptance Criterion and the Scope section's enumerated
@@ -172,6 +172,15 @@ Each phase's `progress.jsonl` events use the phase name shown.
    `failure_category: "too_large"` before doing any further work. Better to
    stop here than after writing code.
 5. Set up the target repo working directory as described above.
+6. **Derive `COMMIT_TYPE` from the ticket's `issuetype`** — this drives both
+   the Green commit (Phase 3) and the PR title (Phase 5), and, via the
+   target repo's squash-merge-as-commit-message CI convention, the semver
+   bump on merge: `Bug` → `fix`; anything else (`Story`, `Task`,
+   `New Feature Request`, etc.) → `feat`. A direct field mapping, not an
+   inference — no judgment call to bounce over. Only add a breaking-change
+   marker (`!` after the scope, or a `BREAKING CHANGE:` footer) if the
+   Refined Spec comment itself states the change is breaking; never infer
+   one from scope size.
 
 ### Phase 1 — Plan
 
@@ -212,8 +221,8 @@ bug isn't reproducible, or an AC turns out unimplementable as written — stop
 and bounce with `spec_contradicted` (codebase evidence contradicts the
 ticket's claim) or `spec_ambiguous`, citing the specific contradiction.
 
-Commit once all Phase 2 tests pass
-(`git commit -m "feat(<TICKET>): implement <summary>"`).
+Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
+(`git commit -m "<COMMIT_TYPE>(<TICKET>): implement <summary>"`).
 
 ### Phase 4 — Verify
 
@@ -272,10 +281,15 @@ Commit once all Phase 2 tests pass
 
 1. Push the branch: `git push -u origin <TICKET>-<slug>`.
 2. Open the PR (via `gh pr create` or equivalent) against
-   `targetRepo.defaultBranch`, with title `<TICKET>: <ticket summary>` and
-   the **fixed body template below** — same shape the interactive
-   `push-branch` skill uses by hand today, so an automated PR reads
-   consistently with a manual one:
+   `targetRepo.defaultBranch`, with title
+   `<COMMIT_TYPE>(<TICKET>): <ticket summary>` (using `COMMIT_TYPE` from
+   Phase 0) and the **fixed body template below** — same shape the
+   interactive `push-branch` skill uses by hand today, so an automated PR
+   reads consistently with a manual one. The title matters beyond
+   readability: the target repo's CI computes its semver bump from the
+   squash-merge commit message on `master`, and GitHub uses the PR title
+   as that message, so a correctly-typed title is what makes `feat`
+   tickets bump minor and `fix` tickets bump patch on merge.
 
    ```markdown
    ## Changes

@@ -95,8 +95,10 @@ itself). The loop runner (`src/loop-runner.ts`) reads it via
 `parseVerdict()` in `src/verdict.ts` — a missing or malformed file becomes
 `outcome: "error"`, `failure_category: "agent_error"`, never a crash. The
 loop runner derives the real `RunLogLine` (adding ticket/skill/timing
-metadata the skill doesn't need to self-report) and the epic-move decision
-from this verdict.
+metadata the skill doesn't need to self-report) from this verdict — it no
+longer derives any epic-or-label-move decision from the verdict at all
+(`decideEpicMove` was deleted; no loop moves anything epic-or-label-shaped
+on a landed dev-loop verdict).
 
 **Closed `failure_category` enum** — do not add or remove values without
 updating the pipeline spec: `spec_ambiguous · spec_contradicted · blocked ·

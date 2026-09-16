@@ -1,13 +1,12 @@
 {
   "jira": {
-    "intakeEpics": ["TARS-1350"],
-    "readyEpic": "TARS-1384",
+    "triggerLabel": "pipeline:research",
+    "handoffLabel": "pipeline:dev",
     "claimStatus": { "from": "To Do", "to": "In Progress" },
     "pollJql": {
-      "refine": "\"parent\" in ({epics}) AND status = \"To Do\" ORDER BY created ASC",
-      "dev": "\"parent\" = {readyEpic} AND status = \"In Progress\" AND assignee = \"{assignee}\" ORDER BY created ASC"
+      "refine": "labels = \"{label}\" AND status = \"To Do\" ORDER BY created ASC",
+      "dev": "labels = \"{label}\" AND assignee = \"{assignee}\" ORDER BY created ASC"
     },
-    "epicLinkField": "parent",
     "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" },
     "codeReviewFields": {
       "piiField": "customfield_13504",

@@ -6,6 +6,32 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-16 — Jira label-based trigger, Phase 0: epic-parent polling replaced with label polling
+
+Per research-loop's `docs/future-enhancements.md` "Jira label-based
+trigger" entry and its Phase 0 design spec (see research-loop's
+`docs/superpowers/specs/2026-09-15-jira-label-trigger-phase0-design.md`),
+replaced the epic-parent trigger with a Jira label trigger, landed
+together with the matching change in `research-loop` (both repos must
+move together — see the spec's "Why"; without this, research-loop's
+approval step no longer moves an epic, and this repo's old trigger would
+never fire again). `Config.jira` drops `intakeEpics`/`readyEpic`/
+`epicLinkField` in favor of two plain strings, `triggerLabel`
+(`"pipeline:dev"`) and `handoffLabel` (also `"pipeline:dev"`, carried for
+shape symmetry only). `src/jql.ts`'s dev-poll template now substitutes
+`{label}` in place of `{readyEpic}`, keeps its existing `{assignee}`
+placeholder and second function argument unchanged, and drops the
+`status = "In Progress"` clause entirely — the label now signals pipeline
+stage directly, so keeping status alongside it would reintroduce the same
+state redundancy the label swap removes. `JiraClient.moveToEpic` is
+replaced by `swapLabel(ticketKey, from, to)`. `decideEpicMove` and its
+`readyEpic`-returning branch are deleted outright (not stubbed) — this
+repo's `loopKind: "dev"` path never called `moveToEpic` in production
+anyway, so this removes a dead-in-production code path, not a behavior
+change; `LoopKind` and the `loopKind === "refine"` branch (which only
+decides which JQL builder to call) are unchanged. Epics remain in Jira for
+board/PM visibility only, untouched by any code from either repo.
+
 ## 2026-09-14 — A bounced ticket went Blocked with no trace anywhere in Jira of why
 
 `ticket-to-pr` has no Jira-write tool (by design — see the 2026-09-01
@@ -33,6 +59,24 @@ from the transition: a failed comment must never block the Blocked
 transition (that would leave the ticket silently stuck In Progress
 over a comment failure alone), so both failure modes independently
 merge into `jiraSyncError` instead.
+
+## 2026-09-03 — Commits and PR titles never carried a conventional-commit type, so every merge fell through to a patch bump
+
+`SKILL.md`'s Phase 3 Green commit was hardcoded to `feat(<TICKET>): ...`
+regardless of ticket type, and Phase 5's PR title had no type prefix at
+all (`<TICKET>: <ticket summary>`). The target repo's CI
+(`semantic-version-calculate`) computes its semver bump from the
+squash-merge commit message on `master`, and GitHub uses the PR title as
+that message — so a real feature ticket landed as a patch bump instead of
+minor, and any breaking change would never have been flagged as major
+either, since neither commit nor PR title ever expressed ticket type.
+
+**Fix**: Phase 0 now fetches the ticket's `issuetype` and derives a
+`COMMIT_TYPE` from it (`Bug` → `fix`, everything else → `feat`) — a direct
+field mapping, not an inference. Phase 3's Green commit and Phase 5's PR
+title both now use `<COMMIT_TYPE>(<TICKET>): ...`. A breaking-change
+marker is only added if the Refined Spec comment itself states the
+change is breaking — never inferred from scope.
 
 ## 2026-09-02 — Verify phase ran a 4th qa-agent check before bouncing, tripping runTimeoutMin
 

@@ -64,8 +64,10 @@ export interface RunLogLine {
 
 /**
  * What a skill's verdict.json contains. This is the raw signal the skill
- * hands back to the loop runner; the loop runner derives a RunLogLine and
- * an epic-move decision from it.
+ * hands back to the loop runner; the loop runner derives a RunLogLine from
+ * it -- it no longer derives any epic-or-label-move decision at all
+ * (decideEpicMove was deleted; no loop moves anything epic-or-label-shaped
+ * on a landed dev-loop verdict).
  */
 export interface Verdict {
   outcome: RunOutcome;
