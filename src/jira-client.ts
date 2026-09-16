@@ -16,7 +16,6 @@ import type { Config } from "./types.ts";
 export interface JiraTicket {
   key: string;
   status: string;
-  epic: string | null;
   labels: string[];
   /** Jira accountId of the current assignee, or null if unassigned. */
   assignee: string | null;
@@ -41,8 +40,12 @@ export interface JiraClient {
   /** Transition a ticket to the given status. */
   transitionStatus(ticketKey: string, toStatus: string): Promise<void>;
 
-  /** Move a ticket to a different epic. */
-  moveToEpic(ticketKey: string, epicKey: string): Promise<void>;
+  /**
+   * Swap a ticket's pipeline-stage label from `from` to `to` in one PUT
+   * (Jira's labels field supports a remove/add op pair directly -- no
+   * GET-then-merge needed).
+   */
+  swapLabel(ticketKey: string, from: string, to: string): Promise<void>;
 
   /**
    * Assign a ticket to the given Jira account ID. Callers should only
@@ -77,8 +80,8 @@ export class StubJiraClient implements JiraClient {
     throw new Error(UNCONFIGURED_MESSAGE("transitionStatus"));
   }
 
-  async moveToEpic(_ticketKey: string, _epicKey: string): Promise<void> {
-    throw new Error(UNCONFIGURED_MESSAGE("moveToEpic"));
+  async swapLabel(_ticketKey: string, _from: string, _to: string): Promise<void> {
+    throw new Error(UNCONFIGURED_MESSAGE("swapLabel"));
   }
 
   async assignTicket(_ticketKey: string, _accountId: string): Promise<void> {
@@ -151,9 +154,7 @@ interface JiraTransitionsResponse {
 /**
  * REST-backed JiraClient for Jira Cloud, authenticated via HTTP Basic auth
  * (email + API token) per Atlassian's documented auth scheme for the v3
- * REST API. `config.jira.epicLinkField` selects how epic membership is
- * read/written: the literal string "parent" (team-managed projects) or a
- * custom field id such as "customfield_10014" (company-managed projects).
+ * REST API.
  */
 export class RealJiraClient implements JiraClient {
   private readonly credentials: JiraCredentials;
@@ -192,41 +193,22 @@ export class RealJiraClient implements JiraClient {
     return response;
   }
 
-  private epicLinkField(): string {
-    const field = this.config.jira.epicLinkField;
-    if (field === "___") {
-      throw new Error(
-        "RealJiraClient: jira.epicLinkField is not configured in pipeline.config.json " +
-          '(still the placeholder "___"). Set it to "parent" (team-managed projects) or ' +
-          'a custom field id such as "customfield_10014" (company-managed projects).',
-      );
-    }
-    return field;
-  }
-
   async pollOldestMatching(jql: string): Promise<JiraTicket | null> {
     const response = await this.request("/rest/api/3/search/jql", {
       method: "POST",
       body: JSON.stringify({
         jql,
         maxResults: 1,
-        fields: ["status", "labels", "assignee", this.config.jira.epicLinkField].filter(
-          (f) => f !== "___",
-        ),
+        fields: ["status", "labels", "assignee"],
       }),
     });
     const data = (await response.json()) as JiraSearchResponse;
     const issue = data.issues[0];
     if (!issue) return null;
 
-    const epicField = this.config.jira.epicLinkField;
-    const epic =
-      epicField !== "___" ? (issue.fields[epicField] as string | null) ?? null : null;
-
     return {
       key: issue.key,
       status: issue.fields.status.name,
-      epic,
       labels: issue.fields.labels ?? [],
       assignee: issue.fields.assignee?.accountId ?? null,
     };
@@ -264,17 +246,12 @@ export class RealJiraClient implements JiraClient {
     });
   }
 
-  async moveToEpic(ticketKey: string, epicKey: string): Promise<void> {
-    const field = this.epicLinkField();
-    // Jira's "parent" field (team-managed projects) requires an object
-    // ({ key: <issueKey> }), not a bare string -- a custom epic-link field
-    // (company-managed projects) takes the bare issue key string directly.
-    // Sending a bare string for "parent" is a 400 ("data was not an
-    // object"), confirmed against a real Jira instance.
-    const value = field === "parent" ? { key: epicKey } : epicKey;
+  async swapLabel(ticketKey: string, from: string, to: string): Promise<void> {
     await this.request(`/rest/api/3/issue/${ticketKey}`, {
       method: "PUT",
-      body: JSON.stringify({ fields: { [field]: value } }),
+      body: JSON.stringify({
+        update: { labels: [{ remove: from }, { add: to }] },
+      }),
     });
   }
 
