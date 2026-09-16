@@ -12,14 +12,13 @@ const ASSIGNEE_ACCOUNT_ID = "user-123";
 function makeConfig(): Config {
   return {
     jira: {
-      intakeEpics: ["EPIC-1"],
-      readyEpic: "EPIC-READY",
+      triggerLabel: "pipeline:research",
+      handoffLabel: "pipeline:dev",
       claimStatus: { from: "Ready", to: "In Progress" },
       pollJql: {
-        refine: 'epic in ({epics}) ORDER BY created ASC',
-        dev: 'epic = {readyEpic} AND assignee = "{assignee}" ORDER BY created ASC',
+        refine: 'labels = "{label}" ORDER BY created ASC',
+        dev: 'labels = "{label}" AND assignee = "{assignee}" ORDER BY created ASC',
       },
-      epicLinkField: "customfield_10014",
       statusNames: { bounced: "Blocked", prOpen: "In Progress" },
       codeReviewFields: {
         piiField: "customfield_13504",
@@ -38,7 +37,6 @@ function makeTicket(overrides: Partial<JiraTicket> = {}): JiraTicket {
   return {
     key: "PROJ-1",
     status: "In Progress",
-    epic: "EPIC-READY",
     assignee: ASSIGNEE_ACCOUNT_ID,
     ...overrides,
   };
@@ -49,7 +47,7 @@ function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
     pollOldestMatching: vi.fn(async () => null),
     claimTicket: vi.fn(async () => true),
     transitionStatus: vi.fn(async () => {}),
-    moveToEpic: vi.fn(async () => {}),
+    swapLabel: vi.fn(async () => {}),
     assignTicket: vi.fn(async () => {}),
     addComment: vi.fn(async () => {}),
     ...overrides,
@@ -263,7 +261,7 @@ describe("runLoopIteration", () => {
       expect(parsed.failure_category).toBe("agent_error");
 
       // An error outcome must not move the ticket's epic.
-      expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+      expect(jiraClient.swapLabel).not.toHaveBeenCalled();
     });
   });
 
@@ -375,7 +373,7 @@ describe("runLoopIteration", () => {
       // happen, not be thrown away just because the ceiling was breached
       // after the fact. A landed dev-loop verdict never moves the epic --
       // only its status transitions, to Code Review.
-      expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+      expect(jiraClient.swapLabel).not.toHaveBeenCalled();
       expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
         "PROJ-4c",
         config.jira.statusNames.prOpen,
@@ -450,7 +448,7 @@ describe("runLoopIteration", () => {
     });
   });
 
-  it("epic-move-on-verdict: a landed verdict from the dev loop never moves the epic -- only status transitions, to Code Review, with the required PII/QA-notes screen fields populated", async () => {
+  it("a landed verdict from the dev loop never moves the epic -- only status transitions, to Code Review, with the required PII/QA-notes screen fields populated", async () => {
     await withTempRunsLog(async (runsLogPath) => {
       const ticket = makeTicket({ key: "PROJ-6" });
       const jiraClient = makeMockJiraClient({
@@ -474,7 +472,7 @@ describe("runLoopIteration", () => {
       // stays in Pipeline: dev-loop. Moving it to research-loop's epic
       // would overload one epic to mean two different things depending
       // on which ticket you're looking at.
-      expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+      expect(jiraClient.swapLabel).not.toHaveBeenCalled();
       expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
         "PROJ-6",
         config.jira.statusNames.prOpen,
@@ -553,7 +551,7 @@ describe("runLoopIteration", () => {
     });
   });
 
-  it("epic-move-on-verdict: a bounced verdict sets outcome bounced and does not move the epic", async () => {
+  it("a bounced verdict sets outcome bounced and does not move the epic", async () => {
     await withTempRunsLog(async (runsLogPath) => {
       const ticket = makeTicket({ key: "PROJ-7" });
       const jiraClient = makeMockJiraClient({
@@ -582,7 +580,7 @@ describe("runLoopIteration", () => {
       if (result.kind === "ran") {
         expect(result.logLine.outcome).toBe("bounced");
       }
-      expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+      expect(jiraClient.swapLabel).not.toHaveBeenCalled();
       // A real blocker (no PR yet) DOES transition to the configured
       // "bounced" status -- this is the genuine-blocker case Blocked
       // exists for.
@@ -735,7 +733,7 @@ describe("runLoopIteration", () => {
       const result = await runLoopIteration(deps);
 
       expect(result.kind).toBe("ran");
-      expect(jiraClient.moveToEpic).not.toHaveBeenCalled();
+      expect(jiraClient.swapLabel).not.toHaveBeenCalled();
       expect(jiraClient.transitionStatus).not.toHaveBeenCalled();
     });
   });
@@ -784,14 +782,14 @@ describe("runLoopIteration", () => {
       const pollOldestMatching = vi.fn(async () => ticket);
       const claimTicket = vi.fn(async () => true);
       const transitionStatus = vi.fn(async () => {});
-      const moveToEpic = vi.fn(async () => {});
+      const swapLabel = vi.fn(async () => {});
       const assignTicket = vi.fn(async () => {});
       const addComment = vi.fn(async () => {});
       const jiraClient: JiraClient = {
         pollOldestMatching,
         claimTicket,
         transitionStatus,
-        moveToEpic,
+        swapLabel,
         assignTicket,
         addComment,
       };

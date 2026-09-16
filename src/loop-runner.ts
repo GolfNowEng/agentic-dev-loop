@@ -156,10 +156,6 @@ export async function runLoopIteration(
   // be out of sync with what runs.jsonl says happened.
   let jiraSyncError: string | undefined = assignSyncError;
   try {
-    const epic = decideEpicMove(verdict, loopKind, config);
-    if (epic) {
-      await jiraClient.moveToEpic(ticket.key, epic);
-    }
     if (loopKind === "dev" && verdict.outcome === "landed") {
       // A landed PR gets its status transitioned to Code Review -- never
       // its epic. The epic (Pipeline: dev-loop) already means "dev-loop
@@ -232,30 +228,6 @@ export async function runLoopIteration(
   }
 
   return { kind: "ran", ticket: ticket.key, logLine, jiraSyncError };
-}
-
-/**
- * Decide which epic (if any) a ticket should move to given its verdict
- * and the loop it came from. A bounced verdict never moves the epic (the
- * ticket stays in place). A landed dev-loop verdict never moves the epic
- * either -- a landed PR only transitions status (see runLoopIteration's
- * Code Review branch); the ticket stays in whatever epic it already sits
- * in (Pipeline: dev-loop). Only research-loop's own landed/ready verdicts
- * move an epic -- to readyEpic, when auto-promoted (see the "refine"
- * branch below); a non-auto-promoted verdict leaves the ticket in place
- * too, since research-loop's own intake and spec-review territory is now
- * a single combined epic (Pipeline: review-loop), not two.
- */
-export function decideEpicMove(
-  verdict: Verdict,
-  loopKind: LoopKind,
-  config: Config,
-): string | null {
-  if (verdict.outcome !== "landed" || loopKind === "dev") {
-    return null;
-  }
-
-  return config.jira.readyEpic;
 }
 
 /**
