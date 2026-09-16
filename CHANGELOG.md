@@ -6,6 +6,27 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-16 — `jira.repoLabel`: disambiguate repos that share one Jira project
+
+Added `Config.jira.repoLabel` (required, plain string, e.g.
+`"repo:catalog-ui-management"`) and a `{repoLabel}` placeholder in both
+`pollJql.refine`/`pollJql.dev` templates, ANDed alongside the existing
+`{label}` substitution. `src/jql.ts`'s `buildRefineJql`/`buildDevJql` both
+fill it in; `src/config.ts`'s `findPlaceholders` checks it for a leftover
+`"___"` same as every other Jira-wiring field.
+
+**Why**: `catalog-ui-management` and `catalog-ui-public` both file tickets
+into the same Jira project (`MC`) — the stage label alone
+(`triggerLabel`/`handoffLabel`) can't tell which of the two repos a given
+`pipeline:dev`-labeled MC ticket actually belongs to, so whichever
+dev-loop instance happened to poll first could claim the wrong repo's
+ticket. `repoLabel` never changes across a ticket's lifecycle (unlike the
+stage label, which swaps); every `pipeline.<project>.config.json` sets it,
+including single-repo projects like `webtarsthree`, for a uniform scheme.
+Does **not** solve running two loop instances against the *same*
+repo/project pair concurrently — that's still the pre-existing, unsolved
+"Future: multiple concurrent loop instances" gap noted in `docs/config.md`.
+
 ## 2026-09-16 — Jira label-based trigger, Phase 0: epic-parent polling replaced with label polling
 
 Per research-loop's `docs/future-enhancements.md` "Jira label-based

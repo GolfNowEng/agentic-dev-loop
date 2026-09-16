@@ -11,7 +11,9 @@ import type { Config } from "./types.ts";
  * unused-in-prod buildDevJql.
  */
 export function buildRefineJql(config: Config): string {
-  return config.jira.pollJql.refine.replace("{label}", config.jira.triggerLabel);
+  return config.jira.pollJql.refine
+    .replace("{label}", config.jira.triggerLabel)
+    .replace("{repoLabel}", config.jira.repoLabel);
 }
 
 /**
@@ -24,5 +26,6 @@ export function buildRefineJql(config: Config): string {
 export function buildDevJql(config: Config, assigneeAccountId: string): string {
   return config.jira.pollJql.dev
     .replace("{label}", config.jira.handoffLabel)
+    .replace("{repoLabel}", config.jira.repoLabel)
     .replace("{assignee}", assigneeAccountId);
 }

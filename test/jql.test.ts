@@ -6,10 +6,12 @@ const config: Config = {
   jira: {
     triggerLabel: "pipeline:research",
     handoffLabel: "pipeline:dev",
+    repoLabel: "repo:webtarsthree",
     claimStatus: { from: "Ready", to: "In Progress" },
     pollJql: {
-      refine: 'labels = "{label}" AND status = "To Refine" ORDER BY created ASC',
-      dev: 'labels = "{label}" AND assignee = "{assignee}" ORDER BY created ASC',
+      refine:
+        'labels = "{label}" AND labels = "{repoLabel}" AND status = "To Refine" ORDER BY created ASC',
+      dev: 'labels = "{label}" AND labels = "{repoLabel}" AND assignee = "{assignee}" ORDER BY created ASC',
     },
     statusNames: { bounced: "Blocked", prOpen: "In Progress" },
     codeReviewFields: {
@@ -30,6 +32,12 @@ describe("buildRefineJql", () => {
     expect(jql).not.toContain("{label}");
   });
 
+  it("interpolates repoLabel into the refine template, disambiguating repos that share one Jira project", () => {
+    const jql = buildRefineJql(config);
+    expect(jql).toContain("repo:webtarsthree");
+    expect(jql).not.toContain("{repoLabel}");
+  });
+
   it("returns a non-empty string", () => {
     const jql = buildRefineJql(config);
     expect(typeof jql).toBe("string");
@@ -44,6 +52,12 @@ describe("buildDevJql", () => {
     expect(jql).not.toContain("{label}");
     expect(jql).toContain("user-123");
     expect(jql).not.toContain("{assignee}");
+  });
+
+  it("interpolates repoLabel into the dev template", () => {
+    const jql = buildDevJql(config, "user-123");
+    expect(jql).toContain("repo:webtarsthree");
+    expect(jql).not.toContain("{repoLabel}");
   });
 
   it("no longer carries a status clause -- the label signals pipeline stage directly", () => {

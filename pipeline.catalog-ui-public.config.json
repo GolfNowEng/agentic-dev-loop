@@ -1,0 +1,25 @@
+{
+  "jira": {
+    "triggerLabel": "pipeline:dev",
+    "handoffLabel": "pipeline:dev",
+    "repoLabel": "repo:catalog-ui-public",
+    "claimStatus": { "from": "___", "to": "___" },
+    "pollJql": {
+      "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"___\" ORDER BY created ASC",
+      "dev": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND assignee = \"{assignee}\" ORDER BY created ASC"
+    },
+    "statusNames": { "bounced": "___", "prOpen": "___" },
+    "codeReviewFields": {
+      "piiField": "___",
+      "piiNoImpactOptionId": "___",
+      "qaNotesField": "___"
+    }
+  },
+  "ceilings": { "maxRunsPerDay": 100, "maxCostPerRunUsd": 20, "runTimeoutMin": 45 },
+  "autoPromoteLabel": "auto-promote",
+  "targetRepo": {
+    "url": "git@github.com:fandango/catalog-ui-public.git",
+    "defaultBranch": "main",
+    "path": "/Users/206618626@bwt3.com/Desktop/Repos/catalog-ui-public"
+  }
+}

@@ -17,8 +17,21 @@
   `JiraClient.claimTicket` returns `false`, never throws, if another
   process already claimed it). **dev-loop does not use this** — see
   "Ticket status never reverts" below.
-- `jira.pollJql.{refine,dev}` — JQL templates with a `{label}` placeholder,
-  filled in by `src/jql.ts`.
+- `jira.repoLabel` — a second, always-paired label naming which repo a
+  ticket belongs to (e.g. `"repo:catalog-ui-management"`), ANDed into both
+  `pollJql` templates alongside the stage label. Needed because more than
+  one target repo can share a single Jira project — `catalog-ui-management`
+  and `catalog-ui-public` both file into project `MC` — so the stage label
+  alone (`triggerLabel`/`handoffLabel`) can't tell which repo a given
+  `pipeline:dev`-labeled ticket actually belongs to; without this, whichever
+  dev-loop instance happens to poll first could claim the wrong repo's
+  ticket. Unlike `triggerLabel`/`handoffLabel`, `repoLabel` never changes
+  across a ticket's lifecycle. A project with only one target repo (e.g.
+  `webtarsthree`/`TARS`) doesn't strictly need this for disambiguation, but
+  every `pipeline.<project>.config.json` sets it anyway for a uniform
+  scheme across projects.
+- `jira.pollJql.{refine,dev}` — JQL templates with `{label}` and
+  `{repoLabel}` placeholders, filled in by `src/jql.ts`.
 - `jira.statusNames.{bounced,prOpen}` — this Jira instance has no literal
   "bounced" status, so these map the loop's terminal outcomes onto whatever
   statuses actually exist in the *child ticket's* (Bug/Story/Task) workflow.
@@ -74,6 +87,13 @@ something like a per-instance label (e.g. `Runner1`/`Dev1`, incrementing per
 instance) checked and set at pickup time, or each loop process being aware
 of how many sibling instances are running. Not built — noted here so it's
 not forgotten if this pipeline needs to scale beyond one terminal per loop.
+`jira.repoLabel` (above) is a related but distinct concern — it disambiguates
+*which repo* within a shared Jira project, not concurrent instances of the
+*same* project/repo pair; the latter is still unsolved and still races.
+Concretely: `repoLabel` prevents a `catalog-ui-management`-scoped dev-loop
+instance from grabbing a `catalog-ui-public` ticket, but running two
+dev-loop instances both scoped to `catalog-ui-management` at once still
+races exactly as described above.
 
 ## Assignee bookkeeping
 
@@ -160,9 +180,9 @@ Every Jira-specific value above starts as the literal placeholder string
 `"___"` in a fresh `pipeline.<project>.config.json`. `findPlaceholders()` /
 `assertNoPlaceholders()` in `src/config.ts` detect leftover placeholders —
 `RealJiraClient` refuses to make a Jira call while any remain. Filling these
-in for a real project means: confirming the two pipeline label strings
-(`triggerLabel`, `handoffLabel`) and checking the *child ticket* workflow
-for real status names.
+in for a real project means: confirming the three pipeline label strings
+(`triggerLabel`, `handoffLabel`, `repoLabel`) and checking the *child
+ticket* workflow for real status names.
 
 ## Adding a new project
 

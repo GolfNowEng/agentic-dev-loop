@@ -17,10 +17,11 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     jira: {
       triggerLabel: "pipeline:research",
       handoffLabel: "pipeline:dev",
+      repoLabel: "repo:webtarsthree",
       claimStatus: { from: "To Do", to: "In Progress" },
       pollJql: {
-        refine: 'labels = "{label}" ORDER BY created ASC',
-        dev: 'labels = "{label}" AND assignee = "{assignee}" ORDER BY created ASC',
+        refine: 'labels = "{label}" AND labels = "{repoLabel}" ORDER BY created ASC',
+        dev: 'labels = "{label}" AND labels = "{repoLabel}" AND assignee = "{assignee}" ORDER BY created ASC',
       },
       statusNames: { bounced: "Blocked", prOpen: "Code Review" },
       codeReviewFields: {
@@ -157,6 +158,14 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
     const missing = findPlaceholders(config);
     expect(missing).toContain("jira.triggerLabel");
     expect(missing).toContain("jira.handoffLabel");
+  });
+
+  it("lists jira.repoLabel when it's still set to the placeholder value", () => {
+    const config = makeConfig({
+      jira: { ...makeConfig().jira, repoLabel: "___" },
+    });
+    const missing = findPlaceholders(config);
+    expect(missing).toContain("jira.repoLabel");
   });
 
   it("lists codeReviewFields sub-fields still set to the placeholder value", () => {
