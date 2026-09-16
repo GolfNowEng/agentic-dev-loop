@@ -25,7 +25,9 @@ or to bounce it with concrete evidence of why it isn't ready.
 ## Setup: idempotent re-refinement
 
 **Always check first**: does this ticket already have a `Refined Spec —
-ready for ticket-to-pr` comment? Two cases:
+ready for ticket-to-pr` comment (Jira) or an equivalent `## Refined Spec —
+ready for ticket-to-pr` comment on the mirror GitHub Issue (Step 0.5)?
+Either is evidence of a prior pass. Two cases:
 
 - **First pickup** (no such comment exists): proceed through Steps 0–7
   below as a fresh refinement. The ticket's description is never touched —
@@ -152,6 +154,40 @@ much information the ticket arrived with.
 - **Unknown/other issue types**: run the fullest, most skeptical version of
   the above (treat as if it were a Tech Story with an unclear fault
   domain).
+
+### Step 0.5 — Open/link the GitHub Issue
+
+Before Interpret, find this run's GitHub Issue mirror (`main.ts` already
+created or found it right after claiming the ticket, per Phase 1 of
+docs/future-enhancements.md's Jira label-trigger design):
+
+```bash
+gh issue list --repo <github.repo from pipeline.<project>.config.json> \
+  --search 'in:title "<TICKET-KEY>:"' --state all --json number,url,title
+```
+
+Exactly one match is expected (idempotency is `GitHubClient`'s job,
+already run before this skill started). Rename it now that you have the
+real ticket summary (read via `getJiraIssue`, same call Interpret would
+make anyway — doing it here just moves the read earlier):
+
+```bash
+gh issue edit <number> --repo <github.repo> --title "<TICKET-KEY>: <ticket summary>"
+```
+
+Remember this Issue's number/URL for the rest of the run — every comment
+this skill posts from Step 1 onward that the routing rule below classifies
+as GitHub-only goes to this same Issue via `gh issue comment <number>
+--repo <github.repo> --body "..."`, never a new Issue per comment.
+
+If no matching Issue is found at all (the pre-run creation in `main.ts`
+failed and was logged, per its own never-throw contract) — proceed anyway,
+without a GitHub Issue for this run. Note this once in `progress.jsonl`
+(`"phase": "triage", "event": "note"`, detail: "no GitHub Issue found for
+this ticket -- proceeding without one") and route what would have been
+GitHub-only content into a single Jira working comment instead, for this
+run only. Do not fail or bounce the run over a missing mirror Issue — it's
+an infrastructure gap, not a spec-readiness problem.
 
 ### Step 1 — Interpret
 
@@ -314,9 +350,11 @@ naming the specific blocker.
 ### Step 6 — Synthesize
 
 Write the refined ticket. Per the ticket content protocol (below), this
-means writing to **working comments** during work, and only writing the
-official `Refined Spec — ready for ticket-to-pr` comment once a passing
-verdict is reached in Step 7. The description is never touched.
+means writing working notes to the **GitHub Issue** during work (not
+Jira), and only writing the full `Refined Spec — ready for ticket-to-pr`
+content to that same GitHub Issue, plus the short pointer comment to
+Jira, once a passing verdict is reached in Step 7. The description is
+never touched.
 
 ### Step 7 — Verify
 
@@ -325,7 +363,8 @@ the synthesized ticket against the definition-of-ready checklist below.
 This must be a genuinely independent check, not the same reasoning that
 produced the ticket rubber-stamping itself.
 
-- If it passes: write the `Refined Spec — ready for ticket-to-pr` comment
+- If it passes: write the GitHub Issue's full `## Refined Spec — ready for
+  ticket-to-pr` comment and the Jira pointer comment of the same title
   (see ticket content protocol), set `verdict.outcome: "ready"`. The
   ticket stays at `triggerLabel`, refined and awaiting human approval (the
   loop runner only swaps the label to `handoffLabel` if `autoPromoteLabel`
@@ -419,9 +458,11 @@ This is not conditional on how the run concludes.
 
 ## Definition-of-ready checklist (enforced, not vibed)
 
-0. The `Refined Spec — ready for ticket-to-pr` comment exists and follows
-   the official template: `### Overview`, `### Acceptance Criteria`,
-   `### Scope` present and populated.
+0. The GitHub Issue's `## Refined Spec — ready for ticket-to-pr` comment
+   exists and follows the official template: `### Overview`, `### Acceptance
+   Criteria`, `### Scope` present and populated; the Jira `Refined Spec —
+   ready for ticket-to-pr` comment exists as its pointer, per the ticket
+   content protocol.
 1. Problem statement and every acceptance criterion are testable (each AC
    maps to an assertion `ticket-to-pr` could write a test against).
 2. Files/modules to touch are enumerated by name — no "relevant files"
@@ -437,7 +478,7 @@ This is not conditional on how the run concludes.
    judgment to act on. The verifier asks, for each AC: "could a
    literal-minded implementer do this without asking anything?"
 7. No raw secret/credential/token/password value anywhere in the draft —
-   see Ticket content protocol item 6. Presence/shape references
+   see Ticket content protocol item 8. Presence/shape references
    (`hasClientSecret: true`, a var name alone) are fine; a raw value is
    not, regardless of which step surfaced it.
 
@@ -447,50 +488,103 @@ This is not conditional on how the run concludes.
 authored by many different stakeholders in many different styles;
 normalizing or overwriting someone else's ticket into our house format is
 bad practice regardless of how good the result is. The original
-description stays exactly as written, permanently — it's the fast,
-human-skimmable "what is this ticket about" view.
+description stays exactly as written, permanently.
 
-1. All work-in-progress — interpretation notes, recon findings, assumption
-   attacks, iteration updates — flows through **working comments** during
-   the run. The description is never used as a scratchpad, and never
-   rewritten.
-2. Only on a passing verdict does this skill write **one comment**, titled
-   exactly `Refined Spec — ready for ticket-to-pr`, in the fixed template:
-   - `### Overview` — problem statement, verified context, fault domain
-     (for bugs), surviving assumptions (labeled as assumptions)
-   - `### Acceptance Criteria` — TDD-ready: each AC names its test, what it
-     asserts, why it fails on current code
-   - `### Scope` — files/modules to touch, size estimate,
-     sequencing/follow-up drafts if split
-3. On re-pickup (an existing `Refined Spec — ready for ticket-to-pr`
-   comment found, ticket sent back with a human steering comment): update
-   that same comment in place rather than creating a second one each
-   cycle.
-4. The Step 7 verifier checks this comment's content and format — a
-   refined ticket without these sections, or without this comment at all,
-   is not ready by definition.
-5. **Never write an absolute filesystem path into any Jira comment** —
-   this machine's home directory is an email address, so an absolute path
-   leaks PII into Jira. Refer to files by repo-relative path only (e.g.
-   `src/client/App.jsx`, not
-   `/Users/<email>/Desktop/repo/src/client/App.jsx`).
-6. **Never write a raw env var value, `.envrc`/`.env` file content, or any
-   credential/token/key/password value into a Jira comment,
-   `progress.jsonl` note, or the always-emitted result line** — Ground's
-   worktree lives inside the target repo's own directory tree specifically
-   so `direnv` picks up its real local env (see "Target repo (grounding)"
-   above), which means that env can contain real secrets. To demonstrate a
-   var is set (e.g. confirming a dev-server dependency has credentials
-   available), report name/presence/length only — imitate the target
-   repo's own `hasClientSecret`/`clientSecretLength`-style logging, never
-   the raw value itself. This applies to `recon-agent` and
-   `devils-advocate-agent` findings quoted into a comment just as much as
-   to this skill's own writing. **This rule now has a code-level backstop**
-   — a `PreToolUse` hook (`.claude/hooks/block-secret-comments.sh`) denies
-   any Jira/Confluence write whose content matches a known secret name or
-   format pattern (see `CHANGELOG.md`'s "Round 2" entry) — but that hook is
-   a heuristic backstop, not a replacement for following this rule; it
-   won't catch every shape a secret could take.
+**Routing rule (Phase 1 of docs/future-enhancements.md's Jira label-
+trigger design): Jira gets only four kinds of content. Everything else
+goes to the GitHub Issue.**
+
+Jira-worthy, and *only* these:
+1. A blocking ambiguity that needs a human product decision (the
+   `spec_ambiguous` bounce).
+2. A scope call (the `too_large` bounce and its drafted split).
+3. An explicit confirmation request (something this skill genuinely cannot
+   resolve without asking).
+4. A passing-verdict pointer: the `Refined Spec — ready for ticket-to-pr`
+   comment, now shrunk to a short pointer + evidence summary rather than
+   the full write-up (see below).
+
+No per-comment judgment call beyond this list — if content doesn't fit one
+of these four categories, it goes to GitHub, full stop.
+
+**Every Jira comment written under this protocol must @-mention
+`jira.mentionAccountId`** (from `pipeline.<project>.config.json`) — a new
+requirement Phase 1 introduces; no such convention existed before. Use
+Jira's `@[accountId]` mention syntax in the comment body (ADF format via
+`addCommentToJiraIssue`'s `contentFormat: "adf"`, or the equivalent
+markdown mention syntax if using `contentFormat: "markdown"`).
+
+GitHub-only (posted as a comment on this run's mirror Issue, via `gh issue
+comment <number> --repo <github.repo> --body "..."`, per Step 0.5): recon
+findings, devil's-advocate attack findings, verifier results, working/
+interpretation notes, bounce evidence detail — anything in-the-weeds/
+engineering-shaped. Still concise, allowed to be technical (GitHub Issues
+is a developer-shaped surface — markdown, code refs, no @-mention
+requirement).
+
+1. **All work-in-progress** (interpretation notes, recon findings,
+   assumption attacks, iteration updates) flows through **GitHub Issue
+   comments** during the run, not Jira — this is the change from the
+   pre-Phase-1 behavior, where all of this went to Jira working comments.
+   The Jira description is never used as a scratchpad, and never
+   rewritten, exactly as before.
+2. **On a passing verdict**, write **one Jira comment**, titled exactly
+   `Refined Spec — ready for ticket-to-pr`, @-mentioning
+   `jira.mentionAccountId`, containing:
+   - A one-paragraph summary (not the full Overview/AC/Scope write-up).
+   - A plain-URL pointer to the GitHub Issue, which itself carries the
+     full `### Overview` / `### Acceptance Criteria` / `### Scope` refined
+     spec content as its own comment (see item 4 below) — `ticket-to-pr`
+     reads the GitHub Issue as its real work order, not this Jira comment,
+     once dev-loop migrates in Phase 2; until then, this Jira comment's
+     pointer is what a human clicks through to review the real content.
+   - The @-mention.
+3. **On a bounce**, write **one Jira comment**, titled exactly
+   `Ticket-Refine Bounce — <failure_category>`, @-mentioning
+   `jira.mentionAccountId`, containing the same fixed
+   Verdict/Summary/Needs-from-you header as before, but with the free-form
+   evidence section replaced by a pointer to the GitHub Issue comment
+   carrying the full evidence — unless the bounce category is itself one
+   of the four Jira-worthy kinds above (e.g. `spec_ambiguous` naming the
+   specific ambiguous readings *is* the blocking-ambiguity content Jira is
+   for) — in that case, the ambiguity/scope-call/confirmation-request
+   content itself stays in this Jira comment directly, and only the
+   *supporting* evidence (grounding detail, attack findings that fed the
+   judgment) goes to GitHub.
+4. **The GitHub Issue itself carries the full refined-ticket content** on
+   a passing verdict — post the complete `### Overview` / `### Acceptance
+   Criteria` / `### Scope` template (identical structure to the old
+   full-detail Jira comment) as a GitHub Issue comment, titled in its own
+   first line `## Refined Spec — ready for ticket-to-pr` (GitHub has no
+   comment-title field, so this is a markdown heading instead).
+5. **On re-pickup** (an existing `Refined Spec`/`Ticket-Refine Bounce`
+   Jira comment found, or an existing GitHub Issue comment of the
+   equivalent title found): update that same comment/Issue-comment in
+   place rather than posting a new one each cycle, on both sides
+   independently — Jira's pointer comment and the GitHub Issue's full-
+   detail comment are each their own idempotent target.
+6. The Step 7 verifier checks the GitHub Issue comment's content and
+   format (the full Overview/AC/Scope now lives there, not in Jira) — a
+   refined ticket without these sections in the GitHub Issue, or without
+   the GitHub Issue existing at all, is not ready by definition.
+7. **Never write an absolute filesystem path** into any Jira comment *or*
+   GitHub Issue comment — this machine's home directory is an email
+   address, so an absolute path leaks PII into either surface equally.
+   Refer to files by repo-relative path only.
+8. **Never write a raw env var value, `.envrc`/`.env` file content, or any
+   credential/token/key/password value into a Jira comment, GitHub Issue
+   comment, `progress.jsonl` note, or the always-emitted result line** —
+   Ground's worktree lives inside the target repo's own directory tree
+   specifically so `direnv` picks up its real local env, which means that
+   env can contain real secrets. Report presence/shape only, never the raw
+   value — this rule now applies to the GitHub write surface exactly as it
+   already applied to Jira. **Code-level backstop on both surfaces**: the
+   existing `PreToolUse` hook (`.claude/hooks/block-secret-comments.sh`)
+   denies a matching Jira/Confluence write; a new, equivalent hook
+   (`.claude/hooks/block-github-secret-writes.sh`) denies a matching `gh
+   issue create`/`edit`/`comment` Bash call — see `CHANGELOG.md`'s Phase 1
+   entry. Neither hook is a replacement for following this rule; each is a
+   heuristic backstop that won't catch every shape a secret could take.
 
 ## Bouncing (any step)
 
@@ -498,10 +592,11 @@ A bounce is a normal, successful exit — not a crash. On any bounce:
 
 1. Run Cleanup (see above) — it applies regardless of why this run is
    ending; a bounce is not an exception to it.
-2. Write **one comment** (never the description), titled exactly
+2. Write **one Jira comment** (never the description), titled exactly
    `Ticket-Refine Bounce — <failure_category>` (e.g.
    `Ticket-Refine Bounce — blocked`) — greppable and consistent the same
-   way `Refined Spec — ready for ticket-to-pr` is for a passing verdict.
+   way `Refined Spec — ready for ticket-to-pr` is for a passing verdict,
+   @-mentioning `jira.mentionAccountId` per the ticket content protocol.
    Open the comment body with this fixed three-line header, then the
    evidence free-form below it (evidence genuinely varies by category —
    a `blocked` bounce and a `spec_contradicted` bounce don't look alike,
@@ -518,6 +613,12 @@ A bounce is a normal, successful exit — not a crash. On any bounce:
    specific ambiguous readings, the suggested split, drafted follow-up
    tickets, etc.>
    ```
+   The free-form evidence below the fixed header lives in Jira only when
+   the bounce category itself is Jira-worthy content per the routing rule
+   (e.g. `spec_ambiguous` naming the ambiguous readings, `too_large`
+   naming the scope call and its drafted split); otherwise this comment's
+   evidence section is a pointer to the GitHub Issue comment carrying the
+   full detail, per "Ticket content protocol" item 3 above.
    On re-pickup after a bounce, find and update this same comment (same
    title convention as the `Refined Spec` comment) rather than posting a
    second one each cycle.

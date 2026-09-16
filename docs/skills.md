@@ -14,6 +14,11 @@ affected by a background run:
 0. **Triage & route** — pick a checklist by issue type (Bug vs Tech Story
    vs unknown); for bugs, determine fault domain (client-side vs upstream
    service) before anything else.
+0.5. **Open/link the GitHub Issue** — opens/renames this run's mirror
+   GitHub Issue (created or found by `main.ts` right after claim, per
+   Phase 1 of `docs/future-enhancements.md`'s Jira label-trigger design)
+   before Interpret, and remembers its number/URL for every GitHub-only
+   comment the rest of the run writes.
 1. **Interpret** — first exhausts available Jira context (this ticket's own
    comment thread, and linked issues one hop out) before concluding
    anything is ambiguous; only then restates the ask. More than one
@@ -55,10 +60,12 @@ affected by a background run:
    comments for the human gate to approve; bounce `too_large`.
 5. **Blocked detection** — bounce `blocked` if work can't proceed regardless
    of spec quality (external dependency, missing access, upstream fault).
-6. **Synthesize** — write the refined ticket (working comments during work;
-   a single fixed-title comment, `Refined Spec — ready for ticket-to-pr`,
-   only on a passing verdict). The stakeholder's original description is
-   never touched, ever — see "Ticket content protocol" note below.
+6. **Synthesize** — write the refined ticket (working comments during work
+   go to the GitHub Issue, not Jira, per Phase 1's routing rule; on a
+   passing verdict, the full `## Refined Spec — ready for ticket-to-pr`
+   content goes to the GitHub Issue and a short pointer comment of the
+   same title goes to Jira). The stakeholder's original description is
+   never touched, ever — see "Jira/GitHub content routing (Phase 1)" below.
 7. **Verify** — spawn `verifier-agent` (below) for an independent
    definition-of-ready check before reporting a passing verdict.
 
@@ -114,17 +121,23 @@ which has one for uncommitted work — see dev-loop's `docs/skills.md`).
 ## Definition-of-ready checklist
 
 Enforced by `verifier-agent`, checked in order — first failure is the
-bounce: (0) template sections populated, (1) every AC testable, (2) files/
-modules named, (3) TDD-ready test expectations per AC, (4) small/medium size
-bound, (5) no open questions, (6) a literal-minded Sonnet-tier implementer
-could act on it without inferring anything, (7) no raw secret/credential/
-token/password value anywhere in the draft (presence/shape only — see
-Ticket content protocol). Item 7 also has a code-level backstop: a
-`PreToolUse` hook (`.claude/hooks/block-secret-comments.sh`) denies any
-Jira/Confluence write whose content matches a known secret name or format
-pattern before it reaches the real API — see `CHANGELOG.md`'s "Round 2"
-entry. The hook is a heuristic backstop behind this checklist item, not a
-replacement for it.
+bounce: (0) template sections populated (the full Overview/AC/Scope now
+lives in the GitHub Issue's `## Refined Spec` comment, not Jira, per
+"Jira/GitHub content routing (Phase 1)" below — the Jira comment is just
+its pointer), (1) every AC testable, (2) files/modules named, (3) TDD-ready
+test expectations per AC, (4) small/medium size bound, (5) no open
+questions, (6) a literal-minded Sonnet-tier implementer could act on it
+without inferring anything, (7) no raw secret/credential/token/password
+value anywhere in the draft (presence/shape only — see Ticket content
+protocol). Item 7 also has a code-level backstop: a `PreToolUse` hook
+(`.claude/hooks/block-secret-comments.sh`) denies any Jira/Confluence write
+whose content matches a known secret name or format pattern before it
+reaches the real API — see `CHANGELOG.md`'s "Round 2" entry. Phase 1 added
+a mirror-image hook, `.claude/hooks/block-github-secret-writes.sh`, denying
+the equivalent `gh issue create`/`edit`/`comment` shape, since working
+content now flows to GitHub too (see "Jira/GitHub content routing (Phase
+1)" below). Neither hook is a replacement for this checklist item, just a
+heuristic backstop behind it.
 
 ## Ticket content protocol
 
@@ -132,12 +145,49 @@ replacement for it.
 stakeholder's original description is permanent and untouched — tickets
 are authored by many different people in many different styles, and
 normalizing someone else's ticket into our house format is bad practice
-regardless of how good the result is. All refined output — the normalized
-Overview/AC/Scope, grounding evidence, surviving assumptions — goes into
-one comment, written once on a passing verdict, titled exactly `Refined
-Spec — ready for ticket-to-pr`. `dev-loop`'s `ticket-to-pr` reads that
-comment as its work order, not the description (see dev-loop's
-`docs/skills.md`).
+regardless of how good the result is.
+
+Before Phase 1, all refined output — the normalized Overview/AC/Scope,
+grounding evidence, surviving assumptions — went into one Jira comment,
+written once on a passing verdict, titled exactly `Refined Spec — ready
+for ticket-to-pr`, which `dev-loop`'s `ticket-to-pr` read as its work
+order. Phase 1 splits that single comment across Jira and a mirror GitHub
+Issue — see "Jira/GitHub content routing (Phase 1)" immediately below for
+the current rule. `ticket-to-pr` keeps reading the Jira comment as its work
+order until dev-loop migrates in Phase 2 (see dev-loop's `docs/skills.md`);
+until then the Jira comment's pointer is what a human clicks through to
+review the GitHub Issue's full content.
+
+## Jira/GitHub content routing (Phase 1)
+
+Per Phase 1 of `docs/future-enhancements.md`'s Jira label-trigger design,
+`ticket-refine` now writes to two surfaces instead of one. **Jira gets only
+four kinds of content** — a blocking ambiguity needing a human product
+decision (`spec_ambiguous`), a scope call (`too_large` and its drafted
+split), an explicit confirmation request, and the passing-verdict pointer
+comment — **everything else goes to the GitHub Issue**: recon findings,
+devil's-advocate attack findings, verifier results, working/interpretation
+notes, and bounce evidence detail not itself one of the four Jira-worthy
+kinds. Every Jira comment under this rule must @-mention
+`jira.mentionAccountId` (`Config.jira.mentionAccountId`), a new requirement
+Phase 1 introduces. See `SKILL.md`'s "Ticket content protocol" for the full
+routing rule (items 1-8) and Step 0.5 for how the GitHub Issue is
+found/renamed each run.
+
+**Design decision (Task 4): GitHub Issue creation is loop-runner-owned, not
+skill-owned.** `src/main.ts` creates or finds the mirror Issue (via
+`GitHubClient.findIssueByJiraKey`/`createIssue`) immediately after claiming
+a ticket, *before* spawning `ticket-refine` — not inside the skill itself.
+This keeps the idempotency check (does an Issue for this Jira key already
+exist) in TypeScript, backed by `test/github-client.test.ts`'s TDD suite,
+rather than re-implemented as prompt instructions the skill would have to
+get right on every run. `ticket-refine`'s Step 0.5 only looks up and
+renames the Issue `main.ts` already created — it never creates one itself.
+A GitHub Issue creation failure in `main.ts` never blocks the actual
+`ticket-refine` run (same never-throw contract as every other I/O boundary
+in `runSkill`); the skill proceeds without a mirror Issue for that run,
+noting it once in `progress.jsonl`, and a later run's idempotency check
+will retry.
 
 ## Model policy
 
