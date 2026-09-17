@@ -22,7 +22,8 @@
  * process, which has this repo's real credentials in its environment.
  */
 
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { containsSecret } from "../src/redact.ts";
 
@@ -90,16 +91,33 @@ async function main(): Promise<void> {
   process.exit(PROCESS_EXIT_CODE[decideExitCode(stdin)]);
 }
 
-// Only run as a script when invoked directly (not when imported by tests).
-// Uses pathToFileURL() rather than a string-templated `file://${...}`
-// comparison: if the repo path contains characters Node percent-encodes
-// in a file:// URL (e.g. a space), import.meta.url would contain the
-// encoded form while the naive template would not, making this guard
-// false, skipping main() entirely, and exiting 0 -- a fail-OPEN the hook
-// would read as "clean, allow." pathToFileURL() percent-encodes argv[1]
-// the same way import.meta.url is already encoded, so the comparison is
-// robust regardless of path contents.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+/**
+ * Only run as a script when invoked directly (not when imported by
+ * tests). Compares realpaths, not raw strings or file:// URLs:
+ * `import.meta.url` is Node's own module identity and is symlink-
+ * resolved, but `process.argv[1]` is the literal path the process was
+ * invoked with -- when that path passes through a symlink, any raw
+ * string/URL comparison silently never matches, main() never runs, and
+ * the process exits 0 having never read stdin (a fail-OPEN the hook
+ * would read as "clean, allow"). realpathSync() resolves both symlinks
+ * and the percent-encoding case the previous pathToFileURL()-based
+ * comparison already handled, so this covers both failure modes with
+ * one mechanism. Not yet observed live in this repo (this repo's own
+ * directory isn't a symlink today), but confirmed live in the sibling
+ * `skills` repo's copy of this file, reached through
+ * `~/.claude/skills -> .../Desktop/Repos/skills`.
+ */
+function isRunAsScript(): boolean {
+  const argvPath = process.argv[1];
+  if (!argvPath) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(argvPath);
+  } catch {
+    return false;
+  }
+}
+
+if (isRunAsScript()) {
   // Belt-and-suspenders fail-closed guard: an exception anywhere in this
   // process must still report exit code 2 ("check failed"), never fall
   // through to whatever exit code Node happens to produce on its own.
