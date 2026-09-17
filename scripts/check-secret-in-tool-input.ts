@@ -25,6 +25,8 @@
  * in its environment.
  */
 
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { containsSecret } from "../src/redact.ts";
 
 /**
@@ -104,8 +106,32 @@ async function main(): Promise<void> {
   process.exit(PROCESS_EXIT_CODE[decideExitCode(stdin)]);
 }
 
-// Only run as a script when invoked directly (not when imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * Only run as a script when invoked directly (not when imported by
+ * tests). Compares realpaths, not raw strings: `import.meta.url` is
+ * Node's own module identity and is symlink-resolved, but
+ * `process.argv[1]` is the literal path the process was invoked with --
+ * when that path passes through a symlink, the raw-string comparison
+ * silently never matches, main() never runs, and the process exits 0
+ * having never read stdin. That failure mode is worse than a crash here:
+ * a hook that silently always allows is indistinguishable from one that
+ * correctly checked and found nothing. Not yet observed live in this
+ * repo (this repo's own directory isn't a symlink today), but confirmed
+ * live in the sibling `skills` repo's copy of this file, reached through
+ * `~/.claude/skills -> .../Desktop/Repos/skills` -- fixed here too for
+ * consistency, same reasoning as the KEY-matching fix above.
+ */
+function isRunAsScript(): boolean {
+  const argvPath = process.argv[1];
+  if (!argvPath) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(argvPath);
+  } catch {
+    return false;
+  }
+}
+
+if (isRunAsScript()) {
   // Belt-and-suspenders fail-closed guard: an exception anywhere in this
   // process (not just inside main()'s own await chain) must still report
   // exit code 2 ("check failed"), not fall through to whatever exit code

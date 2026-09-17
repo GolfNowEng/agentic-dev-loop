@@ -5,6 +5,25 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-17 — secret-scan hook's "run as script" guard silently no-op'd through a symlink
+
+`scripts/check-secret-in-tool-input.ts`'s guard for "am I being run
+directly, not imported by tests" compared `import.meta.url` (symlink-
+resolved by Node) against a raw `file://${process.argv[1]}` string (not
+symlink-resolved). Reaching the script through a symlink made the
+comparison silently false, skipped `main()` entirely, and exited 0 --
+fail-*open*, since the hook reads that as "clean, allow" without ever
+having read stdin. Confirmed live via the sibling `skills` repo's own
+copy of this file, reached through `~/.claude/skills ->
+.../Desktop/Repos/skills` (this repo's own directory isn't a symlink
+today, so this was latent here, not yet triggered).
+
+**Fix**: `isRunAsScript()` now compares `realpathSync()` of both sides.
+Added an integration-style regression test (`test/check-secret-in-tool-
+input.test.ts`) that spawns the real script through a fresh symlink and
+asserts it still exits with the secret-found code -- the existing unit
+tests call `decideExitCode()` directly and can't exercise this guard.
+
 ## 2026-09-17 — accept `--project=<name>` (equals-separated) alongside `--project <name>`
 
 `parseArgs` in `src/main.ts` only recognized `--project`/`--config` in
