@@ -6,6 +6,19 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-17 — accept `--project=<name>` (equals-separated) alongside `--project <name>`
+
+`parseArgs` in `src/main.ts` only recognized `--project`/`--config` in
+space-separated form, which reads ambiguously next to a boolean flag:
+`--stream --project webtarsthree` is three tokens with no visual grouping
+for which value belongs to which flag. `--project=webtarsthree` doesn't
+have that problem, so it's now the documented convention — the old
+space-separated form still works, unchanged, no breaking change.
+
+**Fix**: added `getArgValue()` (`src/main.ts`), checked before falling
+back to the existing space-separated lookup. Same fix as research-loop's
+own `src/main.ts`, for consistency across both repos.
+
 ## 2026-09-17 — secret-redaction false positive could deny Jira-shaped payloads
 
 `src/redact.ts`'s `SECRET_NAME_PATTERN` matched its bare `KEY` alternative
