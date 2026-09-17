@@ -6,6 +6,23 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-17 — secret-redaction false positive could deny Jira-shaped payloads
+
+`src/redact.ts`'s `SECRET_NAME_PATTERN` matched its bare `KEY` alternative
+case-insensitively, so it caught ordinary lowercase JSON `"key"` fields
+too — not just the intended uppercase `KEY=` env-var shape. Confirmed via
+`{"parent":{"key":"TARS-1080"}}` (Jira's Epic-parent shape) being flagged
+by `containsSecret()`. Not yet observed live in this repo (this repo's
+own `PreToolUse` hook only scans `gh issue`/`gh pr` Bash command text, not
+arbitrary JSON), but this module deliberately mirrors research-loop's
+`src/redact.ts`, where the same bug did block a real Jira issue create —
+fixed here too for consistency, same as research-loop's own 2026-08-27
+`Read`/`Grep`/`Glob` fix crossed the other direction.
+
+**Fix**: split the bare-`KEY` check into its own case-sensitive,
+uppercase-only match (`isSecretShapedName()` in `src/redact.ts`), leaving
+the rest of `SECRET_NAME_PATTERN` case-insensitive as before.
+
 ## 2026-09-17 — adopt the {icon} <repo> - <context> comment convention for the Jira bounce comment
 
 buildBounceCommentAdf's bold first line changes from `Bounced

@@ -195,6 +195,19 @@ describe("redactSecrets", () => {
     );
   });
 
+  it("does not redact a lowercase 'key' JSON field (e.g. Jira's parent.key)", () => {
+    // Regression: an earlier version of SECRET_NAME_PATTERN's bare KEY
+    // anchor ran case-insensitively, so it matched ordinary lowercase
+    // "key" fields too -- e.g. Jira's `parent: {"key": "TARS-1080"}`,
+    // which every Epic-linked issue create sends and which is not a
+    // secret. containsSecret() backs the PreToolUse hook that denies
+    // writes, so this false positive could block a Jira-shaped payload
+    // that ever reaches this check.
+    const json = '{"parent":{"key":"TARS-1080"}}';
+    expect(redactSecrets(json)).toBe(json);
+    expect(containsSecret(json)).toBe(false);
+  });
+
   it("redacts a SUPABASE_SERVICE_ROLE_KEY-named value", () => {
     expect(redactSecrets("SUPABASE_SERVICE_ROLE_KEY=abcdefghijklmnop")).toBe(
       "SUPABASE_SERVICE_ROLE_KEY=REDACTED_SECRET",

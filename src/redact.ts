@@ -27,9 +27,23 @@ export function redactPII(text: string): string {
  * containsSecret() (see below) deny legitimate calls. `KEY` here is
  * deliberately anchored to compound forms (`SIGNING_KEY`, `ACCOUNT_KEY`,
  * etc.) and a standalone `^KEY$` case, never an unanchored substring.
+ *
+ * The bare `KEY` alternative is intentionally its own case-sensitive,
+ * uppercase-only anchor (`BARE_KEY_PATTERN` below), not folded into the
+ * shared `/i` flag the rest of this pattern uses: matching it case-
+ * insensitively caught ordinary lowercase JSON `"key"` fields too --
+ * e.g. Jira's `parent: {"key": "TARS-1080"}`, which is not a secret.
+ * `KEY=...` (the real env-var shape this alternative targets) is
+ * conventionally uppercase, so anchoring it to case preserves the
+ * original detection while dropping the false positive.
  */
 const SECRET_NAME_PATTERN =
-  /SECRET|TOKEN|API[_-]?KEY|PASSWORD|PASSWD|PRIVATE[_-]?KEY|CREDENTIAL|ACCESS[_-]?KEY|AUTH|SIGNING[_-]?KEY|ACCOUNT[_-]?KEY|ROLE[_-]?KEY|ENCRYPTION[_-]?KEY|^KEY$|DSN|CONNECTION[_-]?STRING|CONN[_-]?STR|DATABASE[_-]?URL|DB[_-]?URL|URI|COOKIE|SESSION/i;
+  /SECRET|TOKEN|API[_-]?KEY|PASSWORD|PASSWD|PRIVATE[_-]?KEY|CREDENTIAL|ACCESS[_-]?KEY|AUTH|SIGNING[_-]?KEY|ACCOUNT[_-]?KEY|ROLE[_-]?KEY|ENCRYPTION[_-]?KEY|DSN|CONNECTION[_-]?STRING|CONN[_-]?STR|DATABASE[_-]?URL|DB[_-]?URL|URI|COOKIE|SESSION/i;
+const BARE_KEY_PATTERN = /^KEY$/;
+
+function isSecretShapedName(name: string): boolean {
+  return SECRET_NAME_PATTERN.test(name) || BARE_KEY_PATTERN.test(name);
+}
 
 /**
  * `NAME=value` / `export NAME=value` -- env-style, so the name is required
@@ -118,7 +132,7 @@ export function redactSecrets(text: string): string {
 
   for (const [name, value] of Object.entries(process.env)) {
     if (!value || value.length < MIN_ENV_VALUE_LENGTH) continue;
-    if (!SECRET_NAME_PATTERN.test(name)) continue;
+    if (!isSecretShapedName(name)) continue;
     result = result.split(value).join("REDACTED_SECRET");
   }
 
@@ -135,7 +149,7 @@ export function redactSecrets(text: string): string {
     name: string,
     value: string,
   ): string => {
-    if (!SECRET_NAME_PATTERN.test(name)) return match;
+    if (!isSecretShapedName(name)) return match;
     if (!isRedactableValue(value)) return match;
     if (URL_SHAPED_VALUE.test(value)) return match;
     return `${prefix}"REDACTED_SECRET"`;
@@ -147,7 +161,7 @@ export function redactSecrets(text: string): string {
     name: string,
     value: string,
   ): string => {
-    if (!SECRET_NAME_PATTERN.test(name)) return match;
+    if (!isSecretShapedName(name)) return match;
     if (!isRedactableValue(value)) return match;
     if (URL_SHAPED_VALUE.test(value)) return match;
     return `${prefix}REDACTED_SECRET`;
