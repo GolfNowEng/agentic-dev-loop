@@ -6,6 +6,27 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-17 — added `npm run reset-project`: deterministic local-state wipe for re-running a ticket or project fresh
+
+Diagnosing the two bugs below (`pollJql.dev` re-polling, the stuck Code
+Review transition) required running a real ticket (TARS-1465) through the
+pipeline live, several times, while iterating on the fix. Cleaning up that
+diagnostic history by hand afterward -- `grep -v` against `runs.jsonl`,
+`rm -rf` against `.pipeline/<slug>/runs/TARS-1465-*` -- is exactly the kind
+of manual step that's easy to get wrong once (wrong ticket key in the
+grep, an over-broad glob that catches a sibling ticket) and had no test
+coverage of its own.
+
+**Added**: `src/reset-project.ts` (`planReset`/`executeReset`/
+`describeResetPlan`, fully unit-tested against a temp filesystem) plus
+`src/reset-cli.ts` wiring it to `npm run reset-project -- --project=<name>
+[--ticket=<KEY>] [--dry-run] [--yes]`. Deletes only this repo's own local,
+gitignored state (`runs/<project>.jsonl` lines, `.pipeline/<project>/` run
+dirs and raw-usage files, matching worktrees under `targetRepo.path`) --
+never Jira, GitHub, or the target repo's git history. See `docs/reset.md`
+for the full scoping rationale and `.claude/skills/reset-project/SKILL.md`
+for how to invoke it.
+
 ## 2026-09-17 — bounced-with-existing-PR intake never corrected Jira status, so a ticket whose Code Review transition failed looped forever
 
 The `pollJql.dev` fix below stops re-polling a ticket once its status

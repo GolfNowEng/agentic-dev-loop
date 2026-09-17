@@ -37,6 +37,9 @@ skeptic**. Full design: see the pipeline spec referenced in `docs/config.md`.
   contract.
 - `docs/logging.md` — `runs/<project>.jsonl`, per-run `progress.jsonl`,
   `.pipeline/` layout, the `stats` script.
+- `docs/reset.md` — `npm run reset-project`, what it deletes and what it
+  deliberately never touches. Use it to start a ticket or project fresh
+  after a diagnostic run, instead of hand-rolling `rm -rf`/`grep -v`.
 - `CHANGELOG.md` — notable fixes/behavior changes to the pipeline itself
   (not the tickets it processes). Add an entry whenever you fix a bug a
   human had to diagnose from a real run, same as the entry below.
