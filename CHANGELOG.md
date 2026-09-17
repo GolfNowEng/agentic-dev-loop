@@ -6,6 +6,27 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-17 — `pollJql.dev` re-matched a ticket after its PR already landed, causing repeated redundant bounces
+
+Once a landed PR transitions a ticket to `statusNames.prOpen` ("Code
+Review"), the ticket still carried the same `pipeline:dev` label and
+assignee, and `pollJql.dev` only excluded `statusNames.bounced`
+("Blocked") -- not `prOpen`. Every poll cycle after landing re-matched
+the same ticket, ran `ticket-to-pr` again, and it correctly bounced with
+`failure_category: "blocked"` ("PR already open, nothing to do") -- but
+each of those re-runs still costs a full intake/context read. Confirmed
+live on TARS-1465: PR #431 landed at 21:41:59Z, then 5 consecutive
+re-runs over the next ~35 minutes (21:42-22:16), ~$3 total cost and
+~1.75M tokens, each one independently re-discovering and re-reporting
+the same already-landed state. Same shape as the earlier bounce-loop bug
+below, one status over.
+
+**Fix**: `pollJql.dev` templates (all three `pipeline.*.config.json`
+files) now also exclude `status != "{prOpenStatus}"`, filled from
+`jira.statusNames.prOpen` by `buildDevJql` (`src/jql.ts`). A ticket sitting
+at Code Review no longer matches the dev poll at all, regardless of how
+many cycles pass before a human moves it on.
+
 ## 2026-09-17 — Phase 0 intake never checked the GitHub Issue's comments, only its body -- bounced every ticket using the new comment convention
 
 `ticket-to-pr`'s Phase 0 step 2 bounces a ticket whose research-loop

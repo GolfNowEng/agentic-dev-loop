@@ -28,5 +28,6 @@ export function buildDevJql(config: Config, assigneeAccountId: string): string {
     .replace("{label}", config.jira.handoffLabel)
     .replace("{repoLabel}", config.jira.repoLabel)
     .replace("{assignee}", assigneeAccountId)
-    .replace("{bouncedStatus}", config.jira.statusNames.bounced);
+    .replace("{bouncedStatus}", config.jira.statusNames.bounced)
+    .replace("{prOpenStatus}", config.jira.statusNames.prOpen);
 }

@@ -115,9 +115,11 @@ Instead, `jira.pollJql.dev` matches on `labels = "pipeline:dev"` directly
 plus an `assignee = "{assignee}"` clause (filled from
 `JIRA_ASSIGNEE_ACCOUNT_ID`, see below), plus (as of the bounce-loop fix
 below) `AND status != "{bouncedStatus}"` (filled from
-`jira.statusNames.bounced`) — the label signals pipeline stage, but a
-genuine bounce needs its own exclusion so the very next poll cycle
-doesn't immediately re-match and re-run the same ticket. `runLoopIteration`
+`jira.statusNames.bounced`) and (as of the landed-loop fix below)
+`AND status != "{prOpenStatus}"` (filled from `jira.statusNames.prOpen`)
+— the label signals pipeline stage, but a genuine bounce or a landed PR
+each need their own exclusion so the very next poll cycle doesn't
+immediately re-match and re-run the same ticket. `runLoopIteration`
 for `loopKind: "dev"` still has **no atomic claim step at all**: it goes
 straight from poll to running the skill. This is safe only because this
 MVP assumes exactly one dev-loop instance is ever running against a
@@ -134,6 +136,19 @@ Confirmed live on TARS-1462: 5 near-identical bounces in ~14 minutes,
 `CHANGELOG.md`'s entry for this fix and research-loop's
 `docs/future-enhancements.md`'s "dev-loop bounce-loop bug" entry for the
 full incident writeup and the tradeoff this fix resolves.
+
+**Landed-loop bug, fixed:** the same shape of bug, one status over. A
+landed PR transitions the ticket to `statusNames.prOpen` (e.g. "Code
+Review") per `loop-runner.ts`'s Phase-5 write, but nothing excluded that
+status from `pollJql.dev` either, so a ticket kept re-matching the poll
+after its PR was already open — same label, same assignee, status now
+"Code Review" instead of "Blocked" but still `!= "Blocked"`. Each
+re-poll correctly diagnosed "PR already open, nothing to do" at Phase 0
+intake and bounced with `failure_category: "blocked"`, but that
+diagnosis itself costs a full run. Confirmed live on TARS-1465: 5
+consecutive re-runs over ~35 minutes after PR #431 landed, ~$3 total
+cost, each one re-discovering and re-reporting the same already-landed
+state before the fix. See `CHANGELOG.md`'s entry for this fix.
 
 **Future: multiple concurrent loop instances.** Running more than one
 research-loop or dev-loop terminal against the same project at once has no

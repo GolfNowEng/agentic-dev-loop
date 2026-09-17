@@ -11,7 +11,7 @@ const config: Config = {
     pollJql: {
       refine:
         'labels = "{label}" AND labels = "{repoLabel}" AND status = "To Refine" ORDER BY created ASC',
-      dev: 'labels = "{label}" AND labels = "{repoLabel}" AND assignee = "{assignee}" AND status != "{bouncedStatus}" ORDER BY created ASC',
+      dev: 'labels = "{label}" AND labels = "{repoLabel}" AND assignee = "{assignee}" AND status != "{bouncedStatus}" AND status != "{prOpenStatus}" ORDER BY created ASC',
     },
     statusNames: { bounced: "Blocked", prOpen: "In Progress" },
     codeReviewFields: {
@@ -64,6 +64,12 @@ describe("buildDevJql", () => {
     const jql = buildDevJql(config, "user-123");
     expect(jql).toContain('status != "Blocked"');
     expect(jql).not.toContain("{bouncedStatus}");
+  });
+
+  it("excludes tickets already in the prOpen status, so a landed ticket does not keep re-matching its own poll after PR creation", () => {
+    const jql = buildDevJql(config, "user-123");
+    expect(jql).toContain('status != "In Progress"');
+    expect(jql).not.toContain("{prOpenStatus}");
   });
 
   it("returns a non-empty string", () => {
