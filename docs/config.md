@@ -119,7 +119,12 @@ not forgotten if this pipeline needs to scale beyond one terminal per loop.
 Concretely: `repoLabel` prevents a `catalog-ui-management`-scoped dev-loop
 instance from grabbing a `catalog-ui-public` ticket, but running two
 dev-loop instances both scoped to `catalog-ui-management` at once still
-races exactly as described above.
+races exactly as described above. `--project <name>` (`CHANGELOG.md`,
+2026-09-16) makes N-*different*-projects-concurrent safe, but doesn't
+touch this gap — tracked as its own enhancement in research-loop's
+`docs/future-enhancements.md` ("Concurrent loop instances against the
+*same* project (N-per-project)"), since that's this pipeline's shared
+holding pen for unimplemented ideas.
 
 ## Assignee bookkeeping
 
