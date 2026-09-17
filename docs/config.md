@@ -2,20 +2,27 @@
 
 ## Selecting a project (CLI)
 
-`src/main.ts` requires `--project <name>`, resolved via
+`src/main.ts` requires `--project=<name>`, resolved via
 `resolveProjectConfigPath()` in `src/config.ts` to
 `pipeline.<name>.config.json` at the repo root:
 
 ```
-npm run loop -- --project webtarsthree
-npm run loop -- --project catalog-ui-management -- --once
+npm run loop -- --project=webtarsthree
+npm run loop -- --stream --project=webtarsthree
+npm run loop -- --project=catalog-ui-management --once
 ```
+
+`--project <name>` (space-separated) also still works — both forms are
+accepted — but `--project=<name>` is the documented convention: it stays
+visually unambiguous next to a boolean flag like `--stream`, where
+`--stream --project webtarsthree` reads as three tokens with no obvious
+grouping.
 
 Omitting `--project`, or naming a project with no matching config file,
 fails immediately — before any Jira/GitHub call — with a list of the
 projects actually present (every `pipeline.*.config.json` at the repo
 root except `pipeline.loop.config.json`, which is loop-mechanics, not a
-project). `--config <path>` still works as a fallback for an arbitrary
+project). `--config=<path>` still works as a fallback for an arbitrary
 path outside the naming convention; passing both `--project` and
 `--config` together is an error.
 
@@ -153,7 +160,7 @@ and checking the *child ticket* workflow for real status names.
    `pipeline.<new-project>.config.json`.
 2. Fill in that project's own label strings, statuses, JQL, `targetRepo`,
    and `github.repo` (derived from the same targetRepo).
-3. Run it via `npm run loop -- --project <new-project>` —
+3. Run it via `npm run loop -- --project=<new-project>` —
    `resolveProjectConfigPath()` finds it automatically by the naming
    convention above; no code changes required.
 

@@ -78,13 +78,26 @@ const ALLOWED_TOOLS = [
   "Glob",
 ].join(",");
 
+/**
+ * Reads a flag's value in either `--name value` (space-separated) or
+ * `--name=value` (equals-separated) form -- the latter lets a value-taking
+ * flag sit next to a boolean one (`--stream --project=webtarsthree`)
+ * without the space-separated form's visual ambiguity about which token
+ * belongs to which flag.
+ */
+function getArgValue(argv: string[], name: string): string | undefined {
+  const eqPrefix = `${name}=`;
+  const eqArg = argv.find((arg) => arg.startsWith(eqPrefix));
+  if (eqArg !== undefined) return eqArg.slice(eqPrefix.length);
+  const index = argv.indexOf(name);
+  return index !== -1 ? argv[index + 1] : undefined;
+}
+
 function parseArgs(
   argv: string[],
 ): { project?: string; configPath?: string; once: boolean; stream: boolean } {
-  const projectIndex = argv.indexOf("--project");
-  const project = projectIndex !== -1 ? argv[projectIndex + 1] : undefined;
-  const configIndex = argv.indexOf("--config");
-  const configPath = configIndex !== -1 ? argv[configIndex + 1] : undefined;
+  const project = getArgValue(argv, "--project");
+  const configPath = getArgValue(argv, "--config");
   if (project && configPath) {
     throw new Error(
       "main.ts: pass either --project <name> or --config <path>, not both.",
