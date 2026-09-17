@@ -367,9 +367,10 @@ the synthesized ticket against the definition-of-ready checklist below.
 This must be a genuinely independent check, not the same reasoning that
 produced the ticket rubber-stamping itself.
 
-- If it passes: write the GitHub Issue's full `## Refined Spec — ready for
-  ticket-to-pr` comment and the Jira pointer comment of the same title
-  (see ticket content protocol), set `verdict.outcome: "ready"`. The
+- If it passes: write the GitHub Issue's full comment, titled `## ✅
+  research-loop - <short context>` (per "Ticket content protocol" item 4),
+  and the Jira pointer comment, titled `✅ research-loop - <short context>`
+  (per item 2) — set `verdict.outcome: "ready"`. The
   ticket stays at `triggerLabel`, refined and awaiting human approval (the
   loop runner only swaps the label to `handoffLabel` if `autoPromoteLabel`
   is present — this skill just reports the verdict either way).
@@ -434,7 +435,7 @@ Log each self-heal cycle to `progress.jsonl` distinctly from a bounce —
 a `"phase": "verify"`, `"event": "note"` line whose `detail` starts with
 `"self-heal cycle <n>:"` naming the specific gap and fix, so a run that
 took 4 internal cycles is distinguishable at a glance from one that
-passed clean on the first attempt. The finalized `Refined Spec` comment
+passed clean on the first attempt. The finalized research-loop comment
 and `verdict.json`'s `detail` should also note the cycle count in one
 clause (e.g. "ready — refined ticket written (after 4 fix/re-verify
 cycles)") — this is signal for anyone reading the ticket or the run
