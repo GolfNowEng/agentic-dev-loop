@@ -6,6 +6,38 @@ fixes), this is a holding pen — write down the idea and the evidence that
 motivated it, then leave it for later. When one of these actually gets
 implemented, move its entry to `CHANGELOG.md` and delete it from here.
 
+## Concurrent loop instances against the *same* project (N-per-project)
+
+**Idea**: today, `--project <name>` (see `CHANGELOG.md`, 2026-09-16) makes
+it safe to run one loop instance per project concurrently, in as many
+terminals as there are projects — each instance's on-disk state is
+namespaced by `repoSlugFromUrl()` and each polls its own project's JQL.
+What's still unsolved is running **more than one instance against the
+same project** at once (e.g. two `--project webtarsthree` terminals side
+by side, to work through a backlog faster). This needs real coordination:
+research-loop's `claim()` is already atomic (a status transition, race-
+safe — a second instance's claim attempt on an already-claimed ticket
+just returns `false`), so it may already be closer to N-safe than
+dev-loop is; dev-loop's `loopKind: "dev"` poll has **no atomic claim step
+at all** (see dev-loop's own `docs/config.md`, "Ticket status never
+reverts" → "Future: multiple concurrent loop instances") — it goes
+straight from poll to running the skill, and explicitly assumes exactly
+one instance per project.
+
+**Why**: the user's actual goal is "N loops per project," not just "one
+loop per project" — `--project` closes the gap between zero-projects-
+concurrent and one-per-project, but doesn't reach N-per-project. Worth
+tracking as its own enhancement rather than assuming `--project` already
+solved it.
+
+**Not yet scoped**: whether research-loop's existing atomic claim is
+actually sufficient for N-per-project as-is (needs verification, not just
+assumed from "it's atomic"), or what dev-loop's own coordination
+mechanism would need to look like (a per-instance label, an assignee-scoped
+JQL clause, or something else) — dev-loop's own doc already sketches "a
+per-instance label (e.g. `Runner1`/`Dev1`, incrementing per instance)
+checked and set at pickup time" as one option, not yet designed in detail.
+
 ## Cheap-tier gate for test-only tickets (Step 0, ticket-refine)
 
 **Idea**: add a triage-time check in `ticket-refine`'s Step 0 (Triage &
@@ -33,6 +65,43 @@ Scope's own files-to-touch enumeration, checked *before* Attack rather
 than after); how much to shrink Attack (skip entirely vs. drop just the
 empirical-build sub-step); whether this should be a new Step 0 branch or
 a flag Ground/Attack read.
+
+## `claim()` doesn't send a claim-transition's required screen fields
+
+**Idea**: `RealJiraClient.claim` (`src/jira-client.ts:216`) transitions a
+ticket via whatever transition leads to `claimStatus.to`, but only ever
+sends `{ transition: { id } }` — no `fields`. If that transition's screen
+has a field Jira enforces as required at submit time, the claim call
+throws and the whole loop iteration dies uncaught (see the `main.ts:480`
+stack trace from the fatal-error run below), rather than being treated as
+a per-ticket skip/bounce the way a lost claim race already is.
+
+**Why**: hit live on `TARS-1460` (a real smoke-test ticket for the Phase 0
+label-trigger change) — its `claimStatus` transition in TARS's workflow is
+"Start Development" (id `421`, `To Do` → `In Progress`), whose screen has
+a `Story Points` (`customfield_10002`) field. `getTransitionsForJiraIssue`
+reports that field as `required: false` in its own metadata, but the live
+`POST .../transitions` call rejected the same transition with `400 Bad
+Request: "Field 'Story Points is required.'"`. Same *class* of bug as the
+undocumented parent-Epic requirement already known for Bug/Story/Tech
+Story create calls (`configs/TARS.json` in the sibling `skills` repo's
+`jira-create-ticket`) — Jira's create/transition metadata under-reporting
+a real requirement — just hitting a different operation (claim/transition
+in research-loop itself, not issue creation in `jira-create-ticket`).
+Worked around for this one ticket by setting Story Points directly via
+`editJiraIssue` before retrying the loop; not yet fixed in `claim()`.
+
+**Not yet scoped**: whether to have `claim()` fetch the target
+transition's screen fields (same call shape as `getTransitionsForJiraIssue`
+already returns) and supply a configured default for any it finds
+required, or something narrower (e.g. a config-level "extra transition
+fields" map per project, since "what value" has no universal right
+answer — Story Points has no meaningful default for a research-loop-only
+ticket). Also unscoped: whether a claim failure of this shape should
+become a new terminal outcome (distinct from today's clean lost-race
+`false` return) or whether the loop runner should catch it and treat it
+as `outcome: "error"` for that iteration rather than crashing the whole
+process — right now it's an uncaught throw all the way out of `main`.
 
 ## Jira label-based trigger (both repos) + split Jira (PM) / GitHub Issues (research & dev)
 

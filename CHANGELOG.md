@@ -19,7 +19,11 @@ fallback for arbitrary paths; passing both flags is now an explicit
 error rather than a silent pick. This unblocks running one loop per
 project concurrently in separate terminals — each project's on-disk
 state was already namespaced by `repoSlugFromUrl()`, the only thing
-missing was correctly selecting which config each process loads.
+missing was correctly selecting which config each process loads. Does
+**not** solve running two loop instances against the *same* project
+concurrently — that's still the pre-existing, unsolved "Future: multiple
+concurrent loop instances" gap noted in dev-loop's `docs/config.md`
+(applies to this loop too; see `docs/future-enhancements.md`).
 
 ## 2026-09-16 — Jira label-based trigger, Phase 1: GitHub Issue mirror + content routing
 
