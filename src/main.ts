@@ -371,7 +371,7 @@ async function main(): Promise<void> {
       } else {
         const issue = await githubClient.createIssue({
           title: `${ticket.key}: (refinement in progress)`,
-          body: `Mirror of Jira ticket ${ticket.key}. ticket-refine is running -- this Issue will be updated with recon/attack/verify findings per the routing rule as the run progresses.`,
+          body: `Mirror of [${ticket.key}](${credentials.baseUrl}/browse/${ticket.key}). ticket-refine is running -- this Issue will be updated with recon/attack/verify findings per the routing rule as the run progresses.`,
           jiraKey: ticket.key,
         });
         log(`[${SKILL_NAME}] ${ticket.key}: created GitHub Issue ${issue.url}`);

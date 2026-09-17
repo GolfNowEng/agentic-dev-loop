@@ -5,6 +5,20 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-17 — mirror GitHub Issue's body now links back to the Jira ticket
+
+The initial body `createIssue()` writes at Issue-creation time
+(`main.ts`, "Mirror of Jira ticket TARS-XXXX...") named the ticket as
+plain text, not a link — a reader on the GitHub side had to already know
+or guess the Jira base URL to find the actual ticket.
+
+**Fix**: `${credentials.baseUrl}/browse/${ticket.key}` (the same
+`JIRA_BASE_URL` this repo already uses for every Jira REST call) is now
+formatted as a markdown link: `Mirror of [TARS-XXXX](.../browse/TARS-XXXX)`.
+Backfilled onto TARS-1465's already-created Issue (#430 on
+`fandango/webtarsthree`) via `gh issue edit`, since this body is only
+ever written once at creation, never updated afterward.
+
 ## 2026-09-17 — secret-scan hook's "run as script" guard silently no-op'd through a symlink
 
 `scripts/check-secret-in-tool-input.ts`'s guard for "am I being run
