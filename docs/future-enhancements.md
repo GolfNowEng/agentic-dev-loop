@@ -103,6 +103,80 @@ become a new terminal outcome (distinct from today's clean lost-race
 as `outcome: "error"` for that iteration rather than crashing the whole
 process — right now it's an uncaught throw all the way out of `main`.
 
+## Simplify Jira/GitHub comment templates: drop mandatory @-mention, terser title, clean issue link
+
+**Decided in conversation, not yet implemented** — applies to both repos,
+both the Jira comment and (once dev-loop gets a `GitHubClient`, see the
+entry above) the GitHub Issue comment.
+
+**Change 1 — drop the mandatory @-mention.** Phase 1 introduced
+`jira.mentionAccountId`, @-mentioned on every Jira comment this protocol
+writes (`ticket-refine/SKILL.md:510-515,532,543,599`). Confirmed
+excessive in practice (real example: TARS-1462's Jira comment,
+2026-09-16). Drop the @-mention from every comment template below, in
+both repos. `jira.mentionAccountId` itself becomes unused config —
+leave the field in place for now rather than ripping it out mid-checkpoint;
+removing a config field is its own small cleanup, not bundled here.
+
+**Change 2 — terser title.** Replace today's fixed titles (`Refined Spec
+— ready for ticket-to-pr`, `Ticket-Refine Bounce — <failure_category>`,
+and dev-loop's equivalent) with one convention, both repos, both
+outcomes:
+
+```
+{✅|❌} research-loop - <short context>
+{✅|❌} dev-loop - <short context>
+```
+
+`✅` = passing/landed verdict, `❌` = bounced. `<short context>` is a
+one-line human-readable summary of the ticket's substance (not the
+failure_category enum value verbatim, though a bounce's context line
+should still make the category obvious in plain language — e.g. `❌
+research-loop - scope too large, needs split` rather than `❌
+research-loop - too_large`). Still greppable by the leading icon +
+loop name; no longer greppable by the old fixed strings, so anything
+that greps for `"Refined Spec — ready for ticket-to-pr"` or
+`"Ticket-Refine Bounce"` (re-pickup detection in both SKILL.md files,
+`ticket-refine/SKILL.md:560-565`, `ticket-to-pr/SKILL.md:160`,
+`loop-runner.ts`'s bounce-comment-update-in-place logic) needs to switch
+to matching the new convention instead.
+
+**Change 3 — clean issue link, no manifest of section names.** Replace
+today's `Full Overview / Acceptance Criteria (N ACs) / Scope write-up:
+<raw URL>` pointer line with a single clean markdown link:
+
+```
+[GitHub Issue](<url>)
+```
+
+Same change on both a passing-verdict pointer and a bounce's
+evidence-pointer (`ticket-refine/SKILL.md` item 2 and item 3 under
+"Ticket content protocol").
+
+**Net effect on the Jira comment body**: title (new convention) + a
+short one-paragraph high-level summary + the clean `[GitHub Issue](url)`
+link. No @-mention, no enumerated section list, no full evidence — someone
+wanting the full reasoning clicks the link; Jira stays a glance-only
+surface, matching the split already decided (Jira = PM-brief, GitHub =
+full context).
+
+**Scope note**: research-loop already writes both a Jira comment and a
+matching GitHub Issue comment for pass and bounce
+(`ticket-refine/SKILL.md:517-569`) — this change touches both sides
+there. dev-loop today only writes a bounce comment to Jira (no
+passing/landed comment convention exists — status transition alone
+signals "ready for code review," per dev-loop's `docs/config.md`); this
+change touches that one comment now, and should be the default
+convention dev-loop's future GitHub-side writes use from day one once its
+`GitHubClient` lands (the entry above), rather than inventing a different
+template later.
+
+**Not yet scoped**: exact wording/length limit for `<short context>`;
+whether the old fixed-title strings need a transition period (in-flight
+tickets already carrying an old-titled comment) or can just switch
+outright since re-pickup only needs to find *a* matching comment, not
+preserve historical ones.
+
 ## Jira label-based trigger (both repos) + split Jira (PM) / GitHub Issues (research & dev)
 
 **Idea**: replace Jira's epic-parent trigger with a Jira label-based
@@ -357,3 +431,235 @@ time it runs; (b) the cross-link format is exactly the plain URL in a
 comment on both sides already sketched above — no structured remote-link
 tool was added, since none was needed beyond what the doc already
 specified.
+
+**2026-09-16 addendum: open question, not a decision — GitHub labels as a
+machine-checkable bounce/status signal, separate-concerns label vocabulary**
+
+**Status: nothing below is decided.** This addendum exists only because
+this doc is where undecided pipeline ideas get written down before
+they're designed — per this file's own header, it's "a holding pen," read
+by no running code (confirmed: only `CHANGELOG.md`-landed phases are
+cited from `.claude/skills/ticket-refine/SKILL.md`; this addendum is not).
+Nothing here should be treated as scope, and nothing here should be
+built without a separate, explicit go-ahead.
+
+Two concrete motivations surfaced in conversation, refining the earlier
+"not sure yet" answer:
+- **Bounce/status legibility for agents.** If a ticket gets bounced, a
+  label is something an agent can check with one cheap read (`labels
+  contains X`); today that same information only lives in Jira comment
+  text or a GitHub Issue comment thread, which requires reading and
+  interpreting prose to recover a fact a label could carry directly. This
+  is a real, specific gap — `ticket-refine`'s own bounce categories
+  (`.claude/skills/ticket-refine/SKILL.md`'s `outcome: "bounced"` +
+  category) exist today only as verdict.json fields and a Jira comment
+  title convention (`Ticket-Refine Bounce — <category>`), not as anything
+  label-shaped on either system.
+- **Separation-of-concerns label vocabulary.** If the pipeline keeps Jira
+  = project management and GitHub = code/dev (the split Phase 2 above
+  already assumes for *content*), it may follow that each system's labels
+  shouldn't need to mirror each other 1:1 either — Jira's labels could
+  stay coarse/PM-shaped (stage only: `pipeline:research`/`pipeline:dev`),
+  while GitHub's labels carry the finer-grained, dev-shaped state
+  (bounce category, blocked reason, PR status) that only engineering
+  needs to check. This is a different shape than the original entry's
+  "same label vocabulary on both systems" sketch above — worth treating
+  as a live alternative, not an amendment to that sketch, until one is
+  actually chosen.
+
+Separately, whether GitHub also becomes the *poll target* (which system
+each loop actually queries for pickup) is a distinct, larger question
+that was raised in conversation but not settled — it goes beyond what
+Phase 2 above scoped (Phase 2 only moves work-order *content* to GitHub,
+never proposed moving the *trigger*). The two ideas are related but not
+the same: agents reading a bounce label off GitHub for legibility doesn't
+by itself require GitHub to be the poll target — research-loop could
+write a bounce-category label to the mirrored Issue for cheap
+machine-checkability while still polling Jira for pickup, same as Phase 1
+already writes rich content to GitHub without polling it. Both remain
+open.
+
+**What "GitHub as poll target" would actually require, beyond what's
+built today** (kept for whichever direction is eventually chosen):
+- Real GitHub read/poll logic in both loops. Today only research-loop
+  *writes* to the mirrored Issue (Phase 1) — there is zero label-read or
+  poll logic against GitHub anywhere in either repo. Confirmed live: the
+  mirrored Issue for TARS-1462 (`fandango/webtarsthree#428`) has zero
+  labels, and nothing in `GitHubClient`/`main.ts` in either repo ever
+  writes one. Moving the poll target to GitHub is new build work in both
+  repos, not a redirect of an existing call.
+- An atomic claim mechanism on GitHub. Already flagged above under
+  "Architecture touchpoints": "GitHub Issues has no atomic-claim primitive
+  the way a Jira status transition does — a label add is not race-safe."
+  research-loop's claim today is a Jira status transition specifically
+  because it's atomic; polling GitHub doesn't remove the need for *some*
+  atomic claim on pickup. This needs its own design — e.g. GitHub's issue
+  `assignee` field as a claim primitive, or keeping claim on Jira while
+  polling stage on GitHub (a split that reintroduces the same
+  dual-source-of-truth race the "keep both `pipeline:*` labels on one
+  ticket" idea was rejected for elsewhere in this session — two
+  independently-writable signals for the same state is the failure mode
+  to avoid, whichever system ends up authoritative).
+- An actual cost comparison, not an assumption. The original entry above
+  already named this as unscoped ("shift...work from Jira MCP tool calls
+  to `gh` CLI calls...may have a meaningfully different cost profile —
+  worth comparing before committing to a specific design"). No data has
+  been gathered in either direction.
+
+**Overengineering flag**: motivation is still "not sure" — the
+atomic-claim gap and the missing read/poll logic above are real build
+work in both repos, not polish, so this shouldn't be started on a hunch.
+If cost turns out to be the deciding factor, that's cheap to measure
+*before* any design work: compare a batch of real Jira MCP tool calls
+against equivalent `gh` CLI calls for the same read (e.g. "is this ticket
+still open, what labels does it carry") against a handful of real
+tickets. That measurement can settle or kill the motivation question for
+under an hour of work, well before committing to the atomic-claim design
+above.
+
+**Not yet scoped**: which loop(s) would poll GitHub (research-loop,
+dev-loop, or both — today's design has each polling Jira independently);
+whether `pollJql.{refine,dev}` gets replaced outright or kept as a Jira
+fallback; what happens to `repoLabel`'s disambiguation role (today ANDed
+into Jira JQL so a shared Jira project like MC doesn't leak
+`catalog-ui-public` tickets into `catalog-ui-management`'s poll) if the
+poll moves to GitHub, where the equivalent constraint is "which repo's
+Issues" — likely trivial since Issues already live in the target repo,
+but not verified; whether this conflicts with or subsumes the still-open
+Phase 2 question of "whether dev-loop reads/writes the same Issue or gets
+its own linked Issue."
+
+**Conclusion (2026-09-16): not doing this now.** Checked what the
+bounce/status-legibility motivation was actually asking for, against what
+exists today:
+
+- `failure_category` is already a closed 11-value enum
+  (`src/types.ts:14-25`), not prose, and it already lands in two
+  machine-readable places: every bounced `RunLogLine` in
+  `runs/<project>.jsonl` (`loop-runner.ts:208` — structured JSON, not
+  comment text), and a fixed, greppable Jira comment title convention
+  (`Ticket-Refine Bounce — <failure_category>`, `SKILL.md:543`).
+- GitHub itself can obviously do this (`gh issue edit --add-label`, `gh
+  label create` — real, existing `gh` CLI commands). The gap is narrower
+  than "GitHub can't do this": this repo's own `GitHubClient` interface
+  (`src/github-client.ts`) has no method that calls them yet — only
+  `createIssue`/`findIssueByJiraKey` exist today. Adding one would be a
+  small, mechanical wrapper (same shape as the existing `createIssue`
+  method), not new capability from GitHub's side — the actual cost isn't
+  "can this be built," it's whether it's worth building for a value that
+  already has two structured homes, one of which (`runs.jsonl`) is more
+  granular than a label vocabulary would realistically be.
+- A GitHub label only earns its cost if some consumer can reach the
+  GitHub repo but *not* Jira comments or `runs.jsonl` — no such consumer
+  exists today. dev-loop reads its work order from Jira (Phase 2), not
+  from mirrored-Issue state.
+
+Given that, adding either the bounce label or the GitHub-as-poll-target
+change now is doing new build work (label-write call at minimum; real
+read/poll logic and an atomic-claim redesign for the larger change) to
+solve a problem that's already solved elsewhere. That's the
+overengineering line named above.
+
+**Reopen this if**: a concrete consumer shows up that can only see the
+GitHub repo — e.g. a GitHub-only agent, a dev-loop change that stops
+reading Jira comments, or an external tool integration that only has
+`gh`/GitHub API access. At that point the bounce-label piece is cheap
+(one `gh issue edit --add-label` call at bounce time, no new read/poll
+infra) and can be scoped on its own, independent of the much larger
+poll-target question, which stays open and unstarted regardless.
+
+**Checkpoint (2026-09-16 evening): audit findings — what's actually left
+of this whole entry.** Went back through this entry's own "DONE" claims
+against real code in both repos (not just the doc's own labels) to answer
+"are we actually done with this plan." Findings:
+
+- **Phase 0 and Phase 1 — confirmed genuinely done.** Verified directly:
+  no `epicLinkField`/`readyEpic`/epic references anywhere in either
+  repo's `src/` or configs; the mirror Issue is created after claim
+  (`main.ts:330,353,359`); the routing rule and mandatory @-mention are
+  real instructions in `ticket-refine/SKILL.md:497-544`, not just design
+  prose; the secret-redaction hooks exist and are wired in
+  `.claude/settings.json`. `mentionAccountId` and `github.repo` are real
+  fields in every `pipeline.*.config.json` today.
+- **One Phase 1 gap, not previously flagged as outstanding**: the
+  routing rule names *two* hooks — a secret-redaction hook (built) and a
+  separate Jira-comment-*shape* hook enforcing the size/category routing
+  rule itself (not built). Only the secret check exists; nothing rejects
+  a comment that violates the Jira-vs-GitHub content split.
+- **`stageLabels`/`researchStatusLabels`/`devStatusLabels`** (this
+  entry's original config sketch) were never added to `Config` in either
+  repo — abandoned, not merely unstarted, consistent with the pivot above
+  toward "GitHub Issue as context doc" over label-mirroring. Decision
+  still open: formally cut this part of the sketch, or leave it marked as
+  a live alternative. Not resolved by this checkpoint.
+- **Still genuinely open, confirmed by direct grep, not assumed**:
+  - GitHub Issue close-on-merge — no `closeIssue` method anywhere in
+    either repo, no `Closes #`/`resolves #` convention in
+    `push-branch/SKILL.md`'s PR body template.
+  - dev-loop's startup-time merge-reconciliation pass — zero
+    `reconcil`/`mergedAt`/`gh pr view`/`pipeline:merged` hits in
+    dev-loop's `src/`. dev-loop has **no `GitHubClient` at all** — this
+    is new infrastructure, not a missing method on an existing class.
+  - Phase 2 (dev-loop reading its work order from GitHub instead of the
+    Jira comment) — correctly still deferred;
+    `ticket-to-pr/SKILL.md:17-27,158-161` still hard-requires the Jira
+    `Refined Spec` comment.
+  - The other deferred edge cases listed above (PR closed without merge,
+    PR replacement, multi-branch/subtask mapping, GitHub atomic claim) —
+    all still untouched, zero code or design progress beyond this doc's
+    own notes.
+- **GitHub's close reason has three values, not two** — confirmed via the
+  GitHub UI (`Close as completed` / `Close as not planned` / `Close as
+  duplicate`), i.e. `state_reason: "completed" | "not_planned" |
+  "duplicate"` on the API. Only `completed` is relevant to close-on-merge;
+  `not_planned` is the more correct closure reason for the still-deferred
+  "PR closed without merge" edge case (rather than leaving the Issue open
+  indefinitely, its current unhandled state) — worth remembering when
+  that edge case is eventually designed. `duplicate` isn't relevant to
+  anything this pipeline produces.
+- **dev-loop writes nothing to the GitHub Issue at all — confirmed, and
+  confirmed research-loop's own side is correct.** Live symptom: the
+  mirror Issue for TARS-1462
+  (`github.com/fandango/webtarsthree/issues/428`) goes silent the moment
+  dev-loop picks the ticket up — no bounce detail, no pass/fail info,
+  nothing, for any outcome. Checked whether this was a dev-loop-only gap
+  or a pipeline-wide one before concluding anything: **research-loop's
+  own writes are correct and already verified**, not just designed —
+  `SKILL.md:180` routes all GitHub-only content (recon, attack findings,
+  working notes, bounce evidence detail) to the mirror Issue via `gh
+  issue comment`; `SKILL.md:517-538` has a passing verdict write the full
+  refined-spec content to the Issue with only a short pointer + @-mention
+  left on Jira; `SKILL.md:554-569` has the Step 7 verifier actively check
+  the Issue comment's content and fail a verdict missing it. The gap is
+  specifically **dev-loop's side**: zero `GitHubClient`, zero `gh issue`
+  calls anywhere in dev-loop's `src/` (re-confirmed by grep) — so once a
+  ticket crosses to dev-loop, GitHub Issue context-tracking stops
+  entirely, for every outcome, not just bounce. This is the same missing
+  capability already named above for close-on-merge (dev-loop's first
+  `GitHubClient`), not a separate build — that client needs at minimum
+  `addComment` (bounce/pass detail, mirroring research-loop's routing
+  rule so Jira stays brief-templated and GitHub carries the full
+  reasoning) alongside `closeIssue`.
+
+**What's actually left, in priority order for closing this entry out**:
+1. dev-loop's first `GitHubClient` — needs `addComment` (route bounce/PR
+   detail to the mirror Issue, same routing rule as research-loop:
+   Jira = brief pointer, GitHub = full context) and `closeIssue`
+   (`state_reason: "completed"` on merge). One build, two call sites —
+   not two separate work items.
+2. dev-loop merge-reconciliation pass — the caller for `closeIssue`
+   above; also where `addComment`-on-landed would be called from.
+3. Jira-comment-shape hook — a real Phase 1 gap, not just a Phase 2 one.
+4. Phase 2 itself — correctly the big deferred item, not in scope for a
+   quick close-out.
+5. The edge-case list above — correctly deferred, no progress expected
+   soon.
+6. Decision (not code): formally resolve the `stageLabels`/status-label
+   question one way or the other instead of leaving it implicitly
+   abandoned.
+
+**Aside, resolved 2026-09-17 (tracked in dev-loop's own CHANGELOG.md, not
+here — this doc's rule is "not tickets it processes," and this was a
+dev-loop pipeline-behavior fix)**: the dev-loop bounce-loop bug (a
+bounced ticket re-polling and re-bouncing itself every ~5s) is fixed —
+`pollJql.dev` now excludes tickets already at `statusNames.bounced`.
