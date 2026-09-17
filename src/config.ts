@@ -5,7 +5,8 @@
 // a fully-bound config (e.g. RealJiraClient) are responsible for checking
 // for placeholder values themselves and failing loudly if any remain.
 
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import type { Config, LoopConfig } from "./types.ts";
 
 /**
@@ -48,6 +49,52 @@ export function repoSlugFromUrl(url: string): string {
     throw new Error(`repoSlugFromUrl: could not derive a slug from "${url}".`);
   }
   return lastSegment;
+}
+
+/**
+ * List available project names at `dir` (repo root by default): every
+ * "pipeline.<name>.config.json" file present, minus
+ * "pipeline.loop.config.json" (loop-mechanics, not a project). Returns an
+ * empty array if `dir` doesn't exist or has no matching files -- never
+ * throws, since this is only ever used to build a human-readable error
+ * listing for --project.
+ */
+export async function listAvailableProjects(dir: string = "."): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return [];
+  }
+  return entries
+    .map((name) => /^pipeline\.(.+)\.config\.json$/.exec(name)?.[1])
+    .filter((name): name is string => name !== undefined && name !== "loop")
+    .sort();
+}
+
+/**
+ * Resolve a --project name to its "pipeline.<name>.config.json" path at
+ * `dir` (repo root by default). Throws a clear, synchronous error listing
+ * the actually-available projects if `projectName` is omitted, or if no
+ * config file exists for it -- this runs before any Jira/GitHub I/O, so a
+ * typo or missing flag fails fast instead of surfacing as a confusing
+ * downstream error.
+ */
+export async function resolveProjectConfigPath(
+  projectName: string | undefined,
+  dir: string = ".",
+): Promise<string> {
+  const available = await listAvailableProjects(dir);
+  const list = available.length > 0 ? available.join(", ") : "(none found)";
+  if (!projectName) {
+    throw new Error(`--project <name> is required. Available projects: ${list}`);
+  }
+  if (!available.includes(projectName)) {
+    throw new Error(
+      `Unknown project "${projectName}" (no pipeline.${projectName}.config.json in ${dir}). Available projects: ${list}`,
+    );
+  }
+  return join(dir, `pipeline.${projectName}.config.json`);
 }
 
 /** Field paths (dot-notation) worth checking for leftover "___" placeholders. */
