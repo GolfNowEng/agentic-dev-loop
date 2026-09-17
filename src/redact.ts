@@ -31,9 +31,28 @@ export function redactPII(text: string): string {
  * use (denying a whole tool call) it is not, so `KEY` here is deliberately
  * anchored to compound forms and a small explicit set of common
  * standalone names, not left as an unanchored substring match.
+ *
+ * The bare `KEY` alternative is intentionally its own case-sensitive,
+ * uppercase-only anchor (`(?-i:^KEY$)`), not folded into the shared `/i`
+ * flag the rest of this pattern uses: matching it case-insensitively
+ * caught ordinary lowercase JSON `"key"` fields too -- e.g. Jira's
+ * `parent: {"key": "TARS-1080"}`, which every Epic-linked issue create
+ * sends and which is not a secret. Since `containsSecret()` backs the
+ * PreToolUse hook denying Jira/Confluence writes, that false positive
+ * blocked issue creation outright on any project requiring an Epic
+ * parent. `KEY=...` (the real env-var shape this alternative targets) is
+ * conventionally uppercase, so anchoring it to case preserves the
+ * original detection while dropping the false positive.
  */
-const SECRET_NAME_PATTERN =
-  /SECRET|TOKEN|API[_-]?KEY|PASSWORD|PASSWD|PRIVATE[_-]?KEY|CREDENTIAL|ACCESS[_-]?KEY|AUTH|SIGNING[_-]?KEY|ACCOUNT[_-]?KEY|ROLE[_-]?KEY|ENCRYPTION[_-]?KEY|^KEY$|DSN|CONNECTION[_-]?STRING|CONN[_-]?STR|DATABASE[_-]?URL|DB[_-]?URL|URI|COOKIE|SESSION/i;
+const SECRET_NAME_PATTERN = new RegExp(
+  "SECRET|TOKEN|API[_-]?KEY|PASSWORD|PASSWD|PRIVATE[_-]?KEY|CREDENTIAL|ACCESS[_-]?KEY|AUTH|SIGNING[_-]?KEY|ACCOUNT[_-]?KEY|ROLE[_-]?KEY|ENCRYPTION[_-]?KEY|DSN|CONNECTION[_-]?STRING|CONN[_-]?STR|DATABASE[_-]?URL|DB[_-]?URL|URI|COOKIE|SESSION",
+  "i",
+);
+const BARE_KEY_PATTERN = /^KEY$/;
+
+function isSecretShapedName(name: string): boolean {
+  return SECRET_NAME_PATTERN.test(name) || BARE_KEY_PATTERN.test(name);
+}
 
 /**
  * `NAME="value"` / `export NAME="value"` -- env-style, quoted. The value
@@ -114,7 +133,7 @@ const URL_SHAPED_VALUE = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
  */
 function makeNameValueRedactor(quoted: boolean) {
   return (match: string, prefix: string, name: string, value: string): string => {
-    if (!SECRET_NAME_PATTERN.test(name)) return match;
+    if (!isSecretShapedName(name)) return match;
     if (!quoted) {
       if (value === "true" || value === "false") return match;
       if (/^-?\d+(\.\d+)?$/.test(value)) return match;
@@ -156,7 +175,7 @@ export function redactSecrets(text: string): string {
 
   for (const [name, value] of Object.entries(process.env)) {
     if (!value || value.length < MIN_ENV_VALUE_LENGTH) continue;
-    if (!SECRET_NAME_PATTERN.test(name)) continue;
+    if (!isSecretShapedName(name)) continue;
     result = result.split(value).join("REDACTED_SECRET");
   }
 

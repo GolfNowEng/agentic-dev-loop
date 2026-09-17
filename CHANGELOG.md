@@ -5,6 +5,20 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-17 — secret-redaction false positive blocked Jira Epic-parent writes
+
+`src/redact.ts`'s `SECRET_NAME_PATTERN` matched its bare `KEY` alternative
+case-insensitively, so it caught ordinary lowercase JSON `"key"` fields
+too — not just the intended uppercase `KEY=` env-var shape. Hit live
+while creating a Jira issue with `parent: {"key": "TARS-1080"}` (required
+on any TARS-project issue type that must be linked to an Epic):
+`containsSecret()` flagged the payload, and the `block-secret-comments.sh`
+PreToolUse hook denied the write outright.
+
+**Fix**: split the bare-`KEY` check into its own case-sensitive,
+uppercase-only match (`isSecretShapedName()` in `src/redact.ts`), leaving
+the rest of `SECRET_NAME_PATTERN` case-insensitive as before.
+
 ## 2026-09-17 — simplify Jira/GitHub comment templates: drop @-mention, terser title, clean issue link
 
 Per docs/future-enhancements.md's "Simplify Jira/GitHub comment
