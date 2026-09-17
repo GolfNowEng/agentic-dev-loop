@@ -6,6 +6,25 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-16 — `--project <name>` CLI flag; fix silent `--config` override
+
+`src/main.ts` now requires `--project <name>` (resolved to
+`pipeline.<name>.config.json` via `resolveProjectConfigPath()`/
+`listAvailableProjects()` in `src/config.ts`), replacing the `loop` npm
+script's hardcoded `--config pipeline.webtarsthree.config.json`. Fixes a
+real bug: because `argv.indexOf("--config")` matched the *first*
+occurrence, `npm run loop -- --config pipeline.catalog-ui-management.config.json`
+silently kept using webtarsthree instead — there was no way to run a
+second project via the npm script. `--config <path>` is kept as a
+fallback for arbitrary paths; passing both flags is now an explicit
+error rather than a silent pick. This unblocks running one loop per
+project concurrently in separate terminals — each project's on-disk
+state was already namespaced by `repoSlugFromUrl()`, the only thing
+missing was correctly selecting which config each process loads. Does
+**not** solve running two loop instances against the *same* project
+concurrently — that's still the pre-existing, unsolved "Future: multiple
+concurrent loop instances" gap noted in `docs/config.md`.
+
 ## 2026-09-16 — `jira.repoLabel`: disambiguate repos that share one Jira project
 
 Added `Config.jira.repoLabel` (required, plain string, e.g.
