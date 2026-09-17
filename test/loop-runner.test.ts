@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { runLoopIteration, buildQaNotesAdf } from "../src/loop-runner.ts";
 import type { RunSkillFn, LoopIterationDeps, LoopIterationResult } from "../src/loop-runner.ts";
 import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
+import type { GitHubClient } from "../src/github-client.ts";
 import type { Config, Verdict } from "../src/types.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -55,6 +56,15 @@ function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
   };
 }
 
+function makeMockGitHubClient(overrides: Partial<GitHubClient> = {}): GitHubClient {
+  return {
+    findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "https://github.com/org/repo/issues/42" })),
+    addComment: vi.fn(async () => {}),
+    closeIssue: vi.fn(async () => {}),
+    ...overrides,
+  };
+}
+
 function makeVerdict(overrides: Partial<Verdict> = {}): Verdict {
   return {
     outcome: "landed",
@@ -81,6 +91,7 @@ const MEASURED_TOKENS = { in: 1234, out: 567 };
 function makeDeps(overrides: Partial<LoopIterationDeps> = {}): LoopIterationDeps {
   return {
     jiraClient: makeMockJiraClient(),
+    githubClient: makeMockGitHubClient(),
     config: makeConfig(),
     runSkill: vi.fn(),
     loopKind: "dev",
@@ -639,6 +650,116 @@ describe("runLoopIteration", () => {
       const transitionOrder = (jiraClient.transitionStatus as ReturnType<typeof vi.fn>).mock
         .invocationCallOrder[0];
       expect(addCommentOrder).toBeLessThan(transitionOrder);
+    });
+  });
+
+  it("a genuine bounce also posts the full verdict detail to the mirror GitHub Issue, found by Jira key", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const githubClient = makeMockGitHubClient();
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => makeTicket()),
+      });
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({
+          outcome: "bounced",
+          pr: null,
+          failure_category: "spec_ambiguous",
+          detail: "the full bounce detail, longer than Jira's own terser comment",
+        }),
+        started: "2026-01-01T00:00:00.000Z",
+        ended: "2026-01-01T00:01:00.000Z",
+        costUsd: 0.5,
+        tokens: { in: 100, out: 50 },
+      }));
+
+      await runLoopIteration(
+        makeDeps({ jiraClient, githubClient, runSkill, runsLogPath }),
+      );
+
+      expect(githubClient.findIssueByJiraKey).toHaveBeenCalledWith("PROJ-1");
+      expect(githubClient.addComment).toHaveBeenCalledWith(
+        42,
+        expect.stringContaining("the full bounce detail, longer than Jira's own terser comment"),
+      );
+    });
+  });
+
+  it("a landed verdict also posts PR/verify-loop detail to the mirror GitHub Issue", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const githubClient = makeMockGitHubClient();
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => makeTicket()),
+      });
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({ outcome: "landed", pr: "https://github.com/org/repo/pull/9" }),
+        started: "2026-01-01T00:00:00.000Z",
+        ended: "2026-01-01T00:01:00.000Z",
+        costUsd: 0.5,
+        tokens: { in: 100, out: 50 },
+      }));
+
+      await runLoopIteration(
+        makeDeps({ jiraClient, githubClient, runSkill, runsLogPath }),
+      );
+
+      expect(githubClient.addComment).toHaveBeenCalledWith(
+        42,
+        expect.stringContaining("https://github.com/org/repo/pull/9"),
+      );
+    });
+  });
+
+  it("when no mirror Issue is found for this ticket, skips the GitHub write silently -- never an error", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const githubClient = makeMockGitHubClient({
+        findIssueByJiraKey: vi.fn(async () => null),
+      });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => makeTicket()),
+      });
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({ outcome: "landed", pr: "https://github.com/org/repo/pull/9" }),
+        started: "2026-01-01T00:00:00.000Z",
+        ended: "2026-01-01T00:01:00.000Z",
+        costUsd: 0.5,
+        tokens: { in: 100, out: 50 },
+      }));
+
+      const result = await runLoopIteration(
+        makeDeps({ jiraClient, githubClient, runSkill, runsLogPath }),
+      );
+
+      expect(githubClient.addComment).not.toHaveBeenCalled();
+      expect(result.kind).toBe("ran");
+      expect(result.jiraSyncError).toBeUndefined();
+    });
+  });
+
+  it("a GitHub addComment failure never throws out of runLoopIteration -- surfaced via jiraSyncError, and the Jira-side work still completes", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const githubClient = makeMockGitHubClient({
+        addComment: vi.fn(async () => {
+          throw new Error("gh: rate limited");
+        }),
+      });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => makeTicket()),
+      });
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({ outcome: "landed", pr: "https://github.com/org/repo/pull/9" }),
+        started: "2026-01-01T00:00:00.000Z",
+        ended: "2026-01-01T00:01:00.000Z",
+        costUsd: 0.5,
+        tokens: { in: 100, out: 50 },
+      }));
+
+      const result = await runLoopIteration(
+        makeDeps({ jiraClient, githubClient, runSkill, runsLogPath }),
+      );
+
+      expect(result.kind).toBe("ran");
+      expect(result.jiraSyncError).toContain("rate limited");
+      expect(jiraClient.transitionStatus).toHaveBeenCalled();
     });
   });
 

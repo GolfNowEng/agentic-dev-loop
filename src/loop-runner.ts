@@ -6,6 +6,7 @@
 // real Jira instance.
 
 import type { JiraClient } from "./jira-client.ts";
+import type { GitHubClient } from "./github-client.ts";
 import type { Config, RunLogLine, Verdict } from "./types.ts";
 import { buildDevJql, buildRefineJql } from "./jql.ts";
 import { checkCeilings, hasReachedMaxRunsPerDay } from "./ceilings.ts";
@@ -61,6 +62,7 @@ export type LoopKind = "refine" | "dev";
 
 export interface LoopIterationDeps {
   jiraClient: JiraClient;
+  githubClient: GitHubClient;
   config: Config;
   runSkill: RunSkillFn;
   loopKind: LoopKind;
@@ -74,6 +76,28 @@ export interface LoopIterationDeps {
    * assign-if-unassigned a ticket right after it's picked up.
    */
   assigneeAccountId: string;
+}
+
+/**
+ * Post detail to the mirror GitHub Issue for this ticket, if one exists.
+ * Non-fatal: a lookup/post failure or a missing Issue never throws --
+ * folded into jiraSyncError (lookup/post failure) or silently skipped
+ * (no Issue found), since a ticket predating research-loop's Phase 1
+ * mirror-Issue rollout is an expected case, not an error.
+ */
+async function postGitHubDetail(
+  githubClient: GitHubClient,
+  ticketKey: string,
+  body: string,
+): Promise<string | undefined> {
+  try {
+    const issue = await githubClient.findIssueByJiraKey(ticketKey);
+    if (!issue) return undefined;
+    await githubClient.addComment(issue.number, body);
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 /**
@@ -107,7 +131,7 @@ export interface LoopIterationDeps {
 export async function runLoopIteration(
   deps: LoopIterationDeps,
 ): Promise<LoopIterationResult> {
-  const { jiraClient, config, runSkill, loopKind, runsLogPath, runsToday, assigneeAccountId } =
+  const { jiraClient, githubClient, config, runSkill, loopKind, runsLogPath, runsToday, assigneeAccountId } =
     deps;
 
   // Ceiling check before even starting a new run.
@@ -164,6 +188,15 @@ export async function runLoopIteration(
       // be sent alongside it, not left empty.
       const fields = buildCodeReviewFields(config, buildQaNotesAdf(verdict));
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.prOpen, fields);
+
+      const githubError = await postGitHubDetail(
+        githubClient,
+        ticket.key,
+        `Landed — PR: ${verdict.pr ?? "(none)"}, verify loops: ${verdict.verify_loops}.`,
+      );
+      if (githubError) {
+        jiraSyncError = jiraSyncError ? `${jiraSyncError}; ${githubError}` : githubError;
+      }
     } else if (verdict.outcome === "bounced" && verdict.pr === null) {
       // A genuine blocker (spec_ambiguous, too_large, env_setup, etc.)
       // always happens before Phase 5 (PR) and therefore never has
@@ -195,6 +228,16 @@ export async function runLoopIteration(
           ? `${jiraSyncError}; ${commentErrorMessage}`
           : commentErrorMessage;
       }
+
+      const githubError = await postGitHubDetail(
+        githubClient,
+        ticket.key,
+        `Bounced (${verdict.failure_category}): ${verdict.detail}`,
+      );
+      if (githubError) {
+        jiraSyncError = jiraSyncError ? `${jiraSyncError}; ${githubError}` : githubError;
+      }
+
       await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
     }
   } catch (err) {
