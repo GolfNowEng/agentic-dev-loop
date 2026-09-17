@@ -10,7 +10,8 @@
     "build": "tsc",
     "check-auth": "node --env-file=.env scripts/check-jira-auth.mjs",
     "stats": "node scripts/stats.mjs",
-    "loop": "node --env-file=.env src/main.ts"
+    "loop": "node --env-file=.env src/main.ts",
+    "reset-project": "node src/reset-cli.ts"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

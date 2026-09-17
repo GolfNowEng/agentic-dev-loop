@@ -5,6 +5,28 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-17 — added `npm run reset-project`: deterministic local-state wipe for re-running a ticket or project fresh
+
+Diagnosing a real pipeline bug (from dev-loop's side, TARS-1465) meant
+running a ticket through the pipeline live, several times. Cleaning up
+the diagnostic history afterward -- `grep -v` against `runs.jsonl`,
+`rm -rf` against `.pipeline/<slug>/runs/TARS-1465-*` -- is exactly the
+kind of manual step that's easy to get wrong once (wrong ticket key in
+the grep, an over-broad glob that catches a sibling ticket) and had no
+test coverage of its own.
+
+**Added**: `src/reset-project.ts` (`planReset`/`executeReset`/
+`describeResetPlan`, fully unit-tested against a temp filesystem) plus
+`src/reset-cli.ts` wiring it to `npm run reset-project -- --project=<name>
+[--ticket=<KEY>] [--dry-run] [--yes]`. Ported directly from dev-loop's
+identical module (same local-state layout, same scoping rules). Deletes
+only this repo's own local, gitignored state (`runs/<project>.jsonl`
+lines, `.pipeline/<project>/` run dirs and raw-usage files, matching
+Ground-step worktrees under `targetRepo.path`) -- never Jira, GitHub, or
+the target repo's git history, and never the `pipeline:research`/
+`pipeline:dev` label. See `docs/reset.md` for the full scoping rationale
+and `.claude/skills/reset-project/SKILL.md` for how to invoke it.
+
 ## 2026-09-17 — mirror GitHub Issue's body now links back to the Jira ticket
 
 The initial body `createIssue()` writes at Issue-creation time
