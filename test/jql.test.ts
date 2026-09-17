@@ -11,7 +11,7 @@ const config: Config = {
     pollJql: {
       refine:
         'labels = "{label}" AND labels = "{repoLabel}" AND status = "To Refine" ORDER BY created ASC',
-      dev: 'labels = "{label}" AND labels = "{repoLabel}" AND assignee = "{assignee}" ORDER BY created ASC',
+      dev: 'labels = "{label}" AND labels = "{repoLabel}" AND assignee = "{assignee}" AND status != "{bouncedStatus}" ORDER BY created ASC',
     },
     statusNames: { bounced: "Blocked", prOpen: "In Progress" },
     codeReviewFields: {
@@ -60,9 +60,10 @@ describe("buildDevJql", () => {
     expect(jql).not.toContain("{repoLabel}");
   });
 
-  it("no longer carries a status clause -- the label signals pipeline stage directly", () => {
+  it("excludes tickets already in the bounced status, so a bounced ticket does not immediately re-match its own poll", () => {
     const jql = buildDevJql(config, "user-123");
-    expect(jql).not.toContain("status");
+    expect(jql).toContain('status != "Blocked"');
+    expect(jql).not.toContain("{bouncedStatus}");
   });
 
   it("returns a non-empty string", () => {

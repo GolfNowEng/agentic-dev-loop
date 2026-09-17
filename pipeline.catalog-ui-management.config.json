@@ -3,16 +3,16 @@
     "triggerLabel": "pipeline:dev",
     "handoffLabel": "pipeline:dev",
     "repoLabel": "repo:catalog-ui-management",
-    "claimStatus": { "from": "___", "to": "___" },
+    "claimStatus": { "from": "To Do", "to": "In Progress" },
     "pollJql": {
-      "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"___\" ORDER BY created ASC",
-      "dev": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND assignee = \"{assignee}\" ORDER BY created ASC"
+      "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"To Do\" ORDER BY created ASC",
+      "dev": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND assignee = \"{assignee}\" AND status != \"{bouncedStatus}\" ORDER BY created ASC"
     },
-    "statusNames": { "bounced": "___", "prOpen": "___" },
+    "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" },
     "codeReviewFields": {
-      "piiField": "___",
-      "piiNoImpactOptionId": "___",
-      "qaNotesField": "___"
+      "piiField": "customfield_13504",
+      "piiNoImpactOptionId": "14310",
+      "qaNotesField": "customfield_14226"
     }
   },
   "ceilings": { "maxRunsPerDay": 100, "maxCostPerRunUsd": 20, "runTimeoutMin": 45 },

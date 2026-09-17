@@ -6,6 +6,24 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-17 — fix bounce-loop bug: exclude bounced-status tickets from pollJql.dev
+
+A bounced dev-loop ticket (status transitioned to `statusNames.bounced`,
+e.g. "Blocked") kept matching `pollJql.dev` on every subsequent poll cycle
+— nothing in the JQL's match criteria changed on a bounce, since
+`pipeline:dev`'s label-based design was never meant to also encode
+bounced-vs-not. Confirmed live on TARS-1462: 5 near-identical bounces in
+~14 minutes (~$2.3) before the process was killed by hand; left unfixed,
+every future dev-loop bounce would repeat this until `maxRunsPerDay`
+trips (a ~$46 ceiling at this ticket's observed cost-per-run) or a human
+intervenes. Fixed by adding `AND status != "{bouncedStatus}"` to every
+project's `pollJql.dev` template, filled from the already-configured
+`jira.statusNames.bounced` — no new config field, no label change. See
+research-loop's `docs/future-enhancements.md`'s "dev-loop bounce-loop
+bug" entry for the full tradeoff analysis this resolves (chose JQL
+status-exclusion over `swapLabel()`-on-bounce, since the label-strip
+alternative left "what does the label become instead" unscoped).
+
 ## 2026-09-16 — `--project <name>` CLI flag; fix silent `--config` override
 
 `src/main.ts` now requires `--project <name>` (resolved to

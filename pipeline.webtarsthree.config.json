@@ -6,7 +6,7 @@
     "claimStatus": { "from": "To Do", "to": "In Progress" },
     "pollJql": {
       "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"To Do\" ORDER BY created ASC",
-      "dev": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND assignee = \"{assignee}\" ORDER BY created ASC"
+      "dev": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND assignee = \"{assignee}\" AND status != \"{bouncedStatus}\" ORDER BY created ASC"
     },
     "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" },
     "codeReviewFields": {

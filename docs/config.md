@@ -99,12 +99,27 @@ This means dev-loop can't claim a ticket the way research-loop does (there's
 no `In Progress` → `In Progress` self-transition in a normal Jira workflow).
 Instead, `jira.pollJql.dev` matches on `labels = "pipeline:dev"` directly
 plus an `assignee = "{assignee}"` clause (filled from
-`JIRA_ASSIGNEE_ACCOUNT_ID`, see below) — no status clause at all, since the
-label now signals pipeline stage directly and unambiguously — and
-`runLoopIteration` for `loopKind: "dev"` has **no atomic claim step at
-all**: it goes straight from poll to running the skill. This is safe only
-because this MVP assumes exactly one dev-loop instance is ever running
-against a project at a time.
+`JIRA_ASSIGNEE_ACCOUNT_ID`, see below), plus (as of the bounce-loop fix
+below) `AND status != "{bouncedStatus}"` (filled from
+`jira.statusNames.bounced`) — the label signals pipeline stage, but a
+genuine bounce needs its own exclusion so the very next poll cycle
+doesn't immediately re-match and re-run the same ticket. `runLoopIteration`
+for `loopKind: "dev"` still has **no atomic claim step at all**: it goes
+straight from poll to running the skill. This is safe only because this
+MVP assumes exactly one dev-loop instance is ever running against a
+project at a time.
+
+**Bounce-loop bug, fixed:** before this exclusion clause existed, a
+bounced ticket (status transitioned to `statusNames.bounced`, e.g.
+"Blocked") kept matching `pollJql.dev` every single poll cycle
+(`postRunDelaySec` = 5s) since nothing about the JQL's own match criteria
+ever changed on a bounce — only the label-based design (`triggerLabel`/
+`handoffLabel`) changed anything, and a bounce never touches the label.
+Confirmed live on TARS-1462: 5 near-identical bounces in ~14 minutes,
+~$2.3 total cost, until the process was killed by hand. See
+`CHANGELOG.md`'s entry for this fix and research-loop's
+`docs/future-enhancements.md`'s "dev-loop bounce-loop bug" entry for the
+full incident writeup and the tradeoff this fix resolves.
 
 **Future: multiple concurrent loop instances.** Running more than one
 research-loop or dev-loop terminal against the same project at once has no
