@@ -161,15 +161,35 @@ Each phase's `progress.jsonl` events use the phase name shown.
 2. Find the ticket's research-loop-authored comment (title starts with
    `✅ research-loop -`, per research-loop's own comment convention — see
    its `docs/future-enhancements.md`'s "Simplify Jira/GitHub comment
-   templates" entry). If no such comment exists, or it exists but doesn't
-   follow the definition-of-ready template's `### Overview` / `###
-   Acceptance Criteria` / `### Scope` structure (whether inline or via
-   its `[GitHub Issue](url)` link) — this ticket should never have
-   carried the `pipeline:dev` label — bounce immediately with
-   `failure_category: "spec_ambiguous"` and detail noting the missing
-   comment/sections. Do not attempt to proceed on an unreadied ticket.
+   templates" entry).
+   - **If that comment has the `### Overview` / `### Acceptance Criteria`
+     / `### Scope` structure inline**: read it directly, continue to
+     step 3.
+   - **If it instead has a `[GitHub Issue](url)` link** (research-loop's
+     own convention: the full Overview/AC/Scope content lives on the
+     linked Issue, not inline — see that repo's SKILL.md, "The GitHub
+     Issue itself carries the full refined-ticket content"): fetch that
+     Issue's **comments**, not its description/body —
+     `gh issue view <number> --repo <owner/repo> --json comments`. The
+     Issue's body/description is only ever the creation-time placeholder
+     ("Mirror of [TICKET](url). ticket-refine is running...") and is
+     never updated after creation — the real content is a comment whose
+     first line is the markdown heading `## ✅ research-loop -
+     <short context>`. Read the Overview/AC/Scope structure from *that*
+     comment.
+   - **If neither of the above yields the `### Overview` / `###
+     Acceptance Criteria` / `### Scope` structure** (no research-loop
+     comment at all, an inline comment missing the structure, or a
+     `[GitHub Issue](url)` link whose Issue has no matching
+     `## ✅ research-loop -` comment, or whose body is still the
+     unfilled placeholder with no comment at all) — this ticket should
+     never have carried the `pipeline:dev` label — bounce immediately
+     with `failure_category: "spec_ambiguous"` and detail naming exactly
+     which of the three cases applied. Do not attempt to proceed on an
+     unreadied ticket.
 3. Read every Acceptance Criterion and the Scope section's enumerated
-   files/modules, from that comment's content.
+   files/modules, from whichever source (Jira comment or GitHub Issue
+   comment) step 2 resolved.
 4. **Early fail-exit check**: if the enumerated scope is clearly larger than
    a single ticket's worth of work (spans many unrelated modules, requires
    architectural changes not described, etc.), bounce now with

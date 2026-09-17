@@ -6,6 +6,30 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-17 — Phase 0 intake never checked the GitHub Issue's comments, only its body -- bounced every ticket using the new comment convention
+
+`ticket-to-pr`'s Phase 0 step 2 bounces a ticket whose research-loop
+comment lacks inline `### Overview`/`### Acceptance Criteria`/`###
+Scope`, even when it instead has a `[GitHub Issue](url)` link
+(research-loop's own convention as of its 2026-09-17 comment-template
+simplification: full content moves to the linked Issue, posted there as
+a *comment*, never written back to the Issue's body). Phase 0 never said
+to check the Issue's comments, so the agent read the Issue's body
+instead -- which is only ever the creation-time placeholder ("Mirror of
+[TICKET](url). ticket-refine is running...") and is never updated after
+creation. Confirmed live on TARS-1465 (research-loop comment correct,
+GitHub Issue #430's actual Overview/AC/Scope sitting in a
+`## ✅ research-loop - ...`-titled comment, body still the stub) --
+bounced with `spec_ambiguous` even though the ticket was genuinely
+ready. Not a one-off: this hits every ticket that uses the new
+GitHub-Issue-link convention, which is now the default path for a
+passing research-loop verdict.
+
+**Fix**: Phase 0 step 2 now explicitly branches on inline-vs-linked
+content, and for the linked case fetches the Issue's comments (`gh issue
+view <number> --repo <owner/repo> --json comments`) and reads the
+`## ✅ research-loop - ...`-titled comment there, rather than the body.
+
 ## 2026-09-17 — secret-scan hook's "run as script" guard silently no-op'd through a symlink
 
 `scripts/check-secret-in-tool-input.ts`'s guard for "am I being run
