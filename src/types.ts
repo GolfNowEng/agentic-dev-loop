@@ -204,6 +204,19 @@ export interface TargetRepoConfig {
   path?: string;
 }
 
+export interface GitHubConfig {
+  /**
+   * dev-loop's first GitHub write surface (addComment/closeIssue on the
+   * mirror Issue research-loop already created). One target repo per
+   * project config, same granularity as targetRepo -- derived from the
+   * same codebase this repo's ticket-to-pr operates on, not a separate
+   * system. Mirrors research-loop's own Config.github.repo field exactly.
+   */
+  /** "owner/repo" shorthand, e.g. "fandango/webtarsthree" -- passed
+   * directly to `gh`'s own --repo flag, which accepts this exact shape. */
+  repo: string;
+}
+
 /**
  * Shape of pipeline.loop.config.json -- loop-mechanics settings (how the
  * `main.ts` process behaves), kept separate from pipeline.<project>.config.json
@@ -230,4 +243,5 @@ export interface Config {
   ceilings: CeilingsConfig;
   autoPromoteLabel: string;
   targetRepo: TargetRepoConfig;
+  github: GitHubConfig;
 }

@@ -36,6 +36,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 45 },
     autoPromoteLabel: "auto-promote",
     targetRepo: { url: "git@github.com:fandango/webtarsthree.git", defaultBranch: "master" },
+    github: { repo: "fandango/webtarsthree" },
     ...overrides,
   };
 }
@@ -256,5 +257,11 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
   it("assertNoPlaceholders throws naming every missing field", () => {
     const config = makeConfig({ autoPromoteLabel: "___" });
     expect(() => assertNoPlaceholders(config)).toThrow(/autoPromoteLabel/);
+  });
+
+  it("lists github.repo when it's still set to the placeholder value", () => {
+    const config = makeConfig({ github: { repo: "___" } });
+    const missing = findPlaceholders(config);
+    expect(missing).toContain("github.repo");
   });
 });

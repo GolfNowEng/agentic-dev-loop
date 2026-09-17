@@ -133,6 +133,7 @@ const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
   ["autoPromoteLabel", (c) => c.autoPromoteLabel],
   ["targetRepo.url", (c) => c.targetRepo.url],
   ["targetRepo.defaultBranch", (c) => c.targetRepo.defaultBranch],
+  ["github.repo", (c) => c.github.repo],
 ];
 
 /**

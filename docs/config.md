@@ -85,6 +85,13 @@ concurrent loop instances" below, which this change does not solve.
   real one, so `ticket-to-pr`'s `git push`/`gh pr create` need no extra
   setup. Omit on a machine with no local checkout yet; the clone-based flow
   is used instead.
+- `github.repo` — the GitHub repo this project's mirror Issues live in
+  (`"owner/repo"` shorthand, passed straight to `gh --repo`). One target
+  repo per project config, same granularity as `targetRepo`. Mirrors
+  research-loop's own `Config.github.repo` — research-loop creates the
+  mirror Issue there; this repo's `GitHubClient` (`src/github-client.ts`)
+  reads and writes to the same repo once a ticket crosses to
+  `pipeline:dev`.
 
 ## Ticket status never reverts
 
@@ -234,8 +241,9 @@ ticket* workflow for real status names.
 
 1. Copy an existing `pipeline.<project>.config.json` to
    `pipeline.<new-project>.config.json`.
-2. Fill in that project's own label strings, statuses, JQL, and
-   `targetRepo`.
+2. Fill in that project's own label strings, statuses, JQL, `targetRepo`,
+   and `github.repo` (the mirror Issue repo, same granularity as
+   `targetRepo`).
 3. Run it via `npm run loop -- --project <new-project>` —
    `resolveProjectConfigPath()` finds it automatically by the naming
    convention above; no code changes required.
