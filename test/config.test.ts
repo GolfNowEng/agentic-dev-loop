@@ -5,6 +5,8 @@ import {
   findPlaceholders,
   assertNoPlaceholders,
   repoSlugFromUrl,
+  listAvailableProjects,
+  resolveProjectConfigPath,
 } from "../src/config.ts";
 import type { Config } from "../src/types.ts";
 import * as fs from "node:fs/promises";
@@ -53,6 +55,72 @@ describe("repoSlugFromUrl", () => {
     expect(repoSlugFromUrl("git@github.com:org/catalog-ui-management")).toBe(
       "catalog-ui-management",
     );
+  });
+});
+
+describe("listAvailableProjects", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "list-projects-test-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("lists project names derived from pipeline.<name>.config.json files, sorted", async () => {
+    await fs.writeFile(path.join(dir, "pipeline.webtarsthree.config.json"), "{}", "utf8");
+    await fs.writeFile(path.join(dir, "pipeline.catalog-ui-management.config.json"), "{}", "utf8");
+    expect(await listAvailableProjects(dir)).toEqual(["catalog-ui-management", "webtarsthree"]);
+  });
+
+  it("excludes pipeline.loop.config.json -- it is not a project", async () => {
+    await fs.writeFile(path.join(dir, "pipeline.loop.config.json"), "{}", "utf8");
+    await fs.writeFile(path.join(dir, "pipeline.webtarsthree.config.json"), "{}", "utf8");
+    expect(await listAvailableProjects(dir)).toEqual(["webtarsthree"]);
+  });
+
+  it("returns an empty array when no pipeline configs exist", async () => {
+    expect(await listAvailableProjects(dir)).toEqual([]);
+  });
+
+  it("returns an empty array when dir does not exist", async () => {
+    expect(await listAvailableProjects(path.join(dir, "does-not-exist"))).toEqual([]);
+  });
+});
+
+describe("resolveProjectConfigPath", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "resolve-project-test-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("resolves a valid project name to its config path", async () => {
+    await fs.writeFile(path.join(dir, "pipeline.webtarsthree.config.json"), "{}", "utf8");
+    expect(await resolveProjectConfigPath("webtarsthree", dir)).toBe(
+      path.join(dir, "pipeline.webtarsthree.config.json"),
+    );
+  });
+
+  it("throws listing available projects when projectName is omitted", async () => {
+    await fs.writeFile(path.join(dir, "pipeline.webtarsthree.config.json"), "{}", "utf8");
+    await expect(resolveProjectConfigPath(undefined, dir)).rejects.toThrow(/webtarsthree/);
+  });
+
+  it("throws listing available projects when the named project's config file doesn't exist", async () => {
+    await fs.writeFile(path.join(dir, "pipeline.webtarsthree.config.json"), "{}", "utf8");
+    await expect(resolveProjectConfigPath("nonexistent", dir)).rejects.toThrow(/webtarsthree/);
+  });
+
+  it("never resolves 'loop' as if it were a project name", async () => {
+    await fs.writeFile(path.join(dir, "pipeline.loop.config.json"), "{}", "utf8");
+    await expect(resolveProjectConfigPath("loop", dir)).rejects.toThrow(/Unknown project "loop"/);
   });
 });
 
