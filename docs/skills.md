@@ -62,21 +62,24 @@ affected by a background run:
    of spec quality (external dependency, missing access, upstream fault).
 6. **Synthesize** — write the refined ticket (working comments during work
    go to the GitHub Issue, not Jira, per Phase 1's routing rule; on a
-   passing verdict, the full `## Refined Spec — ready for ticket-to-pr`
+   passing verdict, the full `## ✅ research-loop - <short context>`
    content goes to the GitHub Issue and a short pointer comment of the
-   same title goes to Jira). The stakeholder's original description is
-   never touched, ever — see "Jira/GitHub content routing (Phase 1)" below.
+   same title convention goes to Jira). The stakeholder's original
+   description is never touched, ever — see "Jira/GitHub content routing
+   (Phase 1)" below.
 7. **Verify** — spawn `verifier-agent` (below) for an independent
    definition-of-ready check before reporting a passing verdict.
 
 Core rule: a bounce is a normal, successful exit — concrete evidence, not a
 crash. Everything questioned here happens *once*, upstream of the human
 review gate; once a ticket crosses into Review, `dev-loop` trusts it fully.
-A bounce is written to one comment titled `Ticket-Refine Bounce —
-<failure_category>` — same greppable-title convention as the passing-verdict
-`Refined Spec — ready for ticket-to-pr` comment, with a fixed
-Verdict/Summary/Needs-from-you header so a human can tell at a glance what
-decision unblocks the ticket, before the free-form evidence below it.
+A bounce is written to one comment titled `❌ research-loop - <short
+context>` — same greppable leading-icon + `research-loop -` prefix
+convention as the passing-verdict `✅ research-loop - <short context>`
+comment, with a fixed Verdict/Summary/Needs-from-you header so a human can
+tell at a glance what decision unblocks the ticket, before the free-form
+evidence below it. Neither title carries an @-mention — dropped as
+excessive in practice (see `CHANGELOG.md`).
 
 **Cleanup is a hard gate, unconditional, every run**: stop the dev server if
 one was started, and remove this run's worktree — regardless of outcome
@@ -122,9 +125,10 @@ which has one for uncommitted work — see dev-loop's `docs/skills.md`).
 
 Enforced by `verifier-agent`, checked in order — first failure is the
 bounce: (0) template sections populated (the full Overview/AC/Scope now
-lives in the GitHub Issue's `## Refined Spec` comment, not Jira, per
-"Jira/GitHub content routing (Phase 1)" below — the Jira comment is just
-its pointer), (1) every AC testable, (2) files/modules named, (3) TDD-ready
+lives in the GitHub Issue's `## ✅ research-loop - <short context>`
+comment, not Jira, per "Jira/GitHub content routing (Phase 1)" below —
+the Jira comment is just its pointer), (1) every AC testable, (2)
+files/modules named, (3) TDD-ready
 test expectations per AC, (4) small/medium size bound, (5) no open
 questions, (6) a literal-minded Sonnet-tier implementer could act on it
 without inferring anything, (7) no raw secret/credential/token/password
@@ -153,10 +157,13 @@ written once on a passing verdict, titled exactly `Refined Spec — ready
 for ticket-to-pr`, which `dev-loop`'s `ticket-to-pr` read as its work
 order. Phase 1 splits that single comment across Jira and a mirror GitHub
 Issue — see "Jira/GitHub content routing (Phase 1)" immediately below for
-the current rule. `ticket-to-pr` keeps reading the Jira comment as its work
-order until dev-loop migrates in Phase 2 (see dev-loop's `docs/skills.md`);
-until then the Jira comment's pointer is what a human clicks through to
-review the GitHub Issue's full content.
+the current rule. A later, undated change (see `CHANGELOG.md`) replaced
+that fixed title, both outcomes, with `{✅|❌} research-loop - <short
+context>`, and replaced the pointer's section-manifest line with a clean
+`[GitHub Issue](<url>)` link — `ticket-to-pr` keeps reading the Jira
+comment as its work order until dev-loop migrates in Phase 2 (see
+dev-loop's `docs/skills.md`); until then the Jira comment's link is what
+a human clicks through to review the GitHub Issue's full content.
 
 ## Jira/GitHub content routing (Phase 1)
 
@@ -168,11 +175,13 @@ split), an explicit confirmation request, and the passing-verdict pointer
 comment — **everything else goes to the GitHub Issue**: recon findings,
 devil's-advocate attack findings, verifier results, working/interpretation
 notes, and bounce evidence detail not itself one of the four Jira-worthy
-kinds. Every Jira comment under this rule must @-mention
-`jira.mentionAccountId` (`Config.jira.mentionAccountId`), a new requirement
-Phase 1 introduces. See `SKILL.md`'s "Ticket content protocol" for the full
-routing rule (items 1-8) and Step 0.5 for how the GitHub Issue is
-found/renamed each run.
+kinds. Phase 1 introduced a requirement that every Jira comment under this
+rule @-mention `jira.mentionAccountId` (`Config.jira.mentionAccountId`);
+a later change (see `CHANGELOG.md`) dropped that requirement as excessive
+in practice — `jira.mentionAccountId` stays in config, unused, for now.
+See `SKILL.md`'s "Ticket content protocol" for the full routing rule
+(items 1-8) and Step 0.5 for how the GitHub Issue is found/renamed each
+run.
 
 **Design decision (Task 4): GitHub Issue creation is loop-runner-owned, not
 skill-owned.** `src/main.ts` creates or finds the mirror Issue (via

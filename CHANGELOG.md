@@ -5,6 +5,26 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-17 — simplify Jira/GitHub comment templates: drop @-mention, terser title, clean issue link
+
+Per docs/future-enhancements.md's "Simplify Jira/GitHub comment
+templates" entry (decided 2026-09-16, not yet coded until now). Three
+changes to `.claude/skills/ticket-refine/SKILL.md`'s "Ticket content
+protocol": (1) dropped the mandatory `jira.mentionAccountId` @-mention
+from every Jira comment — confirmed excessive in practice
+(TARS-1462); the config field itself stays, unused, for now. (2) Replaced
+the fixed titles (`Refined Spec — ready for ticket-to-pr`,
+`Ticket-Refine Bounce — <category>`) with `{✅|❌} research-loop - <short
+context>`, both outcomes. (3) Replaced the `Full Overview / Acceptance
+Criteria (N ACs) / Scope write-up: <raw URL>` pointer with a clean
+`[GitHub Issue](<url>)` markdown link. Also updated the "Setup: idempotent
+re-refinement" section's re-pickup match rule (it used to grep for the old
+fixed strings) to match on the new leading-icon + `research-loop -`
+prefix instead. No transition period — old-titled comments on in-flight
+tickets are simply no longer matched by re-pickup; this only means a
+ticket with an old-titled comment gets a *new* comment on its next pass
+rather than an update-in-place, which is harmless.
+
 ## 2026-09-16 — `--project <name>` CLI flag; fix silent `--config` override
 
 `src/main.ts` now requires `--project <name>` (resolved to

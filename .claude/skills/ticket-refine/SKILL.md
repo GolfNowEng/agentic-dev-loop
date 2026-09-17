@@ -24,10 +24,14 @@ or to bounce it with concrete evidence of why it isn't ready.
 
 ## Setup: idempotent re-refinement
 
-**Always check first**: does this ticket already have a `Refined Spec —
-ready for ticket-to-pr` comment (Jira) or an equivalent `## Refined Spec —
-ready for ticket-to-pr` comment on the mirror GitHub Issue (Step 0.5)?
-Either is evidence of a prior pass. Two cases:
+**Always check first**: does this ticket already have a research-loop
+Jira comment (title starts with `✅ research-loop -` or `❌ research-loop
+-`) or an equivalent GitHub Issue comment (first line starts with `##
+✅ research-loop -` or `## ❌ research-loop -`)? Either is evidence of a
+prior pass — match on the leading icon + `research-loop -` prefix, not
+the old fixed strings (`Refined Spec — ready for ticket-to-pr`,
+`Ticket-Refine Bounce — <category>`) that this convention replaces; this
+skill no longer writes those. Two cases:
 
 - **First pickup** (no such comment exists): proceed through Steps 0–7
   below as a fresh refinement. The ticket's description is never touched —
@@ -351,7 +355,7 @@ naming the specific blocker.
 
 Write the refined ticket. Per the ticket content protocol (below), this
 means writing working notes to the **GitHub Issue** during work (not
-Jira), and only writing the full `Refined Spec — ready for ticket-to-pr`
+Jira), and only writing the full `## ✅ research-loop - <short context>`
 content to that same GitHub Issue, plus the short pointer comment to
 Jira, once a passing verdict is reached in Step 7. The description is
 never touched.
@@ -458,10 +462,10 @@ This is not conditional on how the run concludes.
 
 ## Definition-of-ready checklist (enforced, not vibed)
 
-0. The GitHub Issue's `## Refined Spec — ready for ticket-to-pr` comment
+0. The GitHub Issue's `## ✅ research-loop - <short context>` comment
    exists and follows the official template: `### Overview`, `### Acceptance
-   Criteria`, `### Scope` present and populated; the Jira `Refined Spec —
-   ready for ticket-to-pr` comment exists as its pointer, per the ticket
+   Criteria`, `### Scope` present and populated; the Jira `✅ research-loop
+   - <short context>` comment exists as its pointer, per the ticket
    content protocol.
 1. Problem statement and every acceptance criterion are testable (each AC
    maps to an assertion `ticket-to-pr` could write a test against).
@@ -500,19 +504,46 @@ Jira-worthy, and *only* these:
 2. A scope call (the `too_large` bounce and its drafted split).
 3. An explicit confirmation request (something this skill genuinely cannot
    resolve without asking).
-4. A passing-verdict pointer: the `Refined Spec — ready for ticket-to-pr`
+4. A passing-verdict pointer: the `✅ research-loop - <short context>`
    comment, now shrunk to a short pointer + evidence summary rather than
    the full write-up (see below).
 
 No per-comment judgment call beyond this list — if content doesn't fit one
 of these four categories, it goes to GitHub, full stop.
 
-**Every Jira comment written under this protocol must @-mention
-`jira.mentionAccountId`** (from `pipeline.<project>.config.json`) — a new
-requirement Phase 1 introduces; no such convention existed before. Use
-Jira's `@[accountId]` mention syntax in the comment body (ADF format via
-`addCommentToJiraIssue`'s `contentFormat: "adf"`, or the equivalent
-markdown mention syntax if using `contentFormat: "markdown"`).
+**No mandatory @-mention.** Earlier revisions of this protocol required
+@-mentioning `jira.mentionAccountId` on every Jira comment; confirmed
+excessive in practice (real example: TARS-1462's Jira comment,
+2026-09-16). Comments no longer @-mention anyone. `jira.mentionAccountId`
+itself stays in config as an unused field for now — removing it is its
+own small cleanup, not bundled here.
+
+**Comment title convention, both outcomes:**
+
+```
+{✅|❌} research-loop - <short context>
+```
+
+`✅` = passing/landed verdict, `❌` = bounced. `<short context>` is a
+one-line human-readable summary of the ticket's substance — for a bounce,
+still make the failure category obvious in plain language (e.g. `❌
+research-loop - scope too large, needs split`, not `❌
+research-loop - too_large`). This replaces the old fixed titles (`Refined Spec — ready
+for ticket-to-pr`, `Ticket-Refine Bounce — <failure_category>`) outright
+— no transition period; re-pickup only needs to find *a* matching
+comment (per "Setup: idempotent re-refinement" above), not preserve
+historically-titled ones.
+
+**Clean issue link, no section manifest.** Where this protocol previously
+pointed to the GitHub Issue via `Full Overview / Acceptance Criteria (N
+ACs) / Scope write-up: <raw URL>`, use a single clean markdown link
+instead:
+
+```
+[GitHub Issue](<url>)
+```
+
+on both a passing-verdict pointer and a bounce's evidence-pointer.
 
 GitHub-only (posted as a comment on this run's mirror Issue, via `gh issue
 comment <number> --repo <github.repo> --body "..."`, per Step 0.5): recon
@@ -528,41 +559,40 @@ requirement).
    pre-Phase-1 behavior, where all of this went to Jira working comments.
    The Jira description is never used as a scratchpad, and never
    rewritten, exactly as before.
-2. **On a passing verdict**, write **one Jira comment**, titled exactly
-   `Refined Spec — ready for ticket-to-pr`, @-mentioning
-   `jira.mentionAccountId`, containing:
+2. **On a passing verdict**, write **one Jira comment**, titled `✅
+   research-loop - <short context>` (per the convention above),
+   containing:
    - A one-paragraph summary (not the full Overview/AC/Scope write-up).
-   - A plain-URL pointer to the GitHub Issue, which itself carries the
-     full `### Overview` / `### Acceptance Criteria` / `### Scope` refined
+   - `[GitHub Issue](<url>)` — the GitHub Issue itself carries the full
+     `### Overview` / `### Acceptance Criteria` / `### Scope` refined
      spec content as its own comment (see item 4 below) — `ticket-to-pr`
-     reads the GitHub Issue as its real work order, not this Jira comment,
-     once dev-loop migrates in Phase 2; until then, this Jira comment's
-     pointer is what a human clicks through to review the real content.
-   - The @-mention.
-3. **On a bounce**, write **one Jira comment**, titled exactly
-   `Ticket-Refine Bounce — <failure_category>`, @-mentioning
-   `jira.mentionAccountId`, containing the same fixed
+     reads the GitHub Issue as its real work order, not this Jira
+     comment, once dev-loop migrates in Phase 2; until then, this Jira
+     comment's link is what a human clicks through to review the real
+     content.
+3. **On a bounce**, write **one Jira comment**, titled `❌ research-loop -
+   <short context>` (per the convention above — make the failure category
+   obvious in plain language), containing the same fixed
    Verdict/Summary/Needs-from-you header as before, but with the free-form
-   evidence section replaced by a pointer to the GitHub Issue comment
-   carrying the full evidence — unless the bounce category is itself one
-   of the four Jira-worthy kinds above (e.g. `spec_ambiguous` naming the
-   specific ambiguous readings *is* the blocking-ambiguity content Jira is
-   for) — in that case, the ambiguity/scope-call/confirmation-request
-   content itself stays in this Jira comment directly, and only the
-   *supporting* evidence (grounding detail, attack findings that fed the
-   judgment) goes to GitHub.
+   evidence section replaced by `[GitHub Issue](<url>)` carrying the full
+   evidence — unless the bounce category is itself one of the four
+   Jira-worthy kinds above (e.g. `spec_ambiguous` naming the specific
+   ambiguous readings *is* the blocking-ambiguity content Jira is for) —
+   in that case, the ambiguity/scope-call/confirmation-request content
+   itself stays in this Jira comment directly, and only the *supporting*
+   evidence (grounding detail, attack findings that fed the judgment)
+   goes to the linked GitHub Issue.
 4. **The GitHub Issue itself carries the full refined-ticket content** on
    a passing verdict — post the complete `### Overview` / `### Acceptance
    Criteria` / `### Scope` template (identical structure to the old
    full-detail Jira comment) as a GitHub Issue comment, titled in its own
-   first line `## Refined Spec — ready for ticket-to-pr` (GitHub has no
+   first line `## ✅ research-loop - <short context>` (GitHub has no
    comment-title field, so this is a markdown heading instead).
-5. **On re-pickup** (an existing `Refined Spec`/`Ticket-Refine Bounce`
-   Jira comment found, or an existing GitHub Issue comment of the
-   equivalent title found): update that same comment/Issue-comment in
-   place rather than posting a new one each cycle, on both sides
-   independently — Jira's pointer comment and the GitHub Issue's full-
-   detail comment are each their own idempotent target.
+5. **On re-pickup** (an existing research-loop-titled Jira comment found,
+   or an existing GitHub Issue comment of the equivalent title found —
+   see "Setup: idempotent re-refinement" for the exact match rule): update
+   that same comment/Issue-comment in place rather than posting a new one
+   each cycle, on both sides independently.
 6. The Step 7 verifier checks the GitHub Issue comment's content and
    format (the full Overview/AC/Scope now lives there, not in Jira) — a
    refined ticket without these sections in the GitHub Issue, or without
@@ -592,15 +622,15 @@ A bounce is a normal, successful exit — not a crash. On any bounce:
 
 1. Run Cleanup (see above) — it applies regardless of why this run is
    ending; a bounce is not an exception to it.
-2. Write **one Jira comment** (never the description), titled exactly
-   `Ticket-Refine Bounce — <failure_category>` (e.g.
-   `Ticket-Refine Bounce — blocked`) — greppable and consistent the same
-   way `Refined Spec — ready for ticket-to-pr` is for a passing verdict,
-   @-mentioning `jira.mentionAccountId` per the ticket content protocol.
-   Open the comment body with this fixed three-line header, then the
-   evidence free-form below it (evidence genuinely varies by category —
-   a `blocked` bounce and a `spec_contradicted` bounce don't look alike,
-   and forcing them into one shape would lose signal):
+2. Write **one Jira comment** (never the description), titled `❌
+   research-loop - <short context>` (per the convention above, e.g. `❌
+   research-loop - blocked, needs a human decision`) — greppable by the
+   leading icon + `research-loop -` prefix, no longer by the old fixed
+   strings this replaces. Open the comment body with this fixed
+   three-line header, then the evidence free-form below it (evidence
+   genuinely varies by category — a `blocked` bounce and a
+   `spec_contradicted` bounce don't look alike, and forcing them into one
+   shape would lose signal):
    ```
    **Verdict:** bounced (`<failure_category>`)
    **Summary:** <one sentence — what's wrong, in plain language>
@@ -617,11 +647,11 @@ A bounce is a normal, successful exit — not a crash. On any bounce:
    the bounce category itself is Jira-worthy content per the routing rule
    (e.g. `spec_ambiguous` naming the ambiguous readings, `too_large`
    naming the scope call and its drafted split); otherwise this comment's
-   evidence section is a pointer to the GitHub Issue comment carrying the
-   full detail, per "Ticket content protocol" item 3 above.
+   evidence section is `[GitHub Issue](<url>)` carrying the full detail,
+   per "Ticket content protocol" item 3 above.
    On re-pickup after a bounce, find and update this same comment (same
-   title convention as the `Refined Spec` comment) rather than posting a
-   second one each cycle.
+   title convention as a passing verdict) rather than posting a second
+   one each cycle.
 3. Write `verdict.json` with `outcome: "bounced"`, the step you stopped at
    as `phase_reached` (use the closest match: `triage`→`intake`,
    `interpret`/`ground`/`attack`→`plan`, `scope`/`blocked-check`→`plan`,
