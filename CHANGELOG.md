@@ -6,6 +6,21 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-17 — startup-time merge-reconciliation pass, closes the mirror Issue on merge
+
+Nothing in this pipeline reacted to a GitHub PR merge event -- GitHub's
+own "Closes #N" auto-close only fires while dev-loop happens to be
+running at merge time. Added `reconcileMergedTickets`
+(`src/reconcile.ts`), run once per poll cycle before `runLoopIteration`:
+finds every ticket at Code Review via a new `JiraClient.pollAllMatching`
+query, resolves its PR URL from `runs.jsonl`'s own history, checks
+`gh pr view --json state,mergedAt`, and closes the mirror GitHub Issue on
+a confirmed merge. Deliberately does not touch the Jira ticket itself --
+narrower than the original Jira-label-trigger design's full
+`pipeline:dev`→`pipeline:merged` swap, since the label scheme that
+depended on (`stageLabels`/`pipeline:pr-open`) was never built. See
+research-loop's `docs/future-enhancements.md` for the full history.
+
 ## 2026-09-17 — fix bounce-loop bug: exclude bounced-status tickets from pollJql.dev
 
 A bounced dev-loop ticket (status transitioned to `statusNames.bounced`,

@@ -295,3 +295,69 @@ describe("RealJiraClient", () => {
     expect(JSON.parse(init.body as string)).toEqual({ body: bodyAdf });
   });
 });
+
+describe("RealJiraClient.pollAllMatching", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns every matching ticket, not just the oldest", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          issues: [
+            {
+              key: "PROJ-1",
+              fields: {
+                status: { name: "Code Review" },
+                assignee: { accountId: "user-123" },
+              },
+            },
+            {
+              key: "PROJ-2",
+              fields: {
+                status: { name: "Code Review" },
+                assignee: null,
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const tickets = await client.pollAllMatching('labels = "pipeline:dev"');
+
+    expect(tickets).toEqual([
+      { key: "PROJ-1", status: "Code Review", assignee: "user-123" },
+      { key: "PROJ-2", status: "Code Review", assignee: null },
+    ]);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://example.atlassian.net/rest/api/3/search/jql");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      jql: 'labels = "pipeline:dev"',
+      fields: ["status", "assignee"],
+    });
+  });
+
+  it("returns an empty array when nothing matches", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ issues: [] }), { status: 200 }),
+    );
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const tickets = await client.pollAllMatching('labels = "pipeline:dev"');
+
+    expect(tickets).toEqual([]);
+  });
+});

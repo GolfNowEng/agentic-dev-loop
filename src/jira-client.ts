@@ -24,6 +24,14 @@ export interface JiraClient {
   pollOldestMatching(jql: string): Promise<JiraTicket | null>;
 
   /**
+   * Poll Jira for every ticket matching the given JQL (not just the
+   * oldest) -- used by the merge-reconciliation pass, which needs to
+   * check every ticket currently at Code Review, not claim one at a time
+   * the way the main poll loop does.
+   */
+  pollAllMatching(jql: string): Promise<JiraTicket[]>;
+
+  /**
    * Attempt to atomically claim a ticket by transitioning it from one
    * status to another. Returns false (never throws) if the transition
    * failed because another process raced it and already moved the
@@ -89,6 +97,10 @@ export class StubJiraClient implements JiraClient {
 
   async pollOldestMatching(_jql: string): Promise<JiraTicket | null> {
     throw StubJiraClient.notConfigured("pollOldestMatching");
+  }
+
+  async pollAllMatching(_jql: string): Promise<JiraTicket[]> {
+    throw StubJiraClient.notConfigured("pollAllMatching");
   }
 
   async claimTicket(
@@ -243,6 +255,22 @@ export class RealJiraClient implements JiraClient {
       status: issue.fields.status.name,
       assignee: issue.fields.assignee?.accountId ?? null,
     };
+  }
+
+  async pollAllMatching(jql: string): Promise<JiraTicket[]> {
+    const response = await this.request("/rest/api/3/search/jql", {
+      method: "POST",
+      body: JSON.stringify({
+        jql,
+        fields: ["status", "assignee"],
+      }),
+    });
+    const data = (await response.json()) as JiraSearchResponse;
+    return data.issues.map((issue) => ({
+      key: issue.key,
+      status: issue.fields.status.name,
+      assignee: issue.fields.assignee?.accountId ?? null,
+    }));
   }
 
   async claimTicket(ticketKey: string, from: string, to: string): Promise<boolean> {

@@ -47,6 +47,7 @@ function makeTicket(overrides: Partial<JiraTicket> = {}): JiraTicket {
 function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
   return {
     pollOldestMatching: vi.fn(async () => null),
+    pollAllMatching: vi.fn(async () => []),
     claimTicket: vi.fn(async () => true),
     transitionStatus: vi.fn(async () => {}),
     swapLabel: vi.fn(async () => {}),
@@ -902,6 +903,7 @@ describe("runLoopIteration", () => {
     await withTempRunsLog(async (runsLogPath) => {
       const ticket = makeTicket({ key: "PROJ-9" });
       const pollOldestMatching = vi.fn(async () => ticket);
+      const pollAllMatching = vi.fn(async () => []);
       const claimTicket = vi.fn(async () => true);
       const transitionStatus = vi.fn(async () => {});
       const swapLabel = vi.fn(async () => {});
@@ -909,6 +911,7 @@ describe("runLoopIteration", () => {
       const addComment = vi.fn(async () => {});
       const jiraClient: JiraClient = {
         pollOldestMatching,
+        pollAllMatching,
         claimTicket,
         transitionStatus,
         swapLabel,

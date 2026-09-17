@@ -24,8 +24,10 @@ import {
   resolveProjectConfigPath,
 } from "./config.ts";
 import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./jira-client.ts";
+import { RealGitHubClient, realExecGh } from "./github-client.ts";
 import { runLoopIteration } from "./loop-runner.ts";
 import type { RunSkillFn } from "./loop-runner.ts";
+import { reconcileMergedTickets, realExecGhPrView } from "./reconcile.ts";
 import { countRunsToday } from "./runs-log.ts";
 import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.ts";
 import { extractUsage } from "./claude-usage.ts";
@@ -308,6 +310,7 @@ async function main(): Promise<void> {
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();
   const jiraClient = new RealJiraClient(credentials, config);
+  const githubClient = new RealGitHubClient(config.github, realExecGh());
 
   const slug = repoSlugFromUrl(config.targetRepo.url);
   await mkdir("runs", { recursive: true });
@@ -453,9 +456,33 @@ async function main(): Promise<void> {
   };
 
   for (;;) {
+    try {
+      const reconcileResult = await reconcileMergedTickets({
+        jiraClient,
+        githubClient,
+        config,
+        runsLogPath,
+        execGhPrView: realExecGhPrView(),
+      });
+      if (reconcileResult.closed.length > 0) {
+        log(`[${SKILL_NAME}] reconciliation: closed mirror Issue(s) for ${reconcileResult.closed.join(", ")}`);
+      }
+      for (const err of reconcileResult.errors) {
+        logError(`[${SKILL_NAME}] reconciliation: ${err.ticket}: ${err.message}`);
+      }
+    } catch (err) {
+      // The reconciliation pass itself must never throw out of the poll
+      // loop -- same never-throw contract every other I/O boundary in
+      // this file already follows. A failure here just means this
+      // cycle's reconciliation didn't run; the next cycle tries again.
+      const message = err instanceof Error ? err.message : String(err);
+      logError(`[${SKILL_NAME}] reconciliation pass failed: ${message}`);
+    }
+
     const runsToday = await countRunsToday(runsLogPath, new Date());
     const result = await runLoopIteration({
       jiraClient,
+      githubClient,
       config,
       runSkill,
       loopKind: "dev",

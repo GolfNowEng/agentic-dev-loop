@@ -227,6 +227,39 @@ this — omitted entirely (not sent as `{}`) when a transition needs none
 (e.g. the `bounced` transition), so a transition with no screen requirement
 isn't given an unnecessary payload.
 
+## Startup-time merge-reconciliation pass
+
+At the top of every poll cycle (before `runLoopIteration`), `main.ts`
+runs `reconcileMergedTickets` (`src/reconcile.ts`): finds every ticket at
+`handoffLabel` + `statusNames.prOpen` (Code Review) via a new
+`JiraClient.pollAllMatching` query, resolves each one's PR URL from the
+most recent `"landed"` line in `runs/<slug>.jsonl` for that ticket key,
+and checks the real merge state via `gh pr view <url> --json
+state,mergedAt`. For any that merged, closes the mirror GitHub Issue
+(`state_reason: "completed"`) via `GitHubClient.closeIssue` — but does
+**not** touch the Jira ticket's status or label. A human still closes the
+Jira ticket by hand; this pass exists only so the GitHub Issue doesn't
+stay open indefinitely after a merge that happened while dev-loop was
+offline (GitHub's own `Closes #N` convention auto-closes the Issue on a
+merge that happens while dev-loop is *running*, but a merge missed while
+offline needs this catch-up).
+
+This is a narrower scope than the original Jira-label-trigger design
+sketched (`pipeline:dev` → `pipeline:merged`, both systems) — that design
+depended on a `stageLabels`/`pipeline:pr-open` label scheme that was
+never built (see research-loop's `docs/future-enhancements.md`'s
+checkpoint section). Reopening the full label-based version is tracked
+there, not here.
+
+A ticket with no `"landed"` line in its own `runs.jsonl` (e.g. it reached
+Code Review through a means this pass can't trace a PR URL from) is
+recorded as a per-ticket error and skipped, not a crash — the pass keeps
+checking every other candidate ticket regardless. Idempotent by
+construction: `GitHubClient.closeIssue` is itself a safe no-op on an
+already-closed issue, so re-running this pass on a ticket whose Issue is
+already closed just re-confirms the merge and reports it closed again,
+without erroring.
+
 ## Appendix A (Jira wiring)
 
 Every Jira-specific value above starts as the literal placeholder string
