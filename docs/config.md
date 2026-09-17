@@ -150,6 +150,34 @@ consecutive re-runs over ~35 minutes after PR #431 landed, ~$3 total
 cost, each one re-discovering and re-reporting the same already-landed
 state before the fix. See `CHANGELOG.md`'s entry for this fix.
 
+**Stuck-at-wrong-status bug, fixed:** the `pollJql.dev` exclusion above
+only helps once the ticket's real Jira status actually reaches
+`statusNames.prOpen`. If the original landed-verdict transition to Code
+Review itself silently fails (a transient API error, or a race with
+another write to the same ticket — both caught by `loop-runner.ts`'s own
+try/catch, which logs the run but never re-attempts the transition), the
+ticket's real status stays wherever it was before (e.g. "In Progress"),
+which the `prOpen` exclusion does nothing for, and every subsequent poll
+still matches, re-runs, and re-bounces. Confirmed live on TARS-1465 a
+second time: the *original* Code Review transition never took (Jira's
+own changelog shows the ticket sitting at "In Progress" throughout),
+so even with the `pollJql.dev` fix above in place it re-ran and
+re-bounced 7+ times over 45 minutes, each bounce correctly reporting "PR
+already open, nothing to do" but never correcting Jira's own state.
+**Fix**: the bounced-with-existing-PR branch of `loop-runner.ts` now
+checks the polled ticket's real status against `statusNames.prOpen` and,
+if they differ, performs the Code Review transition itself (self-heal)
+before posting its GitHub comment — using the same fields a normal
+landed verdict sends. If the ticket is already correctly at `prOpen`,
+the transition is skipped as a no-op — this branch never transitions
+toward `bounced`, only ever toward `prOpen`, so TARS-1389's original
+"don't clobber Code Review back to Blocked" invariant stays intact.
+This is a genuinely narrow trigger — it only fires when the earlier
+landed-verdict write already failed — but nothing before this fix could
+ever recover from it once it happened, so the ticket looped
+indefinitely, burning cost every cycle, until a human noticed and
+intervened by hand.
+
 **Future: multiple concurrent loop instances.** Running more than one
 research-loop or dev-loop terminal against the same project at once has no
 coordination mechanism today and would race. A real fix would need

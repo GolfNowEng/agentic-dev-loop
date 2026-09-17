@@ -861,6 +861,76 @@ describe("runLoopIteration", () => {
     });
   });
 
+  it("a bounced verdict with an existing PR self-heals the status to Code Review when the ticket is NOT already there -- otherwise the ticket is stuck at whatever status it's really at (e.g. the original Code Review transition silently failed) with no path back, so it keeps re-matching pollJql.dev forever. Confirmed live on TARS-1465: PR #431 landed but the ticket's real status stayed 'In Progress' (the original transition never took), so it re-ran and re-bounced 7+ times over 45 minutes with no self-correction.", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      // Ticket status is "In Progress" (makeTicket's default) while
+      // config.jira.statusNames.prOpen is "Code Review" -- the two differ,
+      // modeling a ticket whose Code Review transition never actually took.
+      const ticket = makeTicket({ key: "TARS-1465" });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+      });
+      const config = makeConfig();
+      config.jira.statusNames.prOpen = "Code Review";
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({
+          outcome: "bounced",
+          failure_category: "blocked",
+          detail: "PR #431 already open, mergeable, all CI checks pass. No new work to do.",
+          pr: "https://github.com/fandango/webtarsthree/pull/431",
+        }),
+        started: "2026-09-17T22:22:27Z",
+        ended: "2026-09-17T22:24:55Z",
+        costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
+      }));
+
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+
+      const result = await runLoopIteration(deps);
+
+      expect(result.kind).toBe("ran");
+      expect(jiraClient.swapLabel).not.toHaveBeenCalled();
+      expect(jiraClient.transitionStatus).toHaveBeenCalledTimes(1);
+      expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
+        "TARS-1465",
+        "Code Review",
+        expect.objectContaining({ customfield_13504: expect.anything() }),
+      );
+    });
+  });
+
+  it("a bounced verdict with an existing PR does NOT re-transition when the ticket is already at Code Review -- the self-heal is idempotent, it only fires when the ticket's real status disagrees with prOpen", async () => {
+    await withTempRunsLog(async (runsLogPath) => {
+      const ticket = makeTicket({ key: "TARS-1389", status: "Code Review" });
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: vi.fn(async () => ticket),
+      });
+      const config = makeConfig();
+      config.jira.statusNames.prOpen = "Code Review";
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({
+          outcome: "bounced",
+          failure_category: "blocked",
+          detail: "PR #400 already open; ticket already at Code Review.",
+          pr: "https://github.com/fandango/webtarsthree/pull/400",
+        }),
+        started: "2026-09-02T02:49:16Z",
+        ended: "2026-09-02T02:50:42Z",
+        costUsd: MEASURED_COST_USD,
+        tokens: MEASURED_TOKENS,
+      }));
+
+      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+
+      const result = await runLoopIteration(deps);
+
+      expect(result.kind).toBe("ran");
+      expect(jiraClient.swapLabel).not.toHaveBeenCalled();
+      expect(jiraClient.transitionStatus).not.toHaveBeenCalled();
+    });
+  });
+
   it("appends exactly one valid runs.jsonl line per run, matching the schema", async () => {
     await withTempRunsLog(async (runsLogPath) => {
       const ticket = makeTicket({ key: "PROJ-8" });

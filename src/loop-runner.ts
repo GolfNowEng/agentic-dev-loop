@@ -197,17 +197,40 @@ export async function runLoopIteration(
       if (githubError) {
         jiraSyncError = jiraSyncError ? `${jiraSyncError}; ${githubError}` : githubError;
       }
+    } else if (verdict.outcome === "bounced" && verdict.pr !== null) {
+      // Intake found this ticket's work already landed (nothing to do,
+      // not a blocker) -- normally because an earlier run's landed-PR
+      // transition to Code Review already succeeded, in which case
+      // re-transitioning here is skipped as a no-op (see the status check
+      // below). But if that earlier transition silently failed (a
+      // transient API error caught by this same try/catch, or a race --
+      // see poll-loop.ts's TARS-1389 writeup) the ticket's real status
+      // never left "In Progress", so it still matches pollJql.dev's
+      // prOpen exclusion (which only excludes tickets ALREADY at Code
+      // Review) and every future poll cycle re-runs and re-bounces this
+      // same ticket forever. Confirmed live on TARS-1465: PR #431 landed
+      // but the status transition never took, so it re-ran and re-bounced
+      // 7+ times over 45 minutes with no self-correction, at which point
+      // a human had to intervene by hand. Self-heal here: if the ticket's
+      // current status isn't already prOpen, transition it now, using
+      // the same fields a normal landed verdict would send.
+      if (ticket.status !== config.jira.statusNames.prOpen) {
+        const fields = buildCodeReviewFields(config, buildQaNotesAdf(verdict));
+        await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.prOpen, fields);
+      }
+
+      const githubError = await postGitHubDetail(
+        githubClient,
+        ticket.key,
+        `Bounced (${verdict.failure_category}): ${verdict.detail}`,
+      );
+      if (githubError) {
+        jiraSyncError = jiraSyncError ? `${jiraSyncError}; ${githubError}` : githubError;
+      }
     } else if (verdict.outcome === "bounced" && verdict.pr === null) {
       // A genuine blocker (spec_ambiguous, too_large, env_setup, etc.)
       // always happens before Phase 5 (PR) and therefore never has
-      // verdict.pr set -- that's the only case Blocked should signal. A
-      // bounced verdict WITH a pr means intake found this ticket's work
-      // already landed (nothing to do, not a blocker); transitioning that
-      // to Blocked would stomp a status the ticket may have already
-      // correctly moved past. Confirmed live on TARS-1389: the poll-loop
-      // race (see poll-loop.ts) produced a second run that bounced cleanly
-      // with an existing PR, and this unconditional transition clobbered
-      // the ticket's just-set Code Review status back to Blocked.
+      // verdict.pr set -- that's the only case Blocked should signal.
       //
       // Post the verdict's own evidence as a comment BEFORE the status
       // transition -- a bounce used to leave the ticket in Blocked with no

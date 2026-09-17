@@ -6,6 +6,31 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-17 — bounced-with-existing-PR intake never corrected Jira status, so a ticket whose Code Review transition failed looped forever
+
+The `pollJql.dev` fix below stops re-polling a ticket once its status
+genuinely reaches `statusNames.prOpen` ("Code Review") -- but does
+nothing if the ticket never actually got there. If the landed verdict's
+own Code Review transition silently failed (a transient API error, or a
+race with another write -- both already caught by `loop-runner.ts`'s
+try/catch, which logs the failure but never retries the transition), the
+ticket's real Jira status stays wherever it was before, still matches
+the poll, and every subsequent run re-discovers "PR already open,
+nothing to do," bounces, and leaves Jira exactly as broken as before --
+no code path ever tried to correct it. Confirmed live on TARS-1465 a
+second time (after the `pollJql.dev` fix was already in place): Jira's
+own changelog showed the ticket sitting at "In Progress" the entire
+time, never having reached Code Review at all, so it re-ran and
+re-bounced 7+ times over 45 minutes before a human intervened by hand.
+
+**Fix**: the bounced-with-existing-PR branch in `loop-runner.ts` now
+checks the polled ticket's real status against `statusNames.prOpen` and
+performs the Code Review transition itself when they differ (self-heal),
+using the same fields a normal landed verdict sends. A no-op when the
+ticket is already correctly at Code Review, so this can't reintroduce
+the earlier TARS-1389 bug (clobbering Code Review back to Blocked) --
+this branch still never transitions toward `bounced`.
+
 ## 2026-09-17 — `pollJql.dev` re-matched a ticket after its PR already landed, causing repeated redundant bounces
 
 Once a landed PR transitions a ticket to `statusNames.prOpen` ("Code
