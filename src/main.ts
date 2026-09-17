@@ -1,5 +1,7 @@
 /**
- * CLI entrypoint: `node --env-file=.env src/main.ts --config <path> [--once]`.
+ * CLI entrypoint: `node --env-file=.env src/main.ts --project <name> [--once]`.
+ * `--config <path>` also works as a fallback for an arbitrary path outside
+ * the naming convention; passing both --project and --config is an error.
  *
  * Wires the real Jira client and a real `claude -p` spawn into the already-
  * tested `runLoopIteration()`, then drives a poll/sleep loop around it. This
@@ -18,6 +20,7 @@ import {
   loadLoopConfig,
   assertNoPlaceholders,
   repoSlugFromUrl,
+  resolveProjectConfigPath,
 } from "./config.ts";
 import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./jira-client.ts";
 import type { JiraTicket } from "./jira-client.ts";
@@ -77,15 +80,23 @@ const ALLOWED_TOOLS = [
 
 function parseArgs(
   argv: string[],
-): { configPath: string; once: boolean; stream: boolean } {
+): { project?: string; configPath?: string; once: boolean; stream: boolean } {
+  const projectIndex = argv.indexOf("--project");
+  const project = projectIndex !== -1 ? argv[projectIndex + 1] : undefined;
   const configIndex = argv.indexOf("--config");
   const configPath = configIndex !== -1 ? argv[configIndex + 1] : undefined;
-  if (!configPath) {
+  if (project && configPath) {
     throw new Error(
-      "main.ts requires --config <path-to-pipeline.<project>.config.json>",
+      "main.ts: pass either --project <name> or --config <path>, not both.",
+    );
+  }
+  if (!project && !configPath) {
+    throw new Error(
+      "main.ts requires --project <name> (or --config <path-to-pipeline.<project>.config.json> as a fallback).",
     );
   }
   return {
+    project,
     configPath,
     once: argv.includes("--once"),
     stream: argv.includes("--stream"),
@@ -306,9 +317,10 @@ function spawnClaudeStreaming(
 }
 
 async function main(): Promise<void> {
-  const { configPath, once, stream } = parseArgs(process.argv.slice(2));
+  const { project, configPath, once, stream } = parseArgs(process.argv.slice(2));
 
-  const config = await loadConfig(configPath);
+  const resolvedConfigPath = configPath ?? (await resolveProjectConfigPath(project));
+  const config = await loadConfig(resolvedConfigPath);
   assertNoPlaceholders(config);
   const loopConfig = await loadLoopConfig();
 
