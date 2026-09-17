@@ -3,16 +3,16 @@
     "triggerLabel": "pipeline:dev",
     "handoffLabel": "pipeline:dev",
     "repoLabel": "repo:catalog-ui-management",
-    "claimStatus": { "from": "To Do", "to": "In Progress" },
+    "claimStatus": { "from": "___", "to": "___" },
     "pollJql": {
-      "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"To Do\" ORDER BY created ASC",
+      "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"___\" ORDER BY created ASC",
       "dev": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND assignee = \"{assignee}\" AND status != \"{bouncedStatus}\" ORDER BY created ASC"
     },
-    "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" },
+    "statusNames": { "bounced": "___", "prOpen": "___" },
     "codeReviewFields": {
-      "piiField": "customfield_13504",
-      "piiNoImpactOptionId": "14310",
-      "qaNotesField": "customfield_14226"
+      "piiField": "___",
+      "piiNoImpactOptionId": "___",
+      "qaNotesField": "___"
     }
   },
   "ceilings": { "maxRunsPerDay": 100, "maxCostPerRunUsd": 20, "runTimeoutMin": 45 },
