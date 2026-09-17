@@ -349,7 +349,15 @@ function qaNoteStepContent(step: string): Array<Record<string, unknown>> {
  * just the copy that reaches Jira. Bold "failure_category" label followed
  * by the skill's own one-line detail, matching the plain-paragraph shape
  * of buildQaNotesAdf's PR-link-stub fallback (no rich structure needed for
- * a single line).
+ * a single line). Opens with the `{✅|❌} dev-loop - <short context>`
+ * convention (matching research-loop's own comment-title convention, per
+ * docs/future-enhancements.md's "Simplify Jira/GitHub comment templates"
+ * entry) as its bold first line, using `failure_category` directly as the
+ * short-context text since it's already a closed, human-readable-enough
+ * enum value for this repo's own bounce comment (research-loop's own
+ * version writes a fuller plain-language phrase; this repo's existing
+ * convention has always used the bare category name and this change
+ * doesn't alter that, only the leading icon+repo-name prefix).
  */
 export function buildBounceCommentAdf(verdict: Verdict): Record<string, unknown> {
   return {
@@ -359,7 +367,7 @@ export function buildBounceCommentAdf(verdict: Verdict): Record<string, unknown>
       {
         type: "paragraph",
         content: [
-          { type: "text", text: `Bounced (${verdict.failure_category}): `, marks: [{ type: "strong" }] },
+          { type: "text", text: `❌ dev-loop - ${verdict.failure_category}: `, marks: [{ type: "strong" }] },
           { type: "text", text: verdict.detail },
         ],
       },

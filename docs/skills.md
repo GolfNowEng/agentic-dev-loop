@@ -11,10 +11,11 @@ shared fetch-only clone at `.pipeline/<slug>/repo` otherwise (see
 `docs/logging.md`) — never that source checkout directly, so a human
 working in it manually is never affected by a background run:
 
-1. **Intake** — find the `Refined Spec — ready for ticket-to-pr` comment
-   `research-loop` posts and confirm it has the template sections
-   populated; bounce immediately if the comment is missing or malformed.
-2. **Plan** — break the Refined Spec comment's acceptance criteria into
+1. **Intake** — find the research-loop comment (title starts with `✅
+   research-loop -`, per research-loop's own comment convention) and
+   confirm it has the template sections populated; bounce immediately if
+   the comment is missing or malformed.
+2. **Plan** — break the research-loop comment's acceptance criteria into
    concrete steps; bounce on any AC that requires inference it doesn't
    state.
 3. **Red** — write a failing test per AC, confirm it fails for the right
@@ -49,8 +50,8 @@ what made TARS-1441/TARS-1438 look opaque on 2026-09-14 (see CHANGELOG).
 
 **Ticket content protocol**: the ticket's description is the stakeholder's
 original, untouched by `research-loop`, and is background context only —
-never authoritative for AC/Scope. The `Refined Spec — ready for
-ticket-to-pr` comment is the actual work order (see research-loop's
+never authoritative for AC/Scope. The research-loop comment (title starts
+with `✅ research-loop -`) is the actual work order (see research-loop's
 `docs/skills.md` for why it lives in a comment instead of the
 description).
 
@@ -69,7 +70,7 @@ server shutdown is never conditional.
 `.claude/agents/qa-agent.md` — a genuinely fresh-context subagent spawned
 during Verify. It sees only the ticket key and the path to `ticket-to-pr`'s
 already-created run worktree (never the implementer's reasoning) — and
-checks, against the Refined Spec comment's AC/Scope (not the description):
+checks, against the research-loop comment's AC/Scope (not the description):
 AC satisfaction, scope discipline (no files touched beyond what Scope
 names), regressions, test quality, and unrelated diff noise. Not
 limited to static diff reading: for ACs that are visual, timing-sensitive,

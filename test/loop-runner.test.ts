@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { runLoopIteration, buildQaNotesAdf } from "../src/loop-runner.ts";
+import { runLoopIteration, buildQaNotesAdf, buildBounceCommentAdf } from "../src/loop-runner.ts";
 import type { RunSkillFn, LoopIterationDeps, LoopIterationResult } from "../src/loop-runner.ts";
 import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
 import type { GitHubClient } from "../src/github-client.ts";
@@ -933,6 +933,32 @@ describe("runLoopIteration", () => {
       expect(pollOldestMatching).toHaveBeenCalled();
       expect(runSkill).toHaveBeenCalledWith("PROJ-9");
     });
+  });
+});
+
+describe("buildBounceCommentAdf", () => {
+  it("opens with the '{icon} dev-loop - <short context>' convention as its bold first line, not the old 'Bounced (<category>):' prefix", () => {
+    const adf = buildBounceCommentAdf(
+      makeVerdict({
+        outcome: "bounced",
+        failure_category: "spec_ambiguous",
+        detail: "AC 3's assertion strategy is unspecified.",
+      }),
+    );
+
+    const firstParagraph = (adf.content as Array<Record<string, unknown>>)[0];
+    const firstTextNode = (firstParagraph.content as Array<Record<string, unknown>>)[0];
+    expect(firstTextNode.text).toBe("❌ dev-loop - spec_ambiguous: ");
+    expect((firstTextNode.marks as Array<{ type: string }>)[0].type).toBe("strong");
+  });
+
+  it("still includes the verdict's own detail text as the comment body, unchanged", () => {
+    const adf = buildBounceCommentAdf(
+      makeVerdict({ outcome: "bounced", failure_category: "blocked", detail: "Needs a human call." }),
+    );
+    const firstParagraph = (adf.content as Array<Record<string, unknown>>)[0];
+    const detailTextNode = (firstParagraph.content as Array<Record<string, unknown>>)[1];
+    expect(detailTextNode.text).toBe("Needs a human call.");
   });
 });
 

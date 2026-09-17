@@ -6,6 +6,18 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-17 — adopt the {icon} <repo> - <context> comment convention for the Jira bounce comment
+
+buildBounceCommentAdf's bold first line changes from `Bounced
+(<failure_category>):` to `❌ dev-loop - <failure_category>:`, matching
+research-loop's own new comment-title convention (see that repo's
+CHANGELOG.md, same date) rather than inventing a different template for
+this repo's own GitHub write (Task 5, this session) to follow later.
+Also updated ticket-to-pr/SKILL.md's Phase 0 intake step, which used to
+look for research-loop's now-retired `Refined Spec — ready for
+ticket-to-pr` exact title -- it now matches on the `✅ research-loop -`
+prefix instead.
+
 ## 2026-09-17 — startup-time merge-reconciliation pass, closes the mirror Issue on merge
 
 Nothing in this pipeline reacted to a GitHub PR merge event -- GitHub's

@@ -14,17 +14,18 @@ description: Turn a single ready Jira ticket into a PR against the target repo (
 Per spec section 5.0, this skill runs **downstream of the human review gate**
 and operates under full trust of the refined ticket:
 
-- The **`Refined Spec — ready for ticket-to-pr` comment** is the work order.
-  Treat it as near-perfect — do not renegotiate acceptance criteria, scope,
-  or the stated fault domain. `research-loop` never rewrites a stakeholder's
+- The **research-loop comment** (title starts with `✅ research-loop -`, per
+  research-loop's own comment convention) is the work order. Treat it as
+  near-perfect — do not renegotiate acceptance criteria, scope, or the
+  stated fault domain. `research-loop` never rewrites a stakeholder's
   original description, so the description itself is raw context only —
   useful for background, never authoritative for AC/Scope.
 - The ticket's **other comments** hold extra context (research-loop's recon
   findings, human steering notes at the review gate). Consult them when the
-  Refined Spec comment alone leaves a judgment call, but that comment
+  research-loop comment alone leaves a judgment call, but that comment
   remains authoritative.
 - **No guessing.** If an implementation decision can't be *reasoned to* from
-  the Refined Spec comment + other comments, or the described work turns out to be larger
+  the research-loop comment + other comments, or the described work turns out to be larger
   than stated, stop and bounce with exactly what was missing. A ticket is
   never edited by this skill — if the spec is wrong, ambiguous, or
   unimplementable as written, that is `ticket-refine`'s problem to fix
@@ -157,10 +158,13 @@ Each phase's `progress.jsonl` events use the phase name shown.
 
 1. Fetch the ticket (`getJiraIssue`, fields: summary, description, comments,
    status, issuetype) for `$ARGUMENTS`.
-2. Find the comment titled exactly `Refined Spec — ready for ticket-to-pr`.
-   If no such comment exists, or it exists but doesn't follow the
-   definition-of-ready template from `ticket-refine` (`### Overview`,
-   `### Acceptance Criteria`, `### Scope`) — this ticket should never have
+2. Find the ticket's research-loop-authored comment (title starts with
+   `✅ research-loop -`, per research-loop's own comment convention — see
+   its `docs/future-enhancements.md`'s "Simplify Jira/GitHub comment
+   templates" entry). If no such comment exists, or it exists but doesn't
+   follow the definition-of-ready template's `### Overview` / `###
+   Acceptance Criteria` / `### Scope` structure (whether inline or via
+   its `[GitHub Issue](url)` link) — this ticket should never have
    carried the `pipeline:dev` label — bounce immediately with
    `failure_category: "spec_ambiguous"` and detail noting the missing
    comment/sections. Do not attempt to proceed on an unreadied ticket.
@@ -179,13 +183,13 @@ Each phase's `progress.jsonl` events use the phase name shown.
    `New Feature Request`, etc.) → `feat`. A direct field mapping, not an
    inference — no judgment call to bounce over. Only add a breaking-change
    marker (`!` after the scope, or a `BREAKING CHANGE:` footer) if the
-   Refined Spec comment itself states the change is breaking; never infer
+   research-loop comment itself states the change is breaking; never infer
    one from scope size.
 
 ### Phase 1 — Plan
 
 Break the Acceptance Criteria into an ordered list of concrete steps. For
-each AC, from the Refined Spec comment's TDD-ready Acceptance Criteria, note: the test name,
+each AC, from the research-loop comment's TDD-ready Acceptance Criteria, note: the test name,
 what it asserts, and why it currently fails. Write this plan as a single
 note in `progress.jsonl` (not a separate file) — it exists to keep this run
 honest about scope, not as a deliverable.
@@ -199,7 +203,7 @@ touching any code.
 
 For each Acceptance Criterion, in order:
 
-1. Write the failing test named in that AC (per the Refined Spec comment's
+1. Write the failing test named in that AC (per the research-loop comment's
    TDD-ready statement of test name / assertion / why it fails).
 2. Run it. Confirm it actually fails, **and fails for the expected reason**
    (not e.g. a typo or missing import producing an unrelated error).
@@ -262,7 +266,7 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
    reviewer, one action per AC (or more if an AC has multiple observable
    steps): a concrete action ("Navigate to `<url>`", "Click X", "Type Y
    into Z") followed by an `Expected: <result>` entry describing what
-   should happen. Build these from the Refined Spec comment's Acceptance
+   should happen. Build these from the research-loop comment's Acceptance
    Criteria text directly — that comment already names concrete
    routes/URLs and expected outcomes for every ticket seen so far, and this
    skill already trusts it literally per its "no inference" rule, so no
