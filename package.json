@@ -10,7 +10,7 @@
     "build": "tsc",
     "check-auth": "node --env-file=.env scripts/check-jira-auth.mjs",
     "stats": "node scripts/stats.mjs",
-    "loop": "node --env-file=.env src/main.ts --config pipeline.webtarsthree.config.json"
+    "loop": "node --env-file=.env src/main.ts"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
