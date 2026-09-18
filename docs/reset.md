@@ -30,6 +30,14 @@ scoping rules, same test suite, same CLI shape), since both repos share
 the exact same local-state layout (`runs/<project>.jsonl`,
 `.pipeline/<project>/`, `.gitignore`'s `runs/`/`.pipeline/` entries).
 
+A second live test using this same "reset when done" workflow (TARS-1467,
+an autonomous auto-promote handoff test) surfaced the same manual-cleanup
+problem one level up: closing out the real Jira ticket and its GitHub
+Issue was still done by hand. `--close-remote` (see below) and
+`runs.jsonl` archiving extend this script to cover that too,
+deterministically -- ported from dev-loop's identical extension, minus
+its PR-closing capability (this repo never opens a PR).
+
 ## Scope: strictly local and gitignored
 
 Every path this script touches is already covered by this repo's own
@@ -47,13 +55,12 @@ source, and nothing it deletes exists anywhere but this machine:
   when `pipeline.<project>.config.json`'s `targetRepo.path` is set. Only
   swept for a per-ticket reset (see below for why not whole-project).
 
-## What it deliberately never touches
+## What local reset deliberately never touches
 
 - **Jira** — the ticket itself (status, labels, comments) is untouched.
-  This includes the `pipeline:research`/`pipeline:dev` label swap — a
-  reset never reverses that hand-off; a human decides what happens to the
-  real ticket. This script only ever clears *this repo's own local
-  record* of having worked it.
+  This includes the `pipeline:research`/`pipeline:dev` label swap — local
+  reset never reverses that hand-off; a human (or `--close-remote` — see
+  below) decides what happens to the real ticket.
 - **GitHub** — no Issue comment, no Issue close. Same reasoning: those
   are shared, visible-to-others state, categorically different from a
   local scratch file only this machine's research-loop process ever
@@ -64,12 +71,70 @@ source, and nothing it deletes exists anywhere but this machine:
   `.pipeline/<THIS-project>/`, never a sibling project's directory.
   Covered directly by `test/reset-project.test.ts`.
 
-If you also need to close out the real Jira ticket / GitHub Issue from a
-prior test run, or reset its label back to `pipeline:research` for a
-genuine first-pickup-shaped re-run, do that separately (by hand, or by
-asking an agent) — see `SKILL.md`'s own note on this. Keeping the two
-concerns apart means running this script is always safe to run
-speculatively without ever risking a write to a shared system.
+Local reset and remote-closing are deliberately separate code paths
+(`src/reset-project.ts` vs. `src/remote-close.ts`) and separate flags
+(default vs. `--close-remote`) — keeping them apart means a local-only
+reset is always safe to run speculatively without ever risking a write
+to a shared system, regardless of whether `--close-remote` exists at all.
+
+## `--close-remote`: closing the real Jira ticket and Issue
+
+Opt-in, and requires `--ticket` (refused for a whole-project reset).
+Backed by `src/remote-close.ts`'s `planRemoteClose`/`executeRemoteClose`
+— ported from dev-loop's identical module, minus its PR-closing
+capability: this repo never opens a PR (that's downstream of the
+`pipeline:research` → `pipeline:dev` handoff, dev-loop's job), so there
+is no local data to recover a PR URL from and `planRemoteClose` here is
+trivially synchronous (no filesystem read at all).
+
+**Closing the Jira ticket** discovers a target transition by status
+*category* (`statusCategory.key === "done"`), not a hardcoded status
+name — same rationale as `JiraClient.closeTicket`'s own doc comment
+(`src/jira-client.ts`): no single "Closed" name is guaranteed across
+every project's workflow, but `statusCategory` is stable and built-in. If
+more than one done-category transition is offered, the first one is
+used, and the summary always names which one — so a wrong pick is
+immediately visible. If the ticket isn't already done and *no*
+done-category transition is offered at all, that's reported as
+`no-transition`, never silently treated as success.
+
+**Closing the mirror Issue** uses reason `not_planned`, mapped to gh's
+own `"not planned"` flag value by `toGhCloseReason` (`src/github-client
+.ts`). Idempotent: an already-closed Issue is a safe no-op.
+
+**Each of the two (Jira, Issue) is attempted independently** — one
+failing is recorded as `error` in the printed summary and never blocks
+the other, the same error-isolation stance dev-loop's `reconcile.ts`
+already takes per-ticket.
+
+**Credentials**: `--close-remote` needs real `JIRA_BASE_URL`/
+`JIRA_EMAIL`/`JIRA_API_TOKEN` and `gh` auth — use
+`npm run reset-project:remote` (which runs with `--env-file=.env`), not
+the plain `reset-project` script, which deliberately never loads `.env`
+so a purely local reset never needs credentials to exist at all. Real
+Jira/GitHub clients are constructed in `reset-cli.ts` only inside the
+`--close-remote` branch, never for a local-only run.
+
+**Agent policy**: an agent invoking `--close-remote` for a real
+(non-`--dry-run`) run must always confirm with the human in chat first —
+every time, regardless of Claude Code's permission-mode settings for
+that session. This is enforced as agent behavior, not as script logic,
+so it holds no matter how permissions are configured.
+`--dry-run --close-remote` needs no such confirmation — it makes no
+network calls at all (there's no filesystem lookup to do first either,
+unlike dev-loop's PR-URL recovery).
+
+## Archiving instead of deleting `runs.jsonl` lines
+
+Removed lines (per-ticket or whole-project) are appended to
+`runs/<project>.reset-archive.jsonl` — sibling to the live log,
+append-only, plain JSONL (no wrapping envelope, so it stays greppable and
+replayable) — *before* the live log is ever rewritten or deleted.
+Interrupting a reset between the archive-append and the live-log edit
+leaves, at worst, a harmless duplicate in the append-only archive, never
+a lost line. `scripts/stats.mjs` never reads the archive file — only the
+live `<project>.jsonl` — so archived history never affects stats; it
+exists purely as a human-facing safety net.
 
 ## Why worktrees aren't swept in whole-project mode
 
@@ -89,7 +154,8 @@ leftover worktrees from the wiped project need cleanup too.
 
 ## Dry-run first
 
-`--dry-run` prints the exact same plan `planReset()` computes for the real
-run — never a separate, potentially-diverging "preview" logic path (see
-`src/reset-project.ts`'s own top-of-file comment). Always safe to run
-before the real thing.
+`--dry-run` prints the exact same plans `planReset()` (and, with
+`--close-remote`, `planRemoteClose()`) compute for the real run — never a
+separate, potentially-diverging "preview" logic path (see
+`src/reset-project.ts`'s and `src/remote-close.ts`'s own top-of-file
+comments). Always safe to run before the real thing.

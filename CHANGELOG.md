@@ -5,6 +5,45 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-17 — `reset-project` gains `--close-remote`, archives instead of deleting runs.jsonl lines, and reports a post-action summary
+
+Closing out TARS-1465's real Jira ticket and mirror Issue after using it
+as a live diagnostic ticket (from dev-loop's side) was done by hand.
+Extended `reset-project` to do this deterministically for the next live
+test (TARS-1467, an autonomous auto-promote handoff test), ported
+directly from dev-loop's identical extension minus PR handling (this
+repo never opens a PR):
+
+- **`JiraClient.addComment`** (`src/jira-client.ts`): this repo's
+  `JiraClient` interface never had one before -- the main loop posts
+  Jira comments directly via the `ticket-refine` skill's own MCP tool
+  call, not through this REST client. Needed so `--close-remote` (which
+  runs outside any Claude Code session) can post a note before closing.
+- **`JiraClient.closeTicket`**: finds a close transition by status
+  *category* (`done`), not a hardcoded status name. Returns
+  `already-done` / `closed` (names the transition used) /
+  `no-transition` (never silently success).
+- **`GitHubClient.closeIssue`** ported near-verbatim from dev-loop -- this
+  repo's `GitHubClient` never had a close capability at all before (it
+  only ever creates the mirror Issue).
+- **New `src/remote-close.ts`**: `planRemoteClose`/`executeRemoteClose`,
+  kept deliberately separate from `reset-project.ts` (mock-client DI vs.
+  temp-filesystem tests). Closes the Jira ticket (posting a "test/reset
+  ticket, not planned" comment first) and the mirror GitHub Issue
+  (`not_planned`), each independently.
+- **`reset-project.ts`**: removed `runs.jsonl` lines now archive to
+  `runs/<slug>.reset-archive.jsonl` (append-only, never overwritten)
+  before the live log is rewritten/deleted, instead of being lost.
+  `executeReset` now returns a `ResetSummary`; `describeResetSummary`
+  renders what actually happened, printed after a real run.
+- **`reset-cli.ts`**: `--close-remote` (requires `--ticket`; refused for
+  a whole-project reset). Real Jira/GitHub clients are constructed only
+  when the flag is passed. New `reset-project:remote` npm script loads
+  `.env`; the default `reset-project` script deliberately still does
+  not. Agent policy (always confirm with the human before a real,
+  non-dry-run `--close-remote` invocation) documented in `docs/reset.md`
+  and `SKILL.md`.
+
 ## 2026-09-17 — added `npm run reset-project`: deterministic local-state wipe for re-running a ticket or project fresh
 
 Diagnosing a real pipeline bug (from dev-loop's side, TARS-1465) meant
