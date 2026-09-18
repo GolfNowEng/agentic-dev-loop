@@ -6,6 +6,50 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-17 — `reset-project` gains `--close-remote`, archives instead of deleting runs.jsonl lines, and reports a post-action summary
+
+Closing out TARS-1465/its mirror Issue/its PR after using it as a live
+diagnostic ticket was done by hand, one MCP/`gh` call at a time. Extended
+`reset-project` to do this deterministically for the next live test
+(TARS-1467, an autonomous auto-promote handoff test):
+
+- **`JiraClient.closeTicket`** (`src/jira-client.ts`): finds a close
+  transition by status *category* (`done`), not a hardcoded status name
+  — no single "Closed" name is guaranteed across every project's
+  workflow, but `statusCategory.key` is a stable built-in property.
+  Returns `already-done` / `closed` (names the transition used) /
+  `no-transition` (never silently success).
+- **`GitHubClient.closePr`** (`src/github-client.ts`): takes the PR URL
+  directly (what `RunLogLine.pr` holds). Idempotency verified live: `gh
+  issue/pr close` on an already-closed item exits 0 with "already
+  closed"; `gh pr close` on an already-*merged* PR exits 1 with "already
+  merged" instead -- a different code path, both mapped to
+  `already-closed`.
+- **`reconcile.ts`'s private `findLandedPrUrl`** exported and widened to
+  `findOpenPrUrl`, now also scanning `bounced` lines with a PR attached
+  -- a reset should close any open PR for a ticket, not only one from a
+  fully-landed run. No behavior change for `reconcileMergedTickets`'s own
+  call site.
+- **New `src/remote-close.ts`**: `planRemoteClose`/`executeRemoteClose`,
+  kept deliberately separate from `reset-project.ts` (mock-client DI vs.
+  temp-filesystem tests) -- closes the Jira ticket (posting a "test/reset
+  ticket, not planned" comment first), the mirror GitHub Issue
+  (`not_planned`), and any open PR, each independently so one failing
+  never blocks the others.
+- **`reset-project.ts`**: removed `runs.jsonl` lines now archive to
+  `runs/<slug>.reset-archive.jsonl` (append-only, never overwritten)
+  before the live log is rewritten/deleted, instead of being lost.
+  `executeReset` now returns a `ResetSummary`; `describeResetSummary`
+  renders what actually happened, printed after a real run.
+- **`reset-cli.ts`**: `--close-remote` (requires `--ticket`; refused for
+  a whole-project reset). Real Jira/GitHub clients are constructed only
+  when the flag is passed -- a local-only reset never needs credentials.
+  New `reset-project:remote` npm script loads `.env`; the default
+  `reset-project` script deliberately still does not. Agent policy
+  (always confirm with the human before a real, non-dry-run
+  `--close-remote` invocation) documented in `docs/reset.md` and
+  `SKILL.md`, enforced as agent behavior, not script logic.
+
 ## 2026-09-17 — added `npm run reset-project`: deterministic local-state wipe for re-running a ticket or project fresh
 
 Diagnosing the two bugs below (`pollJql.dev` re-polling, the stuck Code
