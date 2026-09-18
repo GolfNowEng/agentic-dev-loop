@@ -484,8 +484,9 @@ describe("RealJiraClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("closeTicket does not hop more than once (only a single intermediate hop is attempted)", async () => {
+  it("closeTicket walks multiple unambiguous intermediate hops before reaching a done-category transition", async () => {
     fetchMock
+      // status: Code Review, not done
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -494,35 +495,95 @@ describe("RealJiraClient", () => {
           { status: 200 },
         ),
       )
+      // hop 1: Code Review -> Development Complete (unambiguous)
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
             transitions: [
-              { id: "271", to: { name: "Review Complete", statusCategory: { key: "indeterminate" } } },
+              { id: "271", to: { name: "Development Complete", statusCategory: { key: "indeterminate" } } },
             ],
           }),
           { status: 200 },
         ),
       )
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      // After hopping to "Review Complete", still no done-category transition,
-      // and still only another indeterminate hop available -- must NOT chain
-      // a second hop, must report no-transition instead.
+      // hop 2: Development Complete -> Deployed to INT (unambiguous)
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
             transitions: [
-              { id: "500", to: { name: "Ready for Deploy", statusCategory: { key: "indeterminate" } } },
+              { id: "51", to: { name: "Deployed to INT", statusCategory: { key: "indeterminate" } } },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      // from Deployed to INT: a done-category transition is finally offered
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            transitions: [
+              { id: "300", to: { name: "Closed", statusCategory: { key: "done" } } },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const result = await client.closeTicket("PROJ-1");
+
+    expect(result).toEqual({
+      result: "closed",
+      transitionName: "Development Complete -> Deployed to INT -> Closed",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
+
+  it("closeTicket stops and reports 'no-transition' once MAX_INTERMEDIATE_HOPS unambiguous hops are exhausted without reaching a done-category status", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          fields: { status: { name: "Code Review", statusCategory: { key: "indeterminate" } } },
+        }),
+        { status: 200 },
+      ),
+    );
+    // 5 unambiguous forward-progress-looking hops in a row, each still not
+    // done-category -- exceeds the bound (4 intermediate hops: hopCount
+    // 0..3 each hop once, then hopCount 4 sees a 5th non-done status and
+    // gives up without a 5th hop), so the walk must stop and report
+    // no-transition rather than hop indefinitely.
+    const hopNames = [
+      "Ready for Review",
+      "Ready for QA",
+      "Ready for Deploy",
+      "Deployed to Staging",
+      "Deployed to Prod",
+    ];
+    for (let i = 0; i < hopNames.length; i++) {
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            transitions: [
+              { id: `hop-${i}`, to: { name: hopNames[i], statusCategory: { key: "indeterminate" } } },
             ],
           }),
           { status: 200 },
         ),
       );
+      if (i < hopNames.length - 1) {
+        fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+      }
+    }
     const client = new RealJiraClient(CREDENTIALS, makeConfig());
 
     const result = await client.closeTicket("PROJ-1");
 
     expect(result).toEqual({ result: "no-transition" });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    // 1 status GET + 5 fetchTransitions (hopCount 0..4) + 4 postTransition (hopCount 0..3)
+    expect(fetchMock).toHaveBeenCalledTimes(10);
   });
 });

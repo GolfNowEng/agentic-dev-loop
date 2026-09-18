@@ -201,12 +201,27 @@ interface JiraStatusFieldResponse {
  * would recognize as "further along," never one that could set the
  * ticket back (Blocked, Rejected, Reopened, ...).
  */
-const FORWARD_STATUS_RE = /complete|done|closed?|resolved?|ready|release/i;
+const FORWARD_STATUS_RE =
+  /complete|done|closed?|resolved?|ready|release|deploy|verified?|approved?|accepted|delivered|shipped|merged/i;
 const BACKWARD_STATUS_RE = /block|reject|reopen|restart/i;
 
 function isForwardProgressStatusName(name: string): boolean {
   return FORWARD_STATUS_RE.test(name) && !BACKWARD_STATUS_RE.test(name);
 }
+
+/**
+ * Upper bound on intermediate forward-progress hops closeTicket will walk
+ * through before giving up. Generic across every project/issue-type
+ * workflow -- not configured per project, since the live transitions list
+ * at each step is already the ground truth for what that specific ticket
+ * (whatever issue type, whatever workflow) can do next. A Task with a
+ * short workflow reaches "done" in 0-1 hops and never gets near this
+ * bound; a Story gated behind Code Review/Development Complete/Deployed
+ * steps (observed live on TARS-1467) needs more. Bounded (not unlimited)
+ * so an unexpectedly long or cyclic chain of unambiguous-looking
+ * transitions can't walk a live ticket somewhere unbounded.
+ */
+const MAX_INTERMEDIATE_HOPS = 4;
 
 /**
  * REST-backed JiraClient for Jira Cloud, authenticated via HTTP Basic auth
@@ -330,16 +345,19 @@ export class RealJiraClient implements JiraClient {
   }
 
   /**
-   * Close a ticket, walking through at most one intermediate
-   * forward-progress status first when no done-category transition is
-   * directly available (e.g. Code Review -> Development Complete ->
-   * Closed). Only ever hops when exactly one offered transition's target
-   * name looks like forward progress (isForwardProgressStatusName) -- an
-   * ambiguous choice (more than one candidate) or none at all is reported
-   * as "no-transition" rather than guessed. Only a single hop is
-   * attempted, never chained further -- a workflow needing two or more
-   * intermediate steps still reports "no-transition", visible rather than
-   * silently walked somewhere unintended.
+   * Close a ticket, walking through up to MAX_INTERMEDIATE_HOPS
+   * intermediate forward-progress statuses first when no done-category
+   * transition is directly available (e.g. Code Review -> Development
+   * Complete -> Deployed to INT -> ... -> Closed). At each step, hops
+   * only when exactly one offered transition's target name looks like
+   * forward progress (isForwardProgressStatusName) -- an ambiguous choice
+   * (more than one candidate) or none at all stops the walk immediately
+   * and reports "no-transition" rather than guessing. Generic across
+   * every project/issue-type workflow: a Task's short workflow reaches
+   * done in 0-1 hops, a Story gated behind several review/deploy statuses
+   * (observed live on TARS-1467) needs more -- both are just "keep
+   * checking the live transitions list until a done-category one
+   * appears, or the unambiguous trail runs out."
    */
   async closeTicket(ticketKey: string): Promise<CloseTicketResult> {
     const statusResponse = await this.request(
@@ -350,36 +368,33 @@ export class RealJiraClient implements JiraClient {
       return { result: "already-done" };
     }
 
-    const transitionsData = await this.fetchTransitions(ticketKey);
-    const doneTransition = transitionsData.transitions.find(
-      (t) => t.to.statusCategory.key === "done",
-    );
-    if (doneTransition) {
-      await this.postTransition(ticketKey, doneTransition.id);
-      return { result: "closed", transitionName: doneTransition.to.name };
-    }
+    const hopNames: string[] = [];
+    for (let hopCount = 0; hopCount <= MAX_INTERMEDIATE_HOPS; hopCount++) {
+      const transitionsData = await this.fetchTransitions(ticketKey);
+      const doneTransition = transitionsData.transitions.find(
+        (t) => t.to.statusCategory.key === "done",
+      );
+      if (doneTransition) {
+        await this.postTransition(ticketKey, doneTransition.id);
+        hopNames.push(doneTransition.to.name);
+        return { result: "closed", transitionName: hopNames.join(" -> ") };
+      }
 
-    const forwardCandidates = transitionsData.transitions.filter((t) =>
-      isForwardProgressStatusName(t.to.name),
-    );
-    if (forwardCandidates.length !== 1) {
-      return { result: "no-transition" };
-    }
-    const hop = forwardCandidates[0]!;
-    await this.postTransition(ticketKey, hop.id);
+      if (hopCount === MAX_INTERMEDIATE_HOPS) {
+        return { result: "no-transition" };
+      }
 
-    const afterHopTransitions = await this.fetchTransitions(ticketKey);
-    const doneAfterHop = afterHopTransitions.transitions.find(
-      (t) => t.to.statusCategory.key === "done",
-    );
-    if (!doneAfterHop) {
-      return { result: "no-transition" };
+      const forwardCandidates = transitionsData.transitions.filter((t) =>
+        isForwardProgressStatusName(t.to.name),
+      );
+      if (forwardCandidates.length !== 1) {
+        return { result: "no-transition" };
+      }
+      const hop = forwardCandidates[0]!;
+      await this.postTransition(ticketKey, hop.id);
+      hopNames.push(hop.to.name);
     }
-    await this.postTransition(ticketKey, doneAfterHop.id);
-    return {
-      result: "closed",
-      transitionName: `${hop.to.name} -> ${doneAfterHop.to.name}`,
-    };
+    return { result: "no-transition" };
   }
 
   private async fetchTransitions(ticketKey: string): Promise<JiraTransitionsResponse> {
