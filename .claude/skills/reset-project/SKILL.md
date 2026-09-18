@@ -45,8 +45,14 @@ scope. When passed:
 
 1. Closes the Jira ticket via a `done`-category status transition (first
    one found, by name if more than one exists — the summary always names
-   which transition was actually used). Posts one comment first, noting
-   this was a test/reset ticket closed as not-planned.
+   which transition was actually used). If no done-category transition is
+   offered directly, tries exactly one intermediate hop through a single
+   unambiguous forward-progress-looking status first (e.g. Code Review →
+   Development Complete → Closed — the exact case hit live on TARS-1467).
+   Never guesses when more than one hop candidate is offered, or a second
+   hop would be needed — reports `no-transition` instead. Posts one
+   comment first, noting this was a test/reset ticket closed as
+   not-planned.
 2. Closes the mirror GitHub Issue with reason `not planned`.
 3. Closes any open PR found for the ticket in local run history (from
    either a `landed` or a `bounced` run line — any PR the ticket ever
@@ -55,9 +61,10 @@ scope. When passed:
 Each of the three is attempted independently; one failing never blocks
 the other two. The printed summary distinguishes `closed` / `already-
 done`/`already-closed` (a safe no-op) / `no-transition` (the ticket isn't
-done and no done-category transition is offered — likely needs an
-intermediate status first; never silently treated as success) / `error`
-(with the actual failure message) for each item.
+done, no done-category transition is offered, and no single unambiguous
+intermediate hop exists either — likely needs a human to walk it through
+Jira's UI; never silently treated as success) / `error` (with the actual
+failure message) for each item.
 
 **Needs real Jira/GitHub credentials** — invoke via
 `npm run reset-project:remote` (loads `.env`), not the plain

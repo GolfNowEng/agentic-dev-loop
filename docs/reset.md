@@ -97,10 +97,26 @@ across every project's workflow, but `statusCategory` is a stable,
 built-in property every status carries. If more than one done-category
 transition is offered, the first one is used, and the summary always
 names which one — so a wrong pick on some other project's workflow is
-immediately visible rather than silently wrong. If the ticket isn't
-already done and *no* done-category transition is offered at all, that's
-reported as `no-transition`, never silently treated as success — it
-likely means the workflow requires an intermediate status first.
+immediately visible rather than silently wrong.
+
+If the ticket isn't already done and *no* done-category transition is
+offered directly, `closeTicket` will attempt **exactly one** intermediate
+hop first — discovered live on TARS-1467, whose workflow has no direct
+Code Review → Closed transition, only Code Review → Development Complete
+→ Closed. It looks for a single transition whose target status name
+matches `/complete|done|closed?|resolved?|ready|release/i` and does *not*
+match `/block|reject|reopen|restart/i` (so it never hops toward something
+that would set the ticket back), transitions to it, then re-checks for a
+done-category transition from there. The summary's `jiraDetail` on a
+"closed" result names the full path taken (e.g.
+`"Review Complete -> Closed"`) so a hop is always visible, never silent.
+
+If more than one transition looks like forward progress (ambiguous — no
+config exists to prefer one), or none does, or a *second* hop would be
+needed, `closeTicket` refuses to guess and reports `no-transition` —
+never silently walked somewhere unintended. `no-transition` likely means
+the workflow needs a human to walk it through Jira's UI, or a config
+change if this recurs often for one project.
 
 **Closing the PR** takes the URL directly (what `RunLogLine.pr` actually
 holds — `gh pr close <url>` accepts it with no number-parsing needed).
