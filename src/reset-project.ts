@@ -11,7 +11,7 @@
 // touching a real filesystem, and so --dry-run can share the exact same
 // plan the real run acts on -- no risk of the two ever silently diverging.
 
-import { readFile, writeFile, rm, readdir } from "node:fs/promises";
+import { readFile, writeFile, appendFile, rm, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "./types.ts";
 
@@ -22,6 +22,8 @@ export interface ResetPlan {
   pipelineDir: string;
   /** Absolute/relative path to runs/<slug>.jsonl, or null if it doesn't exist. */
   runsLogPath: string | null;
+  /** Always runs/<slug>.reset-archive.jsonl -- where removed lines get appended instead of deleted outright. Never overwritten, only ever appended to. */
+  runsLogArchivePath: string;
   /** How many of runs/<slug>.jsonl's lines belong to this ticket (0 if runsLogPath is null, or ticketKey is undefined -- whole-project reset keeps the log file, see below). */
   runsLogLinesToRemove: number;
   /** .pipeline/<slug>/runs/<TICKET>-<RUN_ID>/ directories to delete. */
@@ -87,6 +89,7 @@ export async function planReset(
   config: Config | null,
 ): Promise<ResetPlan> {
   const runsLogPath = join(repoRoot, "runs", `${slug}.jsonl`);
+  const runsLogArchivePath = join(repoRoot, "runs", `${slug}.reset-archive.jsonl`);
   const runsLogExists = await readFile(runsLogPath, "utf8").then(
     () => true,
     () => false,
@@ -101,6 +104,7 @@ export async function planReset(
       ticketKey: null,
       pipelineDir,
       runsLogPath: runsLogExists ? runsLogPath : null,
+      runsLogArchivePath,
       runsLogLinesToRemove: 0,
       runDirsToRemove: [],
       rawUsageFilesToRemove: [],
@@ -124,6 +128,7 @@ export async function planReset(
     ticketKey,
     pipelineDir,
     runsLogPath: runsLogExists ? runsLogPath : null,
+    runsLogArchivePath,
     runsLogLinesToRemove: linesToRemove,
     runDirsToRemove: runDirNames.map((name) => join(pipelineRunsDir, name)),
     rawUsageFilesToRemove: rawUsageNames.map((name) => join(pipelineRawUsageDir, name)),
@@ -132,16 +137,31 @@ export async function planReset(
   };
 }
 
+export interface ResetSummary {
+  runsLogLinesRemoved: number;
+  /** Always equal to runsLogLinesRemoved -- kept as its own field so a caller can assert archiving actually happened, not just that lines were removed. */
+  runsLogLinesArchived: number;
+  archivePath: string;
+  runDirsDeleted: string[];
+  rawUsageFilesDeleted: string[];
+  worktreesDeleted: string[];
+  wholeProjectLogDeleted: boolean;
+  pipelineDirDeleted: boolean;
+}
+
 /**
- * Apply a ResetPlan for real: rewrite runs.jsonl with the ticket's lines
- * removed (or delete it outright for a whole-project reset), delete every
- * run dir / raw-usage file / worktree the plan named. Deletions happen in
- * an order that leaves the plan's own paths orphaned rather than
- * half-consistent if interrupted mid-way (runs.jsonl last, since it's the
- * most reversible edit -- rewriting it wrong is a text fix; a deleted
- * directory is gone).
+ * Apply a ResetPlan for real: archive removed runs.jsonl lines (never
+ * delete them outright -- see runsLogArchivePath's own doc comment),
+ * rewrite/delete the live log accordingly, delete every run dir /
+ * raw-usage file / worktree the plan named. Deletions happen in an order
+ * that leaves the plan's own paths orphaned rather than half-consistent
+ * if interrupted mid-way (runs.jsonl last, since it's the most reversible
+ * edit -- rewriting it wrong is a text fix; a deleted directory is gone).
+ * Archiving happens before the live log is ever rewritten or deleted, so
+ * an interruption between the two leaves (at worst) a harmless duplicate
+ * in the append-only archive, never a lost line.
  */
-export async function executeReset(plan: ResetPlan): Promise<void> {
+export async function executeReset(plan: ResetPlan): Promise<ResetSummary> {
   for (const dir of plan.runDirsToRemove) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -152,24 +172,52 @@ export async function executeReset(plan: ResetPlan): Promise<void> {
     await rm(dir, { recursive: true, force: true });
   }
 
+  const summary: ResetSummary = {
+    runsLogLinesRemoved: 0,
+    runsLogLinesArchived: 0,
+    archivePath: plan.runsLogArchivePath,
+    runDirsDeleted: plan.runDirsToRemove,
+    rawUsageFilesDeleted: plan.rawUsageFilesToRemove,
+    worktreesDeleted: plan.worktreesToRemove,
+    wholeProjectLogDeleted: false,
+    pipelineDirDeleted: false,
+  };
+
   if (plan.wholeProject) {
     if (plan.runsLogPath) {
+      const raw = await readFile(plan.runsLogPath, "utf8");
+      const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+      if (lines.length > 0) {
+        await appendFile(plan.runsLogArchivePath, `${lines.join("\n")}\n`, "utf8");
+      }
+      summary.runsLogLinesRemoved = lines.length;
+      summary.runsLogLinesArchived = lines.length;
       await rm(plan.runsLogPath, { force: true });
+      summary.wholeProjectLogDeleted = true;
     }
     await rm(plan.pipelineDir, { recursive: true, force: true });
-    return;
+    summary.pipelineDirDeleted = true;
+    return summary;
   }
 
   if (plan.runsLogPath && plan.runsLogLinesToRemove > 0 && plan.ticketKey) {
     const raw = await readFile(plan.runsLogPath, "utf8");
     const ticketField = `"ticket":"${plan.ticketKey}"`;
-    const kept = raw
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .filter((line) => !line.includes(ticketField));
+    const allLines = raw.split("\n").filter((line) => line.trim().length > 0);
+    const removed = allLines.filter((line) => line.includes(ticketField));
+    const kept = allLines.filter((line) => !line.includes(ticketField));
+
+    if (removed.length > 0) {
+      await appendFile(plan.runsLogArchivePath, `${removed.join("\n")}\n`, "utf8");
+    }
     const rewritten = kept.length > 0 ? `${kept.join("\n")}\n` : "";
     await writeFile(plan.runsLogPath, rewritten, "utf8");
+
+    summary.runsLogLinesRemoved = removed.length;
+    summary.runsLogLinesArchived = removed.length;
   }
+
+  return summary;
 }
 
 /**
@@ -207,6 +255,51 @@ export function describeResetPlan(plan: ResetPlan): string {
     plan.worktreesToRemove.length > 0
       ? `- delete ${plan.worktreesToRemove.length} worktree(s): ${plan.worktreesToRemove.join(", ")}`
       : "- targetRepo.path worktrees: none matching (or targetRepo.path unset)",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Human-readable rendering of a ResetSummary -- what actually happened,
+ * printed by reset-cli.ts after a real (non-dry-run) run. Distinct from
+ * describeResetPlan, which describes what *would* happen.
+ */
+export function describeResetSummary(summary: ResetSummary): string {
+  const lines: string[] = [];
+
+  if (summary.wholeProjectLogDeleted || summary.pipelineDirDeleted) {
+    lines.push(
+      summary.wholeProjectLogDeleted
+        ? `- runs.jsonl deleted (${summary.runsLogLinesRemoved} line(s) archived to ${summary.archivePath})`
+        : "- runs.jsonl: nothing to delete",
+    );
+    lines.push(
+      summary.pipelineDirDeleted
+        ? "- .pipeline/<slug>/ deleted"
+        : "- .pipeline/<slug>/: nothing to delete",
+    );
+    return lines.join("\n");
+  }
+
+  lines.push(
+    summary.runsLogLinesRemoved > 0
+      ? `- ${summary.runsLogLinesRemoved} line(s) removed from runs.jsonl, archived to ${summary.archivePath}`
+      : "- runs.jsonl: no lines removed",
+  );
+  lines.push(
+    summary.runDirsDeleted.length > 0
+      ? `- ${summary.runDirsDeleted.length} run dir(s) deleted: ${summary.runDirsDeleted.join(", ")}`
+      : "- no run dirs deleted",
+  );
+  lines.push(
+    summary.rawUsageFilesDeleted.length > 0
+      ? `- ${summary.rawUsageFilesDeleted.length} raw-usage file(s) deleted: ${summary.rawUsageFilesDeleted.join(", ")}`
+      : "- no raw-usage files deleted",
+  );
+  lines.push(
+    summary.worktreesDeleted.length > 0
+      ? `- ${summary.worktreesDeleted.length} worktree(s) deleted: ${summary.worktreesDeleted.join(", ")}`
+      : "- no worktrees deleted",
   );
   return lines.join("\n");
 }
