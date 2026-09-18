@@ -94,9 +94,23 @@ name — same rationale as `JiraClient.closeTicket`'s own doc comment
 every project's workflow, but `statusCategory` is stable and built-in. If
 more than one done-category transition is offered, the first one is
 used, and the summary always names which one — so a wrong pick is
-immediately visible. If the ticket isn't already done and *no*
-done-category transition is offered at all, that's reported as
-`no-transition`, never silently treated as success.
+immediately visible.
+
+If the ticket isn't already done and *no* done-category transition is
+offered directly, `closeTicket` attempts **exactly one** intermediate hop
+first — discovered live on TARS-1467, whose workflow has no direct Code
+Review → Closed transition, only Code Review → Development Complete →
+Closed. It looks for a single transition whose target status name
+matches `/complete|done|closed?|resolved?|ready|release/i` and does *not*
+match `/block|reject|reopen|restart/i` (never hops toward something that
+would set the ticket back), transitions to it, then re-checks for a
+done-category transition from there. The summary's `jiraDetail` on a
+"closed" result names the full path taken (e.g.
+`"Review Complete -> Closed"`), so a hop is always visible, never silent.
+
+If more than one transition looks like forward progress, or none does, or
+a *second* hop would be needed, `closeTicket` refuses to guess and
+reports `no-transition` — never silently treated as success.
 
 **Closing the mirror Issue** uses reason `not_planned`, mapped to gh's
 own `"not planned"` flag value by `toGhCloseReason` (`src/github-client

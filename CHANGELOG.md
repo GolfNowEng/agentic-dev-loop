@@ -5,6 +5,38 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-18 — `reset-project --close-remote` hit a real `no-transition` case on TARS-1467; `closeTicket` now walks one intermediate hop
+
+The live TARS-1467 handoff test (this repo refined it, auto-promoted to
+`pipeline:dev`, dev-loop landed PR #436) closed cleanly end to end, but
+`--close-remote` failed to close the Jira ticket itself: from Code
+Review, this project's workflow offers no direct done-category
+transition — only Blocked/Rejected/Continue Work/Restart Work (all
+indeterminate) and Review Complete → Development Complete (also
+indeterminate, not done). `closeTicket` reported `no-transition`
+correctly (never silently wrong), but the ticket needed a human to close
+it by hand — the exact gap the whole `--close-remote` feature exists to
+avoid.
+
+`RealJiraClient.closeTicket` now attempts **exactly one** intermediate
+hop before giving up: if no done-category transition is offered
+directly, it looks for a single transition whose target status name
+matches `/complete|done|closed?|resolved?|ready|release/i` and does
+*not* match `/block|reject|reopen|restart/i`. If exactly one such
+candidate exists, it transitions there and re-checks for a done-category
+transition from the new status. More than one candidate, zero
+candidates, or a second hop being needed all still report
+`no-transition` — deliberately conservative, since walking a live ticket
+through an untested path has real side effects a wrong guess can't
+easily undo. A successful hop's `jiraDetail` names the full path (e.g.
+`"Review Complete -> Closed"`), so it's always visible which route was
+taken. Ported directly from dev-loop's identical fix.
+
+Also fixed: `describeResetPlan`/`describeResetSummary` printed full
+absolute paths (noisy in a real terminal); now shortened to `~/...` for
+display only — the underlying `ResetPlan`/`ResetSummary` objects still
+carry real absolute paths.
+
 ## 2026-09-17 — `reset-project` gains `--close-remote`, archives instead of deleting runs.jsonl lines, and reports a post-action summary
 
 Closing out TARS-1465's real Jira ticket and mirror Issue after using it

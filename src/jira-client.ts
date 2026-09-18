@@ -194,6 +194,21 @@ interface JiraStatusFieldResponse {
 }
 
 /**
+ * A transition's target status name looks like forward progress (worth
+ * auto-hopping through on the way to a done-category status) when it
+ * matches this and does NOT match BACKWARD_STATUS_RE. Deliberately
+ * conservative -- closeTicket only ever hops through a status a human
+ * would recognize as "further along," never one that could set the
+ * ticket back (Blocked, Rejected, Reopened, ...).
+ */
+const FORWARD_STATUS_RE = /complete|done|closed?|resolved?|ready|release/i;
+const BACKWARD_STATUS_RE = /block|reject|reopen|restart/i;
+
+function isForwardProgressStatusName(name: string): boolean {
+  return FORWARD_STATUS_RE.test(name) && !BACKWARD_STATUS_RE.test(name);
+}
+
+/**
  * REST-backed JiraClient for Jira Cloud, authenticated via HTTP Basic auth
  * (email + API token) per Atlassian's documented auth scheme for the v3
  * REST API.
@@ -314,6 +329,18 @@ export class RealJiraClient implements JiraClient {
     });
   }
 
+  /**
+   * Close a ticket, walking through at most one intermediate
+   * forward-progress status first when no done-category transition is
+   * directly available (e.g. Code Review -> Development Complete ->
+   * Closed). Only ever hops when exactly one offered transition's target
+   * name looks like forward progress (isForwardProgressStatusName) -- an
+   * ambiguous choice (more than one candidate) or none at all is reported
+   * as "no-transition" rather than guessed. Only a single hop is
+   * attempted, never chained further -- a workflow needing two or more
+   * intermediate steps still reports "no-transition", visible rather than
+   * silently walked somewhere unintended.
+   */
   async closeTicket(ticketKey: string): Promise<CloseTicketResult> {
     const statusResponse = await this.request(
       `/rest/api/3/issue/${ticketKey}?fields=status`,
@@ -323,21 +350,47 @@ export class RealJiraClient implements JiraClient {
       return { result: "already-done" };
     }
 
-    const transitionsResponse = await this.request(
-      `/rest/api/3/issue/${ticketKey}/transitions`,
-    );
-    const transitionsData = (await transitionsResponse.json()) as JiraTransitionsResponse;
+    const transitionsData = await this.fetchTransitions(ticketKey);
     const doneTransition = transitionsData.transitions.find(
       (t) => t.to.statusCategory.key === "done",
     );
-    if (!doneTransition) {
-      return { result: "no-transition" };
+    if (doneTransition) {
+      await this.postTransition(ticketKey, doneTransition.id);
+      return { result: "closed", transitionName: doneTransition.to.name };
     }
 
+    const forwardCandidates = transitionsData.transitions.filter((t) =>
+      isForwardProgressStatusName(t.to.name),
+    );
+    if (forwardCandidates.length !== 1) {
+      return { result: "no-transition" };
+    }
+    const hop = forwardCandidates[0]!;
+    await this.postTransition(ticketKey, hop.id);
+
+    const afterHopTransitions = await this.fetchTransitions(ticketKey);
+    const doneAfterHop = afterHopTransitions.transitions.find(
+      (t) => t.to.statusCategory.key === "done",
+    );
+    if (!doneAfterHop) {
+      return { result: "no-transition" };
+    }
+    await this.postTransition(ticketKey, doneAfterHop.id);
+    return {
+      result: "closed",
+      transitionName: `${hop.to.name} -> ${doneAfterHop.to.name}`,
+    };
+  }
+
+  private async fetchTransitions(ticketKey: string): Promise<JiraTransitionsResponse> {
+    const response = await this.request(`/rest/api/3/issue/${ticketKey}/transitions`);
+    return (await response.json()) as JiraTransitionsResponse;
+  }
+
+  private async postTransition(ticketKey: string, transitionId: string): Promise<void> {
     await this.request(`/rest/api/3/issue/${ticketKey}/transitions`, {
       method: "POST",
-      body: JSON.stringify({ transition: { id: doneTransition.id } }),
+      body: JSON.stringify({ transition: { id: transitionId } }),
     });
-    return { result: "closed", transitionName: doneTransition.to.name };
   }
 }
