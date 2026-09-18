@@ -13,7 +13,21 @@
 
 import { readFile, writeFile, appendFile, rm, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import type { Config } from "./types.ts";
+
+/**
+ * Shorten a path under the home directory to ~/... for display only --
+ * describeResetPlan/describeResetSummary output, never the ResetPlan/
+ * ResetSummary objects themselves (those keep real absolute paths, since
+ * executeReset and its tests need them unambiguous). Falls back to the
+ * original path when it isn't under the home directory at all (e.g. a
+ * test fixture's synthetic /repo/... paths).
+ */
+function shortenPath(path: string): string {
+  const home = homedir();
+  return path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+}
 
 export interface ResetPlan {
   /** The ticket this plan was built for, or null for a whole-project reset. */
@@ -228,7 +242,7 @@ export function describeResetPlan(plan: ResetPlan): string {
   if (plan.wholeProject) {
     const lines = [
       plan.runsLogPath
-        ? `- delete runs.jsonl entirely (${plan.runsLogPath})`
+        ? `- delete runs.jsonl entirely (${shortenPath(plan.runsLogPath)})`
         : "- runs.jsonl: nothing to delete (file doesn't exist)",
       "- delete .pipeline/<slug>/ entirely (all runs, all raw-usage, every ticket)",
     ];
@@ -238,22 +252,22 @@ export function describeResetPlan(plan: ResetPlan): string {
   const lines: string[] = [];
   lines.push(
     plan.runsLogLinesToRemove > 0
-      ? `- remove ${plan.runsLogLinesToRemove} line(s) from ${plan.runsLogPath}`
+      ? `- remove ${plan.runsLogLinesToRemove} line(s) from ${shortenPath(plan.runsLogPath ?? "")}`
       : "- runs.jsonl: no matching lines for this ticket",
   );
   lines.push(
     plan.runDirsToRemove.length > 0
-      ? `- delete ${plan.runDirsToRemove.length} run dir(s): ${plan.runDirsToRemove.join(", ")}`
+      ? `- delete ${plan.runDirsToRemove.length} run dir(s): ${plan.runDirsToRemove.map(shortenPath).join(", ")}`
       : "- .pipeline/<slug>/runs/: no matching run dirs",
   );
   lines.push(
     plan.rawUsageFilesToRemove.length > 0
-      ? `- delete ${plan.rawUsageFilesToRemove.length} raw-usage file(s): ${plan.rawUsageFilesToRemove.join(", ")}`
+      ? `- delete ${plan.rawUsageFilesToRemove.length} raw-usage file(s): ${plan.rawUsageFilesToRemove.map(shortenPath).join(", ")}`
       : "- .pipeline/<slug>/raw-usage/: no matching files",
   );
   lines.push(
     plan.worktreesToRemove.length > 0
-      ? `- delete ${plan.worktreesToRemove.length} worktree(s): ${plan.worktreesToRemove.join(", ")}`
+      ? `- delete ${plan.worktreesToRemove.length} worktree(s): ${plan.worktreesToRemove.map(shortenPath).join(", ")}`
       : "- targetRepo.path worktrees: none matching (or targetRepo.path unset)",
   );
   return lines.join("\n");
@@ -270,7 +284,7 @@ export function describeResetSummary(summary: ResetSummary): string {
   if (summary.wholeProjectLogDeleted || summary.pipelineDirDeleted) {
     lines.push(
       summary.wholeProjectLogDeleted
-        ? `- runs.jsonl deleted (${summary.runsLogLinesRemoved} line(s) archived to ${summary.archivePath})`
+        ? `- runs.jsonl deleted (${summary.runsLogLinesRemoved} line(s) archived to ${shortenPath(summary.archivePath)})`
         : "- runs.jsonl: nothing to delete",
     );
     lines.push(
@@ -283,22 +297,22 @@ export function describeResetSummary(summary: ResetSummary): string {
 
   lines.push(
     summary.runsLogLinesRemoved > 0
-      ? `- ${summary.runsLogLinesRemoved} line(s) removed from runs.jsonl, archived to ${summary.archivePath}`
+      ? `- ${summary.runsLogLinesRemoved} line(s) removed from runs.jsonl, archived to ${shortenPath(summary.archivePath)}`
       : "- runs.jsonl: no lines removed",
   );
   lines.push(
     summary.runDirsDeleted.length > 0
-      ? `- ${summary.runDirsDeleted.length} run dir(s) deleted: ${summary.runDirsDeleted.join(", ")}`
+      ? `- ${summary.runDirsDeleted.length} run dir(s) deleted: ${summary.runDirsDeleted.map(shortenPath).join(", ")}`
       : "- no run dirs deleted",
   );
   lines.push(
     summary.rawUsageFilesDeleted.length > 0
-      ? `- ${summary.rawUsageFilesDeleted.length} raw-usage file(s) deleted: ${summary.rawUsageFilesDeleted.join(", ")}`
+      ? `- ${summary.rawUsageFilesDeleted.length} raw-usage file(s) deleted: ${summary.rawUsageFilesDeleted.map(shortenPath).join(", ")}`
       : "- no raw-usage files deleted",
   );
   lines.push(
     summary.worktreesDeleted.length > 0
-      ? `- ${summary.worktreesDeleted.length} worktree(s) deleted: ${summary.worktreesDeleted.join(", ")}`
+      ? `- ${summary.worktreesDeleted.length} worktree(s) deleted: ${summary.worktreesDeleted.map(shortenPath).join(", ")}`
       : "- no worktrees deleted",
   );
   return lines.join("\n");

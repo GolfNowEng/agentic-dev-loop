@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { planReset, executeReset, describeResetPlan, describeResetSummary } from "../src/reset-project.ts";
 import type { Config } from "../src/types.ts";
@@ -403,6 +403,25 @@ describe("describeResetPlan", () => {
     expect(text).toContain("delete runs.jsonl entirely");
     expect(text).toContain("delete .pipeline/<slug>/ entirely");
   });
+
+  it("shortens paths under the home directory to ~/... in a per-ticket plan", () => {
+    const plan = {
+      ticketKey: "TARS-1465",
+      pipelineDir: join(homedir(), "repos/research-loop/.pipeline/webtarsthree"),
+      runsLogArchivePath: join(homedir(), "repos/research-loop/runs/webtarsthree.reset-archive.jsonl"),
+      runsLogPath: join(homedir(), "repos/research-loop/runs/webtarsthree.jsonl"),
+      runsLogLinesToRemove: 1,
+      runDirsToRemove: [join(homedir(), "repos/research-loop/.pipeline/webtarsthree/runs/TARS-1465-x")],
+      rawUsageFilesToRemove: [join(homedir(), "repos/research-loop/.pipeline/webtarsthree/raw-usage/TARS-1465-x.json")],
+      worktreesToRemove: [],
+      wholeProject: false,
+    };
+    const text = describeResetPlan(plan);
+    expect(text).not.toContain(homedir());
+    expect(text).toContain("~/repos/research-loop/runs/webtarsthree.jsonl");
+    expect(text).toContain("~/repos/research-loop/.pipeline/webtarsthree/runs/TARS-1465-x");
+    expect(text).toContain("~/repos/research-loop/.pipeline/webtarsthree/raw-usage/TARS-1465-x.json");
+  });
 });
 
 describe("describeResetSummary", () => {
@@ -457,6 +476,24 @@ describe("describeResetSummary", () => {
     expect(text).toContain("runs.jsonl deleted");
     expect(text).toContain(".pipeline/<slug>/ deleted");
     expect(text).toContain("12 line(s)");
+  });
+
+  it("shortens paths under the home directory to ~/... in a per-ticket summary", () => {
+    const summary = {
+      runsLogLinesRemoved: 1,
+      runsLogLinesArchived: 1,
+      archivePath: join(homedir(), "repos/research-loop/runs/webtarsthree.reset-archive.jsonl"),
+      runDirsDeleted: [join(homedir(), "repos/research-loop/.pipeline/webtarsthree/runs/TARS-1465-x")],
+      rawUsageFilesDeleted: [join(homedir(), "repos/research-loop/.pipeline/webtarsthree/raw-usage/TARS-1465-x.json")],
+      worktreesDeleted: [],
+      wholeProjectLogDeleted: false,
+      pipelineDirDeleted: false,
+    };
+    const text = describeResetSummary(summary);
+    expect(text).not.toContain(homedir());
+    expect(text).toContain("~/repos/research-loop/runs/webtarsthree.reset-archive.jsonl");
+    expect(text).toContain("~/repos/research-loop/.pipeline/webtarsthree/runs/TARS-1465-x");
+    expect(text).toContain("~/repos/research-loop/.pipeline/webtarsthree/raw-usage/TARS-1465-x.json");
   });
 });
 
