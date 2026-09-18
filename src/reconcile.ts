@@ -60,16 +60,32 @@ function buildPrOpenJql(config: Config): string {
   return `labels = "${config.jira.handoffLabel}" AND labels = "${config.jira.repoLabel}" AND status = "${config.jira.statusNames.prOpen}" ORDER BY created ASC`;
 }
 
-/** Find the most recent "landed" run for this ticket key in runs.jsonl, or null if none exists. */
-async function findLandedPrUrl(runsLogPath: string, ticketKey: string): Promise<string | null> {
+/**
+ * Find the most recent run for this ticket key in runs.jsonl that has a
+ * PR URL attached -- "landed" (fully succeeded) or "bounced" (intake
+ * found a pre-existing PR already open, nothing new to do; see
+ * loop-runner.ts's bounced-with-existing-PR branch). Widened beyond
+ * "landed" so reset-project's --close-remote can find and close any open
+ * PR for a ticket being torn down, not just one from a run that fully
+ * landed -- per this session's decision that a reset should close
+ * whatever PR exists, regardless of whether that specific run succeeded.
+ * Exported for reset-project's remote-close module; this pass's own call
+ * site below is unaffected by the widening -- a ticket only ever reaches
+ * Code Review (this pass's own JQL target) via a "landed" line in the
+ * first place, so the extra "bounced" lines it now also considers here
+ * never change which line wins for THIS caller.
+ */
+export async function findOpenPrUrl(runsLogPath: string, ticketKey: string): Promise<string | null> {
   let lines;
   try {
     lines = await readRunLog(runsLogPath);
   } catch {
     return null;
   }
-  const landedLines = lines.filter((l) => l.ticket === ticketKey && l.outcome === "landed" && l.pr);
-  const last = landedLines[landedLines.length - 1];
+  const openPrLines = lines.filter(
+    (l) => l.ticket === ticketKey && (l.outcome === "landed" || l.outcome === "bounced") && l.pr,
+  );
+  const last = openPrLines[openPrLines.length - 1];
   return last?.pr ?? null;
 }
 
@@ -83,11 +99,11 @@ export async function reconcileMergedTickets(deps: ReconcileDeps): Promise<Recon
 
   for (const ticket of tickets) {
     try {
-      const prUrl = await findLandedPrUrl(runsLogPath, ticket.key);
+      const prUrl = await findOpenPrUrl(runsLogPath, ticket.key);
       if (!prUrl) {
         result.errors.push({
           ticket: ticket.key,
-          message: `no landed run found in ${runsLogPath} for ${ticket.key} -- cannot determine its PR URL`,
+          message: `no landed/bounced run with a PR found in ${runsLogPath} for ${ticket.key} -- cannot determine its PR URL`,
         });
         continue;
       }

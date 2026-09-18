@@ -76,7 +76,38 @@ export interface JiraClient {
    * buildQaNotesAdf's doc comment in loop-runner.ts).
    */
   addComment(ticketKey: string, bodyAdf: Record<string, unknown>): Promise<void>;
+
+  /**
+   * Close a ticket for good -- used by reset-project's --close-remote, not
+   * by the normal pipeline (which never closes a ticket itself; a human
+   * does that by hand). This Jira instance has no single "close" status
+   * name that's guaranteed to exist across every project's workflow
+   * (unlike statusNames.bounced/prOpen, which are per-project config), so
+   * this discovers a target by status *category* instead: any status
+   * whose statusCategory.key is "done" counts as closed, regardless of
+   * its literal name ("Closed", "Done", "Won't Do", ...).
+   *
+   * "already-done": the ticket's current status is already in the done
+   * category -- a safe idempotent no-op, no transition attempted.
+   * "no-transition": the ticket isn't done, and no transition to a
+   * done-category status is offered from its current status (e.g. a
+   * workflow that requires an intermediate status first) -- never
+   * silently treated as success.
+   * "closed": a transition was found and successfully applied.
+   *
+   * If more than one done-category transition is offered, the first one
+   * (by the API's own ordering) is used -- there is no per-project config
+   * to prefer one by name. `transitionName` on a "closed" result always
+   * names which one was actually used, so a wrong pick anywhere is
+   * visible rather than silent.
+   */
+  closeTicket(ticketKey: string): Promise<CloseTicketResult>;
 }
+
+export type CloseTicketResult =
+  | { result: "already-done" }
+  | { result: "closed"; transitionName: string }
+  | { result: "no-transition" };
 
 /**
  * Stand-in JiraClient used until Appendix A of the pipeline spec is
@@ -132,6 +163,10 @@ export class StubJiraClient implements JiraClient {
     _bodyAdf: Record<string, unknown>,
   ): Promise<void> {
     throw StubJiraClient.notConfigured("addComment");
+  }
+
+  async closeTicket(_ticketKey: string): Promise<CloseTicketResult> {
+    throw StubJiraClient.notConfigured("closeTicket");
   }
 }
 
@@ -192,7 +227,11 @@ interface JiraSearchResponse {
 }
 
 interface JiraTransitionsResponse {
-  transitions: Array<{ id: string; to: { name: string } }>;
+  transitions: Array<{ id: string; to: { name: string; statusCategory: { key: string } } }>;
+}
+
+interface JiraStatusFieldResponse {
+  fields: { status: { name: string; statusCategory: { key: string } } };
 }
 
 /**
@@ -336,5 +375,32 @@ export class RealJiraClient implements JiraClient {
       method: "POST",
       body: JSON.stringify({ body: bodyAdf }),
     });
+  }
+
+  async closeTicket(ticketKey: string): Promise<CloseTicketResult> {
+    const statusResponse = await this.request(
+      `/rest/api/3/issue/${ticketKey}?fields=status`,
+    );
+    const statusData = (await statusResponse.json()) as JiraStatusFieldResponse;
+    if (statusData.fields.status.statusCategory.key === "done") {
+      return { result: "already-done" };
+    }
+
+    const transitionsResponse = await this.request(
+      `/rest/api/3/issue/${ticketKey}/transitions`,
+    );
+    const transitionsData = (await transitionsResponse.json()) as JiraTransitionsResponse;
+    const doneTransition = transitionsData.transitions.find(
+      (t) => t.to.statusCategory.key === "done",
+    );
+    if (!doneTransition) {
+      return { result: "no-transition" };
+    }
+
+    await this.request(`/rest/api/3/issue/${ticketKey}/transitions`, {
+      method: "POST",
+      body: JSON.stringify({ transition: { id: doneTransition.id } }),
+    });
+    return { result: "closed", transitionName: doneTransition.to.name };
   }
 }

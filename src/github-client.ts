@@ -54,7 +54,29 @@ export interface GitHubClient {
    * "Closes #N" auto-close convention firing before this pass ever runs.
    */
   closeIssue(issueNumber: number, reason: IssueCloseReason): Promise<void>;
+
+  /**
+   * Close the PR at the given URL (not a number -- callers recover this
+   * from RunLogLine.pr, which is always a full URL, not a bare number;
+   * `gh pr close` accepts a URL directly, so no parse step is needed).
+   * Used by reset-project's --close-remote, not by the normal pipeline
+   * (which never closes its own PRs -- a human merges or closes by hand).
+   *
+   * "already-closed" covers two genuinely different `gh` outcomes,
+   * verified live: closing an already-closed PR exits 0 with "already
+   * closed" in its output (same shape as closeIssue's idempotency case);
+   * closing an already-*merged* PR instead exits 1 with "can't be closed
+   * because it was already merged" -- a different exit code and message,
+   * but the same correct outcome for a reset: the PR is already in a
+   * terminal state, nothing more to do. Any other gh failure (e.g. a
+   * genuinely missing/deleted PR, an auth error) rethrows -- callers
+   * that need to distinguish those cases handle it themselves; this
+   * method only special-cases the two idempotency shapes above.
+   */
+  closePr(prUrl: string): Promise<ClosePrResult>;
 }
+
+export type ClosePrResult = "closed" | "already-closed";
 
 const UNCONFIGURED_MESSAGE = (method: string): string =>
   `GitHubClient.${method}: GitHub repo target is not configured. ` +
@@ -76,6 +98,10 @@ export class StubGitHubClient implements GitHubClient {
 
   async closeIssue(_issueNumber: number, _reason: IssueCloseReason): Promise<void> {
     throw new Error(UNCONFIGURED_MESSAGE("closeIssue"));
+  }
+
+  async closePr(_prUrl: string): Promise<ClosePrResult> {
+    throw new Error(UNCONFIGURED_MESSAGE("closePr"));
   }
 }
 
@@ -103,6 +129,16 @@ function toGhCloseReason(reason: IssueCloseReason): string {
  */
 function isAlreadyClosedError(message: string): boolean {
   return /already closed/i.test(message);
+}
+
+/**
+ * Recognizes gh's "already closed" (exit 0) AND "already merged" (exit 1)
+ * error text, both verified live -- closePr's own idempotency check.
+ * `isAlreadyClosedError` alone doesn't cover the merged case: a merged
+ * PR's message never contains "already closed" at all.
+ */
+function isAlreadyClosedOrMergedError(message: string): boolean {
+  return /already (closed|merged)/i.test(message);
 }
 
 /**
@@ -163,6 +199,17 @@ export class RealGitHubClient implements GitHubClient {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (isAlreadyClosedError(message)) return;
+      throw err;
+    }
+  }
+
+  async closePr(prUrl: string): Promise<ClosePrResult> {
+    try {
+      await this.execFn(["pr", "close", prUrl, "--repo", this.repo]);
+      return "closed";
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (isAlreadyClosedOrMergedError(message)) return "already-closed";
       throw err;
     }
   }

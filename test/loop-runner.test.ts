@@ -53,6 +53,7 @@ function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
     swapLabel: vi.fn(async () => {}),
     assignTicket: vi.fn(async () => {}),
     addComment: vi.fn(async () => {}),
+    closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
     ...overrides,
   };
 }
@@ -62,6 +63,7 @@ function makeMockGitHubClient(overrides: Partial<GitHubClient> = {}): GitHubClie
     findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "https://github.com/org/repo/issues/42" })),
     addComment: vi.fn(async () => {}),
     closeIssue: vi.fn(async () => {}),
+    closePr: vi.fn(async () => "already-closed" as const),
     ...overrides,
   };
 }
@@ -979,6 +981,7 @@ describe("runLoopIteration", () => {
       const swapLabel = vi.fn(async () => {});
       const assignTicket = vi.fn(async () => {});
       const addComment = vi.fn(async () => {});
+      const closeTicket = vi.fn(async () => ({ result: "already-done" as const }));
       const jiraClient: JiraClient = {
         pollOldestMatching,
         pollAllMatching,
@@ -987,6 +990,7 @@ describe("runLoopIteration", () => {
         swapLabel,
         assignTicket,
         addComment,
+        closeTicket,
       };
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict(),

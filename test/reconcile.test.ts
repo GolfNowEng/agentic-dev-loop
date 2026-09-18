@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { reconcileMergedTickets } from "../src/reconcile.ts";
+import { reconcileMergedTickets, findOpenPrUrl } from "../src/reconcile.ts";
 import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
 import type { GitHubClient } from "../src/github-client.ts";
 import type { Config, RunLogLine } from "../src/types.ts";
@@ -69,6 +69,79 @@ async function withRunsLog(lines: RunLogLine[], fn: (path: string) => Promise<vo
   }
 }
 
+describe("findOpenPrUrl", () => {
+  it("returns the PR URL from a 'landed' line", async () => {
+    await withRunsLog(
+      [makeRunLogLine({ outcome: "landed", pr: "https://github.com/org/repo/pull/9" })],
+      async (runsLogPath) => {
+        const url = await findOpenPrUrl(runsLogPath, "PROJ-1");
+        expect(url).toBe("https://github.com/org/repo/pull/9");
+      },
+    );
+  });
+
+  it("returns the PR URL from a 'bounced' line too -- intake finding a pre-existing PR still counts as an open PR to close on reset", async () => {
+    await withRunsLog(
+      [
+        makeRunLogLine({
+          outcome: "bounced",
+          pr: "https://github.com/org/repo/pull/431",
+          failure_category: "blocked",
+        }),
+      ],
+      async (runsLogPath) => {
+        const url = await findOpenPrUrl(runsLogPath, "PROJ-1");
+        expect(url).toBe("https://github.com/org/repo/pull/431");
+      },
+    );
+  });
+
+  it("returns the most recent matching line's PR when several exist, landed and bounced mixed", async () => {
+    await withRunsLog(
+      [
+        makeRunLogLine({ outcome: "landed", pr: "https://github.com/org/repo/pull/1", started: "2026-01-01T00:00:00.000Z" }),
+        makeRunLogLine({ outcome: "bounced", pr: "https://github.com/org/repo/pull/1", failure_category: "blocked", started: "2026-01-01T00:05:00.000Z" }),
+        makeRunLogLine({ outcome: "bounced", pr: "https://github.com/org/repo/pull/1", failure_category: "blocked", started: "2026-01-01T00:10:00.000Z" }),
+      ],
+      async (runsLogPath) => {
+        const url = await findOpenPrUrl(runsLogPath, "PROJ-1");
+        expect(url).toBe("https://github.com/org/repo/pull/1");
+      },
+    );
+  });
+
+  it("ignores a bounced line with no PR (a genuine blocker, never opened a PR)", async () => {
+    await withRunsLog(
+      [
+        makeRunLogLine({
+          outcome: "bounced",
+          pr: null,
+          failure_category: "spec_ambiguous",
+        }),
+      ],
+      async (runsLogPath) => {
+        const url = await findOpenPrUrl(runsLogPath, "PROJ-1");
+        expect(url).toBeNull();
+      },
+    );
+  });
+
+  it("returns null when no line matches the ticket key", async () => {
+    await withRunsLog(
+      [makeRunLogLine({ ticket: "PROJ-OTHER" })],
+      async (runsLogPath) => {
+        const url = await findOpenPrUrl(runsLogPath, "PROJ-1");
+        expect(url).toBeNull();
+      },
+    );
+  });
+
+  it("returns null when the runs.jsonl file doesn't exist", async () => {
+    const url = await findOpenPrUrl("/nonexistent/runs.jsonl", "PROJ-1");
+    expect(url).toBeNull();
+  });
+});
+
 describe("reconcileMergedTickets", () => {
   it("finds a Code-Review ticket whose PR merged, and closes the mirror Issue", async () => {
     await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
@@ -80,11 +153,13 @@ describe("reconcileMergedTickets", () => {
         swapLabel: vi.fn(),
         assignTicket: vi.fn(),
         addComment: vi.fn(),
+        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
       };
       const githubClient: GitHubClient = {
         findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "https://github.com/org/repo/issues/42" })),
         addComment: vi.fn(),
         closeIssue: vi.fn(async () => {}),
+        closePr: vi.fn(async () => "already-closed" as const),
       };
       const execGhPrView = vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-02T00:00:00Z" }));
 
@@ -111,11 +186,13 @@ describe("reconcileMergedTickets", () => {
         swapLabel: vi.fn(),
         assignTicket: vi.fn(),
         addComment: vi.fn(),
+        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
       };
       const githubClient: GitHubClient = {
         findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "x" })),
         addComment: vi.fn(),
         closeIssue: vi.fn(),
+        closePr: vi.fn(async () => "already-closed" as const),
       };
       const execGhPrView = vi.fn(async () => JSON.stringify({ state: "OPEN", mergedAt: null }));
 
@@ -142,11 +219,13 @@ describe("reconcileMergedTickets", () => {
         swapLabel: vi.fn(),
         assignTicket: vi.fn(),
         addComment: vi.fn(),
+        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
       };
       const githubClient: GitHubClient = {
         findIssueByJiraKey: vi.fn(),
         addComment: vi.fn(),
         closeIssue: vi.fn(),
+        closePr: vi.fn(async () => "already-closed" as const),
       };
       const execGhPrView = vi.fn();
 
@@ -173,11 +252,13 @@ describe("reconcileMergedTickets", () => {
         swapLabel: vi.fn(),
         assignTicket: vi.fn(),
         addComment: vi.fn(),
+        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
       };
       const githubClient: GitHubClient = {
         findIssueByJiraKey: vi.fn(),
         addComment: vi.fn(),
         closeIssue: vi.fn(),
+        closePr: vi.fn(async () => "already-closed" as const),
       };
       const execGhPrView = vi.fn();
 
@@ -192,7 +273,7 @@ describe("reconcileMergedTickets", () => {
       expect(result.checked).toBe(1);
       expect(result.closed).toEqual([]);
       expect(result.errors).toEqual([
-        { ticket: "PROJ-1", message: expect.stringContaining("no landed run found") },
+        { ticket: "PROJ-1", message: expect.stringContaining("no landed/bounced run with a PR found") },
       ]);
       expect(execGhPrView).not.toHaveBeenCalled();
     });
@@ -208,6 +289,7 @@ describe("reconcileMergedTickets", () => {
         swapLabel: vi.fn(),
         assignTicket: vi.fn(),
         addComment: vi.fn(),
+        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
       };
       // closeIssue itself is already a safe no-op on an already-closed
       // issue (see Task 3) -- this test just confirms reconcile still
@@ -218,6 +300,7 @@ describe("reconcileMergedTickets", () => {
         findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "x" })),
         addComment: vi.fn(),
         closeIssue: vi.fn(async () => {}), // real RealGitHubClient already swallows "already closed"
+        closePr: vi.fn(async () => "already-closed" as const),
       };
       const execGhPrView = vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-02T00:00:00Z" }));
 
@@ -245,11 +328,13 @@ describe("reconcileMergedTickets", () => {
           swapLabel: vi.fn(),
           assignTicket: vi.fn(),
           addComment: vi.fn(),
+          closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
         };
         const githubClient: GitHubClient = {
           findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "x" })),
           addComment: vi.fn(),
           closeIssue: vi.fn(async () => {}),
+          closePr: vi.fn(async () => "already-closed" as const),
         };
         const execGhPrView = vi.fn(async (url: string) => {
           if (url.includes("/9")) throw new Error("gh: network error");

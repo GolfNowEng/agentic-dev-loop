@@ -111,4 +111,57 @@ describe("RealGitHubClient", () => {
 
     await expect(client.closeIssue(42, "completed")).resolves.toBeUndefined();
   });
+
+  it("closePr closes the PR at the given URL via gh pr close, no number parsing", async () => {
+    const execFn = vi.fn(async () => "");
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    const result = await client.closePr("https://github.com/org/repo/pull/431");
+
+    expect(result).toBe("closed");
+    expect(execFn).toHaveBeenCalledWith([
+      "pr",
+      "close",
+      "https://github.com/org/repo/pull/431",
+      "--repo",
+      "org/repo",
+    ]);
+  });
+
+  it("closePr returns 'already-closed' when gh reports the PR is already closed (verified live: gh issue close 431, exit 0, message contains 'already closed')", async () => {
+    const execFn = vi.fn(async () => {
+      throw new Error(
+        "! Pull request org/repo#431 (some title) is already closed",
+      );
+    });
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    const result = await client.closePr("https://github.com/org/repo/pull/431");
+
+    expect(result).toBe("already-closed");
+  });
+
+  it("closePr returns 'already-closed' when gh reports the PR was already merged (verified live: gh pr close 429, exit 1, message contains 'already merged' -- a different code path from 'already closed' but the same correct outcome for a reset)", async () => {
+    const execFn = vi.fn(async () => {
+      throw new Error(
+        "X Pull request org/repo#429 (some title) can't be closed because it was already merged",
+      );
+    });
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    const result = await client.closePr("https://github.com/org/repo/pull/429");
+
+    expect(result).toBe("already-closed");
+  });
+
+  it("closePr rethrows a genuinely different gh failure (not idempotency-related)", async () => {
+    const execFn = vi.fn(async () => {
+      throw new Error("gh: authentication required");
+    });
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    await expect(client.closePr("https://github.com/org/repo/pull/1")).rejects.toThrow(
+      /authentication required/,
+    );
+  });
 });
