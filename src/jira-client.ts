@@ -53,7 +53,35 @@ export interface JiraClient {
    * itself does not check, it just performs the assignment.
    */
   assignTicket(ticketKey: string, accountId: string): Promise<void>;
+
+  /**
+   * Post a comment to a ticket. `bodyAdf` must be a full Atlassian
+   * Document Format doc (`{ type: "doc", version: 1, content: [...] }`),
+   * not a plain string -- Jira's v3 comment endpoint rejects a bare
+   * string body. Unlike the main loop's own Jira comments (posted
+   * directly via the ticket-refine skill's own MCP tool call, not
+   * through this client), this method exists for reset-project's
+   * --close-remote, which runs outside any Claude Code session and needs
+   * a REST-level way to post a comment before closing a ticket.
+   */
+  addComment(ticketKey: string, bodyAdf: Record<string, unknown>): Promise<void>;
+
+  /**
+   * Close a ticket for good -- used by reset-project's --close-remote,
+   * not by the normal pipeline (which never closes a ticket itself; a
+   * human does that by hand, or dev-loop's own reconciliation pass keeps
+   * only the mirror Issue in sync). See dev-loop's identical method for
+   * the full rationale: this discovers a target by status *category*
+   * ("done"), not a hardcoded status name, since no single "Closed" name
+   * is guaranteed across every project's workflow.
+   */
+  closeTicket(ticketKey: string): Promise<CloseTicketResult>;
 }
+
+export type CloseTicketResult =
+  | { result: "already-done" }
+  | { result: "closed"; transitionName: string }
+  | { result: "no-transition" };
 
 const UNCONFIGURED_MESSAGE = (method: string): string =>
   `JiraClient.${method}: Jira instance is not configured. ` +
@@ -86,6 +114,17 @@ export class StubJiraClient implements JiraClient {
 
   async assignTicket(_ticketKey: string, _accountId: string): Promise<void> {
     throw new Error(UNCONFIGURED_MESSAGE("assignTicket"));
+  }
+
+  async addComment(
+    _ticketKey: string,
+    _bodyAdf: Record<string, unknown>,
+  ): Promise<void> {
+    throw new Error(UNCONFIGURED_MESSAGE("addComment"));
+  }
+
+  async closeTicket(_ticketKey: string): Promise<CloseTicketResult> {
+    throw new Error(UNCONFIGURED_MESSAGE("closeTicket"));
   }
 }
 
@@ -147,7 +186,11 @@ interface JiraSearchResponse {
 }
 
 interface JiraTransitionsResponse {
-  transitions: Array<{ id: string; to: { name: string } }>;
+  transitions: Array<{ id: string; to: { name: string; statusCategory: { key: string } } }>;
+}
+
+interface JiraStatusFieldResponse {
+  fields: { status: { name: string; statusCategory: { key: string } } };
 }
 
 /**
@@ -259,5 +302,42 @@ export class RealJiraClient implements JiraClient {
       method: "PUT",
       body: JSON.stringify({ fields: { assignee: { accountId } } }),
     });
+  }
+
+  async addComment(
+    ticketKey: string,
+    bodyAdf: Record<string, unknown>,
+  ): Promise<void> {
+    await this.request(`/rest/api/3/issue/${ticketKey}/comment`, {
+      method: "POST",
+      body: JSON.stringify({ body: bodyAdf }),
+    });
+  }
+
+  async closeTicket(ticketKey: string): Promise<CloseTicketResult> {
+    const statusResponse = await this.request(
+      `/rest/api/3/issue/${ticketKey}?fields=status`,
+    );
+    const statusData = (await statusResponse.json()) as JiraStatusFieldResponse;
+    if (statusData.fields.status.statusCategory.key === "done") {
+      return { result: "already-done" };
+    }
+
+    const transitionsResponse = await this.request(
+      `/rest/api/3/issue/${ticketKey}/transitions`,
+    );
+    const transitionsData = (await transitionsResponse.json()) as JiraTransitionsResponse;
+    const doneTransition = transitionsData.transitions.find(
+      (t) => t.to.statusCategory.key === "done",
+    );
+    if (!doneTransition) {
+      return { result: "no-transition" };
+    }
+
+    await this.request(`/rest/api/3/issue/${ticketKey}/transitions`, {
+      method: "POST",
+      body: JSON.stringify({ transition: { id: doneTransition.id } }),
+    });
+    return { result: "closed", transitionName: doneTransition.to.name };
   }
 }

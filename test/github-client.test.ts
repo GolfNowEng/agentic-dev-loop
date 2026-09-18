@@ -8,6 +8,7 @@ describe("StubGitHubClient", () => {
     await expect(
       client.createIssue({ title: "PROJ-1: x", body: "y", jiraKey: "PROJ-1" }),
     ).rejects.toThrow(/not configured/);
+    await expect(client.closeIssue(42, "completed")).rejects.toThrow(/not configured/);
   });
 });
 
@@ -81,5 +82,51 @@ describe("RealGitHubClient", () => {
     await expect(
       client.createIssue({ title: "PROJ-1: x", body: "y", jiraKey: "PROJ-1" }),
     ).rejects.toThrow(/authentication required/);
+  });
+
+  it("closeIssue closes with the given state_reason via --reason", async () => {
+    const execFn = vi.fn(async () => "");
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    await client.closeIssue(42, "completed");
+
+    expect(execFn).toHaveBeenCalledWith([
+      "issue",
+      "close",
+      "42",
+      "--repo",
+      "org/repo",
+      "--reason",
+      "completed",
+    ]);
+  });
+
+  it("closeIssue maps not_planned to gh's own 'not planned' reason string", async () => {
+    const execFn = vi.fn(async () => "");
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    await client.closeIssue(42, "not_planned");
+
+    expect(execFn).toHaveBeenCalledWith(
+      expect.arrayContaining(["--reason", "not planned"]),
+    );
+  });
+
+  it("closeIssue is a safe no-op (does not throw) when gh reports the issue is already closed", async () => {
+    const execFn = vi.fn(async () => {
+      throw new Error("GraphQL: Issue is already closed (closeIssue)");
+    });
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    await expect(client.closeIssue(42, "completed")).resolves.toBeUndefined();
+  });
+
+  it("closeIssue rethrows a genuinely different gh failure", async () => {
+    const execFn = vi.fn(async () => {
+      throw new Error("gh: authentication required");
+    });
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    await expect(client.closeIssue(42, "completed")).rejects.toThrow(/authentication required/);
   });
 });

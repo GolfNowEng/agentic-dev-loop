@@ -52,6 +52,8 @@ function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
     transitionStatus: vi.fn(async () => undefined),
     swapLabel: vi.fn(async () => undefined),
     assignTicket: vi.fn(async () => undefined),
+    addComment: vi.fn(async () => undefined),
+    closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
     ...overrides,
   };
 }

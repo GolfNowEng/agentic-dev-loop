@@ -235,4 +235,140 @@ describe("RealJiraClient", () => {
       /401/,
     );
   });
+
+  it("addComment POSTs the given ADF body to the issue's comment endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 201 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const bodyAdf = {
+      type: "doc",
+      version: 1,
+      content: [{ type: "paragraph", content: [{ type: "text", text: "Bounced." }] }],
+    };
+    await client.addComment("PROJ-1", bodyAdf);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      "https://example.atlassian.net/rest/api/3/issue/PROJ-1/comment",
+    );
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ body: bodyAdf });
+  });
+
+  it("closeTicket returns 'already-done' without calling transitions when the ticket's current status is already in the done category", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          fields: { status: { name: "Closed", statusCategory: { key: "done" } } },
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const result = await client.closeTicket("PROJ-1");
+
+    expect(result).toEqual({ result: "already-done" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      "https://example.atlassian.net/rest/api/3/issue/PROJ-1?fields=status",
+    );
+  });
+
+  it("closeTicket transitions to the first done-category transition and reports its name", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            fields: { status: { name: "To Do", statusCategory: { key: "new" } } },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            transitions: [
+              { id: "41", to: { name: "Blocked", statusCategory: { key: "new" } } },
+              { id: "201", to: { name: "Close", statusCategory: { key: "done" } } },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const result = await client.closeTicket("PROJ-1");
+
+    expect(result).toEqual({ result: "closed", transitionName: "Close" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const [, postInit] = fetchMock.mock.calls[2];
+    expect(postInit.method).toBe("POST");
+    expect(JSON.parse(postInit.body as string)).toEqual({
+      transition: { id: "201" },
+    });
+  });
+
+  it("closeTicket picks the FIRST done-category transition when multiple are offered", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            fields: { status: { name: "In Progress", statusCategory: { key: "indeterminate" } } },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            transitions: [
+              { id: "10", to: { name: "Won't Do", statusCategory: { key: "done" } } },
+              { id: "20", to: { name: "Done", statusCategory: { key: "done" } } },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const result = await client.closeTicket("PROJ-1");
+
+    expect(result).toEqual({ result: "closed", transitionName: "Won't Do" });
+    const [, postInit] = fetchMock.mock.calls[2];
+    expect(JSON.parse(postInit.body as string)).toEqual({
+      transition: { id: "10" },
+    });
+  });
+
+  it("closeTicket returns 'no-transition' when the ticket isn't done and no done-category transition is offered", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            fields: { status: { name: "Code Review", statusCategory: { key: "indeterminate" } } },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            transitions: [
+              { id: "41", to: { name: "Blocked", statusCategory: { key: "new" } } },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const result = await client.closeTicket("PROJ-1");
+
+    expect(result).toEqual({ result: "no-transition" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

@@ -31,7 +31,19 @@ export interface GitHubClient {
    * exists -- this method itself does not check.
    */
   createIssue(params: { title: string; body: string; jiraKey: string }): Promise<GitHubIssue>;
+
+  /**
+   * Close the given issue with the given reason. A safe no-op if the
+   * issue is already closed. Used by reset-project's --close-remote, not
+   * by the normal pipeline -- research-loop never closes its own mirror
+   * Issues (that's dev-loop's merge-reconciliation pass's job); ported
+   * from dev-loop's identical method.
+   */
+  closeIssue(issueNumber: number, reason: IssueCloseReason): Promise<void>;
 }
+
+/** GitHub's own three close reasons -- state_reason on the API, --reason on gh. */
+export type IssueCloseReason = "completed" | "not_planned" | "duplicate";
 
 const UNCONFIGURED_MESSAGE = (method: string): string =>
   `GitHubClient.${method}: GitHub repo target is not configured. ` +
@@ -56,6 +68,10 @@ export class StubGitHubClient implements GitHubClient {
   }): Promise<GitHubIssue> {
     throw new Error(UNCONFIGURED_MESSAGE("createIssue"));
   }
+
+  async closeIssue(_issueNumber: number, _reason: IssueCloseReason): Promise<void> {
+    throw new Error(UNCONFIGURED_MESSAGE("closeIssue"));
+  }
 }
 
 /** Stand-in for spawning `gh <args>` and returning its stdout. Injected so tests never shell out for real. */
@@ -64,6 +80,22 @@ export type ExecGhFn = (args: string[]) => Promise<string>;
 interface GhIssueListEntry {
   number: number;
   url: string;
+}
+
+/** gh's own --reason flag values use a literal space for "not planned", unlike the API's state_reason "not_planned". */
+function toGhCloseReason(reason: IssueCloseReason): string {
+  return reason === "not_planned" ? "not planned" : reason;
+}
+
+/**
+ * Recognizes gh's own "already closed" error text so closeIssue can be a
+ * safe idempotent no-op instead of throwing on a re-run. Matched loosely
+ * (substring, case-insensitive) since gh/GitHub's own wording for this
+ * case isn't a documented stable contract -- ported from dev-loop's
+ * identical function, whose own doc comment has the full rationale.
+ */
+function isAlreadyClosedError(message: string): boolean {
+  return /already closed/i.test(message);
 }
 
 /**
@@ -121,6 +153,24 @@ export class RealGitHubClient implements GitHubClient {
       );
     }
     return { number: Number(match[1]), url };
+  }
+
+  async closeIssue(issueNumber: number, reason: IssueCloseReason): Promise<void> {
+    try {
+      await this.execFn([
+        "issue",
+        "close",
+        String(issueNumber),
+        "--repo",
+        this.repo,
+        "--reason",
+        toGhCloseReason(reason),
+      ]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (isAlreadyClosedError(message)) return;
+      throw err;
+    }
   }
 }
 
