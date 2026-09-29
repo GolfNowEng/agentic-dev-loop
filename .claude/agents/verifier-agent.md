@@ -19,6 +19,9 @@ each item below.
   Scope, in draft form) — this is a draft of the `Refined Spec — ready for
   ticket-to-pr` comment `ticket-refine` will post if you pass it, not a
   draft of the ticket's description (which this pipeline never touches).
+  It lives in `RUN_DIR/draft-spec.md` and has **not** been posted to the
+  GitHub Issue yet; you are verifying the exact text that will be
+  published if you pass it.
 
 ## Checklist (check every item, in order; the first failure is your bounce)
 
@@ -53,6 +56,12 @@ each item below.
    fine; an actual value is not, regardless of which earlier step
    introduced it. This is a last line of defense before this comment gets
    posted to Jira — check it even if nothing upstream flagged a concern.
+8. **AC shape**: behavior ACs (observable changes) should each have their
+   own named test. Structural/invariant ACs (deleted files, removed CSS
+   classes, unchanged files, moved imports) should be grouped into one AC
+   with one mechanical check, not one AC per item. More than roughly 10
+   behavior ACs is a `too_large` signal (judgment call: report it, do not
+   propose a fix).
 
 ## What NOT to do
 
@@ -68,5 +77,5 @@ each item below.
 - If `bounced`: which checklist item(s) failed (by number), and for each,
   the specific text in the draft that fails it and why (quote the
   offending AC/scope line, don't just say "AC 2 is vague").
-- If `ready`: confirm all eight items pass — brief acknowledgment is
+- If `ready`: confirm all nine items pass — brief acknowledgment is
   sufficient, no need to restate the whole ticket.
