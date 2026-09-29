@@ -286,8 +286,10 @@ runs `reconcileMergedTickets` (`src/reconcile.ts`): finds every ticket at
 most recent `"landed"` line in `runs/<slug>.jsonl` for that ticket key,
 and checks the real merge state via `gh pr view <url> --json
 state,mergedAt`. For any that merged, closes the mirror GitHub Issue
-(`state_reason: "completed"`) via `GitHubClient.closeIssue` — but does
-**not** touch the Jira ticket's status or label. A human still closes the
+(`state_reason: "completed"`) via `GitHubClient.closeIssue`, first
+posting a short "Closed automatically by dev-loop" comment (PR URL, merge
+time, ticket key, reason) so the closed Issue carries context; a failed
+comment never blocks the close — but does **not** touch the Jira ticket's status or label. A human still closes the
 Jira ticket by hand; this pass exists only so the GitHub Issue doesn't
 stay open indefinitely after a merge that happened while dev-loop was
 offline (GitHub's own `Closes #N` convention auto-closes the Issue on a

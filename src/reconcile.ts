@@ -10,8 +10,9 @@
  * resolves each one's PR URL from its own runs.jsonl history (the most
  * recent "landed" line for that ticket key -- no new field needed,
  * RunLogLine.pr already carries it), checks the real merge state via
- * `gh pr view --json state,mergedAt`, and for any that merged, closes the
- * mirror GitHub Issue (state_reason "completed"). Deliberately does NOT
+ * `gh pr view --json state,mergedAt`, and for any that merged, posts a
+ * "closed automatically by dev-loop" comment on, then closes, the mirror
+ * GitHub Issue (state_reason "completed"). Deliberately does NOT
  * touch the Jira ticket's own status/label -- a human closes the Jira
  * ticket by hand; this pass only keeps the GitHub Issue from going stale.
  * This is a startup-time/per-poll-cycle reconciliation step, not a
@@ -89,6 +90,40 @@ export async function findOpenPrUrl(runsLogPath: string, ticketKey: string): Pro
   return last?.pr ?? null;
 }
 
+/**
+ * Build the comment left on a mirror Issue when reconcile closes it, so a
+ * closed Issue never looks like it was closed by a human with no context.
+ * Kept to a fixed short template. mergedAt is rendered as "YYYY-MM-DD HH:MM UTC".
+ */
+export function buildCloseComment(info: { prUrl: string; mergedAt: string; ticketKey: string }): string {
+  const merged = new Date(info.mergedAt).toISOString().slice(0, 16).replace("T", " ");
+  return [
+    "**Closed automatically by dev-loop**",
+    "",
+    `PR: ${info.prUrl}`,
+    `Merged: ${merged} UTC`,
+    `Ticket: ${info.ticketKey}`,
+    "Reason: PR merged, closed as completed",
+  ].join("\n");
+}
+
+/**
+ * Post the close comment before closing. Never throws -- a failed comment
+ * must not block the close itself, same stance as remote-close.ts's
+ * postCloseComment for the Jira side.
+ */
+async function postCloseComment(
+  githubClient: GitHubClient,
+  issueNumber: number,
+  info: { prUrl: string; mergedAt: string; ticketKey: string },
+): Promise<void> {
+  try {
+    await githubClient.addComment(issueNumber, buildCloseComment(info));
+  } catch {
+    // Swallowed deliberately -- see doc comment above.
+  }
+}
+
 export async function reconcileMergedTickets(deps: ReconcileDeps): Promise<ReconcileResult> {
   const { jiraClient, githubClient, config, runsLogPath, execGhPrView } = deps;
 
@@ -117,6 +152,11 @@ export async function reconcileMergedTickets(deps: ReconcileDeps): Promise<Recon
 
       const issue = await githubClient.findIssueByJiraKey(ticket.key);
       if (issue) {
+        await postCloseComment(githubClient, issue.number, {
+          prUrl,
+          mergedAt: prStatus.mergedAt,
+          ticketKey: ticket.key,
+        });
         await githubClient.closeIssue(issue.number, "completed");
       }
       result.closed.push(ticket.key);
