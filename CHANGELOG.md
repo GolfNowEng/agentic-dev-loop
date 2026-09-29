@@ -6,6 +6,16 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-29 — Reconcile comments on the mirror Issue before closing it
+
+The merge-reconciliation pass closed mirror GitHub Issues silently, so a
+closed Issue (e.g. webtarsthree#452) looked human-closed with no context.
+
+**Fix**: `reconcileMergedTickets` now posts a fixed short template ("Closed
+automatically by dev-loop", PR URL, merge time, ticket, reason) via
+`GitHubClient.addComment` immediately before `closeIssue`. A failed comment
+is swallowed and never blocks the close. Jira is still untouched.
+
 ## 2026-09-29 — PR creation now follows the local `push-branch` skill; `push-branch` no longer prompts
 
 `ticket-to-pr` Phase 5 had its own copy of the PR template, which had
