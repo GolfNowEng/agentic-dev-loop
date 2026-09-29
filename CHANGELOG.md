@@ -6,6 +6,16 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-29 — Phase 0 bounces when a newer research-loop comment follows the chosen spec
+
+`ticket-to-pr` reads only the newest `## ✅ research-loop -` Issue comment.
+On TARS-1452 (webtarsthree#454) research-loop posted its corrections as
+separate `## Self-heal cycle N` comments after the spec, which this rule
+would silently ignore. research-loop now publishes one final `✅` comment
+(see its CHANGELOG), so this is a backstop, not the primary fix: Phase 0
+now bounces `spec_ambiguous` if any Issue comment created after the chosen
+spec has `research-loop` in its first line.
+
 ## 2026-09-29 — Reconcile comments on the mirror Issue before closing it
 
 The merge-reconciliation pass closed mirror GitHub Issues silently, so a
