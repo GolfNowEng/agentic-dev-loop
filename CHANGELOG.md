@@ -5,6 +5,74 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-29 — `ticket-refine` publishes the `✅` spec once, after the verifier passes; self-heal fixes merge into the draft
+
+On TARS-1452 (GitHub Issue #454) the `## ✅ research-loop -` spec comment was
+posted at 18:50Z, 30s *before* the Step 7 verifier was spawned
+(`progress.jsonl`: `synthesize phase_end` "posted ... full refined ticket"
+then `verify phase_start`). The verifier then found two false claims in the
+spec's own evidence (AC5, AC11), and the two self-heal cycles were posted as
+separate `## Self-heal cycle N` comments. `ticket-to-pr` reads only the
+newest comment whose first line starts `## ✅ research-loop -`, so it would
+have implemented the uncorrected AC5/AC11.
+
+Root cause: the skill text contradicted itself. Step 6/7 said the `✅`
+comment is written only after a passing verdict, but the definition-of-
+ready checklist (item 0) and protocol item 6 made the verifier check the
+*posted* Issue comment, which forces posting first. "Mechanics of a self-heal
+cycle" never said where fixes go, so they were appended as delta comments.
+
+**Fix**: Step 6 writes `RUN_DIR/draft-spec.md`; the verifier checks that
+file; self-heal edits the file in place; the `✅` comment is published once
+after a pass, verbatim from the draft. Self-heal is recorded only in
+`progress.jsonl`. A re-pickup's `✅` comment carries a `Supersedes comments
+<ids>` line. `verifier-agent` and the checklist gained an AC-shape rule
+(behavior ACs one-per-test; structural/invariant ACs grouped into one
+mechanical check; consider a split above ~10 behavior ACs).
+
+## 2026-09-19 — edit-in-place comments made Jira/GitHub look out of sync on TARS-1450; `ticket-refine` now always posts a new comment
+
+TARS-1450 bounced twice in one day, and each time the Jira comment and its
+GitHub Issue mirror appeared to disagree about the ticket's state, even
+though the pipeline itself was behaving correctly. Root cause: the
+"idempotent re-refinement" convention (`SKILL.md`'s "Setup: idempotent
+re-refinement") had the skill find its own prior research-loop-titled
+comment on re-pickup/re-verify and **update that same comment in place**
+on both Jira (`addCommentToJiraIssue` with an existing `commentId`) and
+GitHub (`gh api ... -X PATCH` on the existing comment), rather than
+posting a new one each cycle. Both Jira and GitHub render comment threads
+in **creation-time order, not edit-time order** — so an edited comment's
+content changes but its position in the thread never moves. Confirmed on
+TARS-1450: Jira comment `1039214` / GitHub comment `5735844223` (created
+2026-09-18T20:33, last edited 2026-09-19T02:08) sat at their original,
+earlier position in both threads while a separate, later-*created* comment
+(Jira `1039340` / GitHub `5737852103`, created 2026-09-19T00:30) landed
+below them — a reader skimming top-to-bottom saw what looked like stale
+content sitting above newer content, on both surfaces independently, even
+though each surface's own data was internally self-consistent.
+
+Confirmed dev-loop needed no fix on its comment-*writing* side —
+`JiraClient.addComment`/`GitHubClient.addComment` and `loop-runner.ts` are
+already create-only there, with no edit/PATCH path anywhere in that repo.
+
+**Fix**: `ticket-refine`'s `SKILL.md` — "Setup: idempotent re-refinement"
+now says the title-prefix match is for reading prior context only, never
+an edit target; "Ticket content protocol" item 5 and the "Bouncing"
+section's re-pickup line now say to always post a brand-new comment; and
+an explicit prohibition was added against passing an existing `commentId`
+to `addCommentToJiraIssue`, `gh api ... -X PATCH` on an existing GitHub
+comment, and `gh issue comment --edit-last`. Added a new `PreToolUse` hook,
+`.claude/hooks/block-comment-edit-in-place.sh` (backed by
+`scripts/check-comment-edit-in-tool-input.ts`, wired into both the
+Atlassian-MCP and Bash matchers in `.claude/settings.json`), as a
+code-level backstop that denies any of those three call shapes outright —
+same fail-closed pattern as the existing `block-secret-comments.sh` /
+`block-github-secret-writes.sh` hooks, not a replacement for the prose
+rule. dev-loop's `ticket-to-pr` `SKILL.md` (Phase 0 step 2) was updated
+separately to read the **most-recently-created** matching comment, since a
+ticket can now carry several matching comments over its life instead of
+one collapsed/edited comment.
+
 ## 2026-09-18 — `reset-project --close-remote` hit a real `no-transition` case on TARS-1467; `closeTicket` now walks a bounded chain of intermediate hops
 
 The live TARS-1467 handoff test (this repo refined it, auto-promoted to

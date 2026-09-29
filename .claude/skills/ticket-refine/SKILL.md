@@ -47,6 +47,21 @@ skill no longer writes those. Two cases:
   synthesis; you don't need to redo Step 2's codebase grounding if it
   wasn't disputed).
 
+**This match is for reading prior context only — it is never a write/edit
+target.** Use it to find the most-recently-created matching comment (by
+creation time, not position in the thread) and read it as the current
+state to revise from. Both Jira and GitHub sort comment threads by
+*creation* time, not edit time — editing an old comment in place leaves it
+sitting at its original position in the thread while newer human replies
+and steering comments land below it, so a reader (or `ticket-to-pr`) sees
+stale-looking content sitting above what is actually newer. This produced
+a real incident (TARS-1450, 2026-09-19): the pipeline's own state was
+internally consistent, but the Jira and GitHub threads *looked* out of
+sync because the tracked comment's content kept changing while its
+position never moved. See "Ticket content protocol" item 5 and "Bouncing"
+below — every re-verify or re-pickup cycle **always posts a brand-new
+comment**, never edits an existing one.
+
 ## Setup: run directories and progress logging
 
 Same discipline as `dev-loop`'s `ticket-to-pr`, for dashboard parity:
@@ -353,12 +368,14 @@ naming the specific blocker.
 
 ### Step 6 — Synthesize
 
-Write the refined ticket. Per the ticket content protocol (below), this
-means writing working notes to the **GitHub Issue** during work (not
-Jira), and only writing the full `## ✅ research-loop - <short context>`
-content to that same GitHub Issue, plus the short pointer comment to
-Jira, once a passing verdict is reached in Step 7. The description is
-never touched.
+Write the refined ticket **to a local draft file, `RUN_DIR/draft-spec.md`
+— not to the GitHub Issue.** Per the ticket content protocol (below),
+working notes go to the **GitHub Issue** during work (titled `## Working
+notes ...`, never `## ✅ research-loop -`), and the full `## ✅
+research-loop - <short context>` content is published to that same Issue,
+plus the short pointer comment to Jira, exactly once, after Step 7 passes.
+The draft file is the single artifact Step 7 verifies and, unchanged, the
+single artifact Step 7 publishes. The description is never touched.
 
 ### Step 7 — Verify
 
@@ -367,10 +384,13 @@ the synthesized ticket against the definition-of-ready checklist below.
 This must be a genuinely independent check, not the same reasoning that
 produced the ticket rubber-stamping itself.
 
-- If it passes: write the GitHub Issue's full comment, titled `## ✅
-  research-loop - <short context>` (per "Ticket content protocol" item 4),
-  and the Jira pointer comment, titled `✅ research-loop - <short context>`
-  (per item 2) — set `verdict.outcome: "ready"`. The
+- If it passes: **publish once.** Post `RUN_DIR/draft-spec.md`, verbatim,
+  as the GitHub Issue's full comment, titled `## ✅ research-loop -
+  <short context>` (per "Ticket content protocol" item 4), then the Jira
+  pointer comment, titled `✅ research-loop - <short context>` (per item
+  2) — set `verdict.outcome: "ready"`. Nothing carrying the `✅` title is
+  ever posted before this point, so a `✅` comment on the Issue always
+  means "passed the verifier as written". The
   ticket stays at `triggerLabel`, refined and awaiting human approval (the
   loop runner only swaps the label to `handoffLabel` if `autoPromoteLabel`
   is present — this skill just reports the verdict either way).
@@ -422,9 +442,12 @@ even if it feels small. Bounce it exactly as Steps elsewhere in this
 skill already do.
 
 **Mechanics of a self-heal cycle**: fix the specific gap the verifier
-named, nothing else (do not re-open sections that already passed), then
-re-run the verifier subagent — a fresh independent check, not a
-self-assessment that the fix worked. Cap at **4 cycles** per run. If a
+named **in `RUN_DIR/draft-spec.md` itself** (edit the affected AC in
+place, so the draft always reads as one complete, final spec — never as a
+base plus a "corrections" section, and never as a separate GitHub/Jira
+comment), nothing else (do not re-open sections that already passed), then
+re-run the verifier subagent on the updated draft — a fresh independent
+check, not a self-assessment that the fix worked. Cap at **4 cycles** per run. If a
 mechanical-looking failure is still unresolved after 4 cycles, stop
 self-healing and bounce it as `spec_ambiguous` with all 4 attempts and
 findings as evidence — that many unresolved "mechanical" fixes is itself
@@ -435,9 +458,10 @@ Log each self-heal cycle to `progress.jsonl` distinctly from a bounce —
 a `"phase": "verify"`, `"event": "note"` line whose `detail` starts with
 `"self-heal cycle <n>:"` naming the specific gap and fix, so a run that
 took 4 internal cycles is distinguishable at a glance from one that
-passed clean on the first attempt. The finalized research-loop comment
-and `verdict.json`'s `detail` should also note the cycle count in one
-clause (e.g. "ready — refined ticket written (after 4 fix/re-verify
+passed clean on the first attempt. **Self-heal cycles are never posted
+to the Issue or Jira** — `progress.jsonl` is their only record. The
+published research-loop comment and `verdict.json`'s `detail` should also
+note the cycle count in one clause (e.g. "ready — refined ticket written (after 4 fix/re-verify
 cycles)") — this is signal for anyone reading the ticket or the run
 later, not just internal bookkeeping.
 
@@ -463,11 +487,14 @@ This is not conditional on how the run concludes.
 
 ## Definition-of-ready checklist (enforced, not vibed)
 
-0. The GitHub Issue's `## ✅ research-loop - <short context>` comment
-   exists and follows the official template: `### Overview`, `### Acceptance
-   Criteria`, `### Scope` present and populated; the Jira `✅ research-loop
-   - <short context>` comment exists as its pointer, per the ticket
-   content protocol.
+0. `RUN_DIR/draft-spec.md` follows the official template: `### Overview`,
+   `### Acceptance Criteria`, `### Scope` present and populated, and the
+   GitHub Issue for this run exists (it is where the draft will be
+   published). *After* publishing, re-fetch the posted `## ✅ research-loop
+   -` comment and confirm its body matches the draft byte-for-byte, and
+   that the Jira `✅ research-loop - <short context>` pointer exists, per
+   the ticket content protocol; a mismatch is a publish error, not a
+   verifier failure.
 1. Problem statement and every acceptance criterion are testable (each AC
    maps to an assertion `ticket-to-pr` could write a test against).
 2. Files/modules to touch are enumerated by name — no "relevant files"
@@ -486,6 +513,15 @@ This is not conditional on how the run concludes.
    see Ticket content protocol item 8. Presence/shape references
    (`hasClientSecret: true`, a var name alone) are fine; a raw value is
    not, regardless of which step surfaced it.
+8. AC shape. **Behavior ACs** (something a user or caller can observe
+   changing) get one AC each, each naming its own test. **Structural /
+   invariant ACs** (a file is deleted, a CSS class is removed, a file or
+   export is unchanged, an import path moves) are grouped into a single
+   AC backed by one mechanical check (a grep/`test -e` assertion or a
+   single test that enumerates them) — not one AC and one named test per
+   item. If the draft has more than roughly 10 behavior ACs, Step 4 must
+   consider a split, and the verifier flags it as an advisory `too_large`
+   signal (a judgment call, so a bounce, never a self-heal).
 
 ## Ticket content protocol
 
@@ -588,16 +624,47 @@ requirement).
    Criteria` / `### Scope` template (identical structure to the old
    full-detail Jira comment) as a GitHub Issue comment, titled in its own
    first line `## ✅ research-loop - <short context>` (GitHub has no
-   comment-title field, so this is a markdown heading instead).
+   comment-title field, so this is a markdown heading instead). **This is
+   the only comment that ever carries that title for a given cycle, it is
+   posted once, after Step 7 passes, and it is complete and final** —
+   the body is `RUN_DIR/draft-spec.md` with any self-heal fixes already
+   merged in. Never post a "self-heal", "correction" or "addendum" comment
+   that amends it; `ticket-to-pr` reads only the newest `## ✅` comment,
+   so anything outside it is invisible to the executor. Working notes
+   stay titled `## Working notes ...` so they can't match.
 5. **On re-pickup** (an existing research-loop-titled Jira comment found,
    or an existing GitHub Issue comment of the equivalent title found —
-   see "Setup: idempotent re-refinement" for the exact match rule): update
-   that same comment/Issue-comment in place rather than posting a new one
-   each cycle, on both sides independently.
-6. The Step 7 verifier checks the GitHub Issue comment's content and
-   format (the full Overview/AC/Scope now lives there, not in Jira) — a
-   refined ticket without these sections in the GitHub Issue, or without
-   the GitHub Issue existing at all, is not ready by definition.
+   see "Setup: idempotent re-refinement" for the exact match rule): read
+   the most-recently-created matching comment as prior context, but
+   **always post a brand-new comment** with the current cycle's content —
+   on both Jira and GitHub independently. On the GitHub Issue, the new
+   `## ✅` comment's second line (directly under the title) states, when
+   any earlier `## ✅ research-loop -` comment exists on the Issue:
+   `Supersedes comments <id>[, <id>...]` — the numeric ids from those
+   comments' `#issuecomment-<id>` URLs, oldest first. Omit the line on a
+   first pickup (nothing to supersede). Working-notes comments are not
+   listed. **Never edit an existing
+   comment in place.** This is a hard rule, not a style preference: Jira
+   and GitHub both render comment threads in creation-time order, not edit
+   order, so an in-place edit leaves the newest actual state pinned at its
+   original (often much earlier) position while newer human replies land
+   below it — making the two surfaces (and a human skimming either one)
+   look out of sync even when the underlying state is correct. Concretely,
+   this means: **never pass an existing `commentId` to
+   `addCommentToJiraIssue`** (that parameter updates the named comment in
+   place instead of creating a new one — always omit it), never `gh api
+   ... -X PATCH` an existing GitHub comment, and never `gh issue comment
+   --edit-last`. (`editJiraIssue` itself edits issue *fields*, not
+   comments, and stays available for its existing legitimate uses — e.g.
+   the Story Points workaround noted in `docs/future-enhancements.md` —
+   this prohibition is about the comment-write surface only.) Every one
+   of these is prohibited regardless of how "idempotent" it would make
+   the thread look — always create.
+6. The Step 7 verifier checks `RUN_DIR/draft-spec.md`'s content and
+   format (the full Overview/AC/Scope is published to the GitHub Issue,
+   not Jira, from that same file) — a refined ticket without these
+   sections, or without the GitHub Issue existing at all, is not ready by
+   definition.
 7. **Never write an absolute filesystem path** into any Jira comment *or*
    GitHub Issue comment — this machine's home directory is an email
    address, so an absolute path leaks PII into either surface equally.
@@ -650,9 +717,11 @@ A bounce is a normal, successful exit — not a crash. On any bounce:
    naming the scope call and its drafted split); otherwise this comment's
    evidence section is `[GitHub Issue](<url>)` carrying the full detail,
    per "Ticket content protocol" item 3 above.
-   On re-pickup after a bounce, find and update this same comment (same
-   title convention as a passing verdict) rather than posting a second
-   one each cycle.
+   On re-pickup after a bounce, read the most-recently-created matching
+   comment (same title convention as a passing verdict) as prior context,
+   but **always post a brand-new comment** — never edit the existing one
+   in place. See "Setup: idempotent re-refinement" for why this is a hard
+   rule, not a style choice.
 3. Write `verdict.json` with `outcome: "bounced"`, the step you stopped at
    as `phase_reached` (use the closest match: `triage`→`intake`,
    `interpret`/`ground`/`attack`→`plan`, `scope`/`blocked-check`→`plan`,
