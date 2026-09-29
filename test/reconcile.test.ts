@@ -356,3 +356,83 @@ describe("reconcileMergedTickets", () => {
     );
   });
 });
+
+describe("reconcileMergedTickets -- close comment", () => {
+  async function runMerged(opts: {
+    mergedAt: string | null;
+    addComment?: GitHubClient["addComment"];
+  }) {
+    let githubClient!: GitHubClient;
+    let result!: Awaited<ReturnType<typeof reconcileMergedTickets>>;
+    await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
+      const jiraClient: JiraClient = {
+        pollOldestMatching: vi.fn(),
+        pollAllMatching: vi.fn(async () => [makeTicket()]),
+        claimTicket: vi.fn(),
+        transitionStatus: vi.fn(),
+        swapLabel: vi.fn(),
+        assignTicket: vi.fn(),
+        addComment: vi.fn(),
+        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
+      };
+      githubClient = {
+        findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "https://github.com/org/repo/issues/42" })),
+        addComment: opts.addComment ?? vi.fn(async () => {}),
+        closeIssue: vi.fn(async () => {}),
+        closePr: vi.fn(async () => "already-closed" as const),
+      };
+      const execGhPrView = vi.fn(async () =>
+        JSON.stringify({ state: opts.mergedAt ? "MERGED" : "OPEN", mergedAt: opts.mergedAt }),
+      );
+      result = await reconcileMergedTickets({
+        jiraClient,
+        githubClient,
+        config: makeConfig(),
+        runsLogPath,
+        execGhPrView,
+      });
+    });
+    return { githubClient, result };
+  }
+
+  it("posts a templated 'closed automatically by dev-loop' comment on the mirror Issue before closing it", async () => {
+    const { githubClient } = await runMerged({ mergedAt: "2026-01-02T03:04:05Z" });
+
+    expect(githubClient.addComment).toHaveBeenCalledTimes(1);
+    const [issueNumber, body] = (githubClient.addComment as ReturnType<typeof vi.fn>).mock.calls[0] as [number, string];
+    expect(issueNumber).toBe(42);
+    expect(body).toBe(
+      [
+        "**Closed automatically by dev-loop**",
+        "",
+        "PR: https://github.com/org/repo/pull/9",
+        "Merged: 2026-01-02 03:04 UTC",
+        "Ticket: PROJ-1",
+        "Reason: PR merged, closed as completed",
+      ].join("\n"),
+    );
+
+    const commentOrder = (githubClient.addComment as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const closeOrder = (githubClient.closeIssue as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    expect(commentOrder).toBeLessThan(closeOrder);
+  });
+
+  it("still closes the Issue, and reports no error, when posting the comment fails", async () => {
+    const { githubClient, result } = await runMerged({
+      mergedAt: "2026-01-02T03:04:05Z",
+      addComment: vi.fn(async () => {
+        throw new Error("gh: rate limited");
+      }),
+    });
+
+    expect(githubClient.closeIssue).toHaveBeenCalledWith(42, "completed");
+    expect(result).toEqual({ checked: 1, closed: ["PROJ-1"], errors: [] });
+  });
+
+  it("posts no comment when the PR has not merged", async () => {
+    const { githubClient } = await runMerged({ mergedAt: null });
+
+    expect(githubClient.addComment).not.toHaveBeenCalled();
+    expect(githubClient.closeIssue).not.toHaveBeenCalled();
+  });
+});
