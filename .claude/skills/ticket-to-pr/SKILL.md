@@ -15,7 +15,15 @@ Per spec section 5.0, this skill runs **downstream of the human review gate**
 and operates under full trust of the refined ticket:
 
 - The **research-loop comment** (title starts with `✅ research-loop -`, per
-  research-loop's own comment convention) is the work order. Treat it as
+  research-loop's own comment convention) is the work order. research-loop
+  now always posts a brand-new comment on every re-verify/re-pickup cycle
+  rather than editing an existing one in place (fixed 2026-09-19 — editing
+  in place made Jira/GitHub threads look out of sync with each other even
+  when the underlying state was consistent, since both surfaces render
+  threads in creation-time order, not edit order), so a ticket can carry
+  several matching comments over its life — always treat the
+  **most-recently-created** matching comment as the work order, never the
+  first one found. Treat it as
   near-perfect — do not renegotiate acceptance criteria, scope, or the
   stated fault domain. `research-loop` never rewrites a stakeholder's
   original description, so the description itself is raw context only —
@@ -161,7 +169,13 @@ Each phase's `progress.jsonl` events use the phase name shown.
 2. Find the ticket's research-loop-authored comment (title starts with
    `✅ research-loop -`, per research-loop's own comment convention — see
    its `docs/future-enhancements.md`'s "Simplify Jira/GitHub comment
-   templates" entry).
+   templates" entry). **A ticket can have more than one matching comment**
+   (research-loop always posts a new comment per cycle rather than editing
+   one in place — see "Role: the executor" above) — when more than one
+   Jira comment matches, use the **most-recently-created** one (by comment
+   creation timestamp, not its position read top-to-bottom) as the work
+   order; ignore older matching comments except as background on how the
+   ticket evolved.
    - **If that comment has the `### Overview` / `### Acceptance Criteria`
      / `### Scope` structure inline**: read it directly, continue to
      step 3.
@@ -175,8 +189,10 @@ Each phase's `progress.jsonl` events use the phase name shown.
      ("Mirror of [TICKET](url). ticket-refine is running...") and is
      never updated after creation — the real content is a comment whose
      first line is the markdown heading `## ✅ research-loop -
-     <short context>`. Read the Overview/AC/Scope structure from *that*
-     comment.
+     <short context>`. The same most-recently-created rule applies here
+     too: if more than one GitHub Issue comment matches that heading
+     pattern, use the most-recently-created one. Read the Overview/AC/Scope
+     structure from *that* comment.
    - **If neither of the above yields the `### Overview` / `###
      Acceptance Criteria` / `### Scope` structure** (no research-loop
      comment at all, an inline comment missing the structure, or a
@@ -294,72 +310,93 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
    paths (e.g. `` `/rotten-tomatoes/critics?query=tina+kakad` ``), never a
    page name in prose. This becomes `verdict.json`'s `qa_notes` array (see
    schema below) and is rendered into Jira's QA Notes field as a "Manual
-   testing steps:" list — **do not** derive this from, or duplicate into,
-   the PR body's own `## QA Notes` section below (Phase 5): that section is
-   a terse pass/fail summary for a different audience (test counts,
-   lint/build status, QA agent verdict) and must stay as-is. The two lists
-   serve different purposes and must never be conflated or copy-pasted
-   from one another.
+   testing steps:" list. The PR body's `## QA Notes` section (step 7)
+   carries this **same** list, matching `push-branch`'s format — the
+   earlier pass/fail summary (test counts, lint/build status, QA agent
+   verdict) is no longer written into the PR; that data lives in
+   `verdict.json` and `progress.jsonl`.
+7. **Compose the PR content** — this is the last reasoning step; Phase 5
+   below is purely mechanical and must not re-derive any of it. Produce,
+   and hold for Phase 5:
+   - **Title**: `<COMMIT_TYPE>(<TICKET>): <ticket summary>` (`COMMIT_TYPE`
+     from Phase 0). The title matters beyond readability: the target
+     repo's CI computes its semver bump from the squash-merge commit
+     message on `master`, and GitHub uses the PR title as that message, so
+     a correctly-typed title is what makes `feat` tickets bump minor and
+     `fix` tickets bump patch on merge.
+   - **Body**, in exactly this shape (same as `push-branch`'s template):
+
+     ```markdown
+     ## Jira Ticket
+     JIRA_BASE_URL/browse/TICKET
+
+     ## Changes
+     - <concise bullet — what changed, not how>
+     - <one bullet per AC or logical change; 3-8 bullets, single flat list>
+
+     ## QA Notes
+     Manual testing steps:
+
+     1. <action from qa_notes entry 1>
+     2. Expected: <result from qa_notes entry 2>
+     ...
+     ```
+
+     Replace `TICKET` with the actual ticket key and `JIRA_BASE_URL` with
+     the site URL from `getAccessibleAtlassianResources` (already called in
+     Phase 0). The `## QA Notes` list is the `qa_notes` array from step 6,
+     numbered, in order. No other sections — no "Core Architecture,"
+     "Files Changed," "Migration Notes," or similar.
+   - **Never write an absolute filesystem path into the title or body** —
+     this machine's home directory is an email address, so an absolute
+     path leaks PII into a PR anyone with repo access can see. Refer to
+     files by repo-relative path only (e.g. `src/client/App.jsx`, not
+     `/Users/<email>/Desktop/repo/src/client/App.jsx`). The same rule
+     extends to any raw env var value, `.envrc`/`.env` content, or
+     credential/token/key/password value — Ground/Red/Green run inside a
+     per-run worktree nested inside the target repo's own directory tree
+     specifically so direnv picks up its real local `.envrc`/`.env` (see
+     "Target repo" below), so real secrets are reachable there too. Report
+     presence/shape only, mirroring whatever `hasClientSecret`/length-only
+     pattern the target repo's own app logging already uses (e.g. "reads
+     `API_KEY` from env" or "token present, 42 chars"), never the literal
+     value.
 
 ### Phase 5 — PR
 
-1. Push the branch: `git push -u origin <TICKET>-<slug>`.
-2. Open the PR (via `gh pr create` or equivalent) against
-   `targetRepo.defaultBranch`, with title
-   `<COMMIT_TYPE>(<TICKET>): <ticket summary>` (using `COMMIT_TYPE` from
-   Phase 0) and the **fixed body template below** — same shape the
-   interactive `push-branch` skill uses by hand today, so an automated PR
-   reads consistently with a manual one. The title matters beyond
-   readability: the target repo's CI computes its semver bump from the
-   squash-merge commit message on `master`, and GitHub uses the PR title
-   as that message, so a correctly-typed title is what makes `feat`
-   tickets bump minor and `fix` tickets bump patch on merge.
+Mechanical only. All reasoning finished in Phase 4 step 7; do not rewrite,
+reorder, or "improve" the title or body here.
 
-   ```markdown
-   ## Changes
-   - <concise bullet — what changed, not how>
-   - <one bullet per AC or logical change; 2-4 bullets typical>
+1. Read `~/.claude/skills/push-branch/SKILL.md` with `Read` and follow it
+   exactly, in its **content supplied** mode (`--title` + `Body:`), passing:
+   the title and body from Phase 4 step 7 verbatim, and `--no-jira`
+   (`loop-runner.ts` owns the Jira transition and QA Notes field from
+   `verdict.json`; `push-branch` must not also transition the ticket).
+   Read the file rather than invoking it as a skill: `Skill` is not in
+   `ALLOWED_TOOLS` (`src/main.ts`), so a nested skill call is unavailable
+   in this headless run. That skill lives on the operator's machine, not in
+   this repo. **If that file does not exist**, do not
+   improvise your own push/`gh` steps (that would be a second copy of the
+   logic): bounce with `failure_category: "env_setup"` and evidence naming
+   the missing path.
+2. What `push-branch` does with that input, so nothing here duplicates it:
+   pushes with hooks (a failed push stops the run), then creates the PR, or
+   edits it in place when one already exists for the branch (a re-run after
+   a partial failure updates the PR rather than failing on a duplicate).
+   Pass the title and body inline on the `gh` command line, never via
+   `--body-file`.
 
-   ## QA Notes
-   - Existing suite: <N passed / M failed, or "green">
-   - Lint/typecheck/build: <status per Verify's own checks>
-   - QA agent: <pass/fail, verify_loops count>
-
-   ---
-   [TICKET](JIRA_BASE_URL/browse/TICKET)
-   ```
-
-   Replace `TICKET` with the actual ticket key and `JIRA_BASE_URL` with the
-   site URL from `getAccessibleAtlassianResources` (already called in
-   Phase 0) — e.g. `[TARS-1349](https://fandango.atlassian.net/browse/TARS-1349)`.
-   This is the one addition beyond push-branch's own template: a clickable
-   link back to the ticket, since this run has no human watching a
-   terminal to see it printed there instead. No other sections — do not
-   add "Core Architecture," "Files Changed," "Migration Notes," or similar;
-   `## Changes` and `## QA Notes` plus the link line is the complete body.
-   **Never write an absolute filesystem path into the PR title or body** —
-   this machine's home directory is an email address, so an absolute path
-   leaks PII into a PR anyone with repo access can see. Refer to files by
-   repo-relative path only (e.g. `src/client/App.jsx`, not
-   `/Users/<email>/Desktop/repo/src/client/App.jsx`). The same rule extends
-   to any raw env var value, `.envrc`/`.env` content, or credential/token/
-   key/password value — Ground/Red/Green run inside a per-run worktree
-   nested inside the target repo's own directory tree specifically so
-   direnv picks up its real local `.envrc`/`.env` (see "Target repo"
-   below), so real secrets are reachable there too. Report presence/shape
-   only, mirroring whatever `hasClientSecret`/length-only pattern the
-   target repo's own app logging already uses (e.g. "reads `API_KEY` from
-   env" or "token present, 42 chars"), never the literal value.
-
-   **This rule now has a code-level backstop** — a `PreToolUse` hook
+   **The secret-content backstop still applies** — a `PreToolUse` hook
    (`.claude/hooks/block-secret-comments.sh`) denies any `gh pr create`/
    `gh pr edit` command whose content matches a known secret name or
    format pattern (see `CHANGELOG.md`'s "Round 2" entry) — but that hook
-   is a heuristic backstop, not a replacement for following this rule; it
-   won't catch every shape a secret could take. The hook requires `jq` on
-   PATH (its only external binary dependency); if `jq` is missing it fails
-   closed and denies every Bash call, not just PR writes, with a message
-   naming `jq` specifically.
+   is a heuristic backstop, not a replacement for following the Phase 4
+   step 7 rule; it won't catch every shape a secret could take. The hook
+   requires `jq` on PATH (its only external binary dependency); if `jq` is
+   missing it fails closed and denies every Bash call, not just PR writes,
+   with a message naming `jq` specifically.
+   Since the hook reads the command string, the body must appear inline in
+   the command — which is why `--body-file` is forbidden.
 
 3. Write `verdict.json` in `RUN_DIR` (see schema below) with
    `outcome: "landed"`, `phase_reached: "pr"`, the PR URL, and all recorded
@@ -456,8 +493,8 @@ reliably know its own total cost from inside the run).
 `qa_notes` is optional — omit it (or write an empty array) on a `bounced`
 or `error` outcome with nothing to report; the loop runner falls back to
 a PR-link stub in that case. On a `landed` outcome, always populate it per
-Phase 4 step 6 above. This is distinct from, and never derived from, the
-PR body's own `## QA Notes` section (Phase 5) — see that phase for why.
+Phase 4 step 6 above. The PR body's `## QA Notes` (Phase 4 step 7) carries
+this same list.
 
 ## Invocation (for the loop runner)
 

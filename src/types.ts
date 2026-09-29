@@ -100,8 +100,8 @@ export interface Verdict {
    * into Jira's QA Notes field (see loop-runner.ts's buildQaNotesAdf) as a
    * bold "Manual testing steps:" header + ordered list, matching the
    * retired interactive qa-notes/push-branch skills' ADF shape. Distinct
-   * from the PR body's own terse "## QA Notes" pass/fail summary -- do not
-   * conflate the two. Absent/empty on older verdicts or bounced runs;
+   * from nothing else: the PR body's "## QA Notes" carries this same list
+   * (push-branch format). Absent/empty on older verdicts or bounced runs;
    * loop-runner falls back to the PR-link stub in that case.
    */
   qa_notes?: string[];

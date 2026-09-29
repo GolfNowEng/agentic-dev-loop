@@ -27,11 +27,16 @@ working in it manually is never affected by a background run:
    lint/build failure is caught here, not after the PR is already open;
    spawns `qa-agent` (see below) for a fresh-context adversarial pass, up
    to 3 retry loops.
-6. **PR** — push the branch, open the PR with a fixed body template
-   (`## Changes` / `## QA Notes` / a link back to the ticket —
-   `https://<jira-base-url>/browse/<TICKET>`, so a PR reads consistently
-   with one opened by hand via the interactive `push-branch` skill, whose
-   template this mirrors), write `verdict.json`.
+6. **PR** — Phase 4 finishes all reasoning (title, `## Changes` bullets,
+   `qa_notes`); Phase 5 is then mechanical: it reads the operator's local
+   `~/.claude/skills/push-branch/SKILL.md` and follows it in its
+   *content supplied* mode with `--no-jira`, so the push (hooks on), the
+   create-or-edit-existing-PR step, and the body shape
+   (`## Jira Ticket` / `## Changes` / `## QA Notes` manual steps) live in
+   one place. That skill is **machine-local, not in this repo** and is the single
+   source of truth for both manual and loop use; if it is missing, Phase 5
+   bounces `env_setup` rather than carrying its own copy. Writes
+   `verdict.json`.
 
 Core rule: this skill **never edits the spec**. Any ambiguity, contradiction,
 or oversized scope is `research-loop`'s problem to fix upstream — this skill
@@ -113,6 +118,6 @@ SKILL.md). The loop runner's `buildQaNotesAdf()` renders this into Jira's
 QA Notes field (`codeReviewFields.qaNotesField`) as a bold "Manual testing
 steps:" header + ordered list, with `Expected:` entries bold-marked —
 falling back to a terse `PR: <url>` / `Verify loops: N` stub when absent
-or empty. This is distinct from, and never derived from, the PR body's own
-`## QA Notes` section (a pass/fail summary for a different audience) — the
-two must never be conflated.
+or empty. The PR body's `## QA Notes` section carries this same list (numbered,
+matching `push-branch`'s format); the earlier pass/fail summary was removed
+from the PR and lives only in `verdict.json` / `progress.jsonl`.

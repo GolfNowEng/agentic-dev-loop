@@ -6,6 +6,52 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-29 — PR creation now follows the local `push-branch` skill; `push-branch` no longer prompts
+
+`ticket-to-pr` Phase 5 had its own copy of the PR template, which had
+drifted from the interactive `push-branch` skill (no `## Jira Ticket`
+section, QA Notes was a pass/fail summary instead of manual steps, and it
+always ran `gh pr create`, so a re-run against a branch with an open PR
+failed on the duplicate).
+
+**Fix**: all PR reasoning (title, `## Changes` bullets, `qa_notes`) now
+finishes in Phase 4 step 7; Phase 5 is mechanical -- it reads
+`~/.claude/skills/push-branch/SKILL.md` and follows it in its new
+*content supplied* mode with `--no-jira` (`loop-runner.ts` still owns the
+Jira transition). `push-branch` itself lost its `AskUserQuestion` gates:
+bump is inferred from the commit type (halts before pushing only if none
+is found), an existing PR is edited in place only for supplied content or
+`--update-pr` (never overwritten or closed implicitly), plus `--push-only`,
+`--new-pr`, `--no-jira`. The PR's `## QA Notes` is now the same manual-steps
+list as Jira's; the old pass/fail summary is gone from the PR (still in
+`verdict.json`/`progress.jsonl`).
+
+**Caveats**: `push-branch` is machine-local (`~/.claude/skills`, backup at
+`SKILL.md.bak-2026-09-29`), not in this repo -- it is the single source of truth
+for manual and loop use, so Phase 5 bounces `env_setup` if it is missing
+rather than keeping a second copy of the steps. Phase 5 *reads* the file
+instead of invoking it because `Skill` is not in `ALLOWED_TOOLS`.
+
+## 2026-09-19 — `ticket-to-pr` now reads the most-recently-created research-loop comment, not just "the" one
+
+Companion fix to research-loop's own 2026-09-19 changelog entry
+(edit-in-place comments made TARS-1450's Jira/GitHub threads look out of
+sync). research-loop's `ticket-refine` previously updated its own tracked
+comment in place on every re-verify/re-pickup cycle; it now always posts a
+brand-new comment instead, which means a ticket can carry several
+`✅ research-loop -`/`## ✅ research-loop -` comments over its life
+instead of one collapsed comment. Confirmed dev-loop's own comment-writing
+side needed no change — `JiraClient.addComment`/`GitHubClient.addComment`
+and `loop-runner.ts` were already create-only, with no edit/update path
+anywhere in this repo.
+
+**Fix**: `ticket-to-pr`'s `SKILL.md`, Phase 0 step 2 (and the "Role: the
+executor" section's framing above it) now say to use the
+**most-recently-created** matching comment — on both the Jira comment
+thread and, when following a `[GitHub Issue](url)` pointer, the GitHub
+Issue's own comment thread — rather than assuming there is only one match
+or picking the first one found.
+
 ## 2026-09-18 — `reset-project --close-remote` hit a real `no-transition` case on TARS-1467; `closeTicket` now walks a bounded chain of intermediate hops
 
 The live TARS-1467 handoff test (research-loop refined it, auto-promoted
