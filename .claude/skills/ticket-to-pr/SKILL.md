@@ -193,6 +193,15 @@ Each phase's `progress.jsonl` events use the phase name shown.
      too: if more than one GitHub Issue comment matches that heading
      pattern, use the most-recently-created one. Read the Overview/AC/Scope
      structure from *that* comment.
+   - **Stale-spec guard**: after choosing the spec comment, check whether
+     any Issue comment created *after* it has a first line containing
+     `research-loop` (e.g. `## Self-heal cycle 1 (research-loop verify)`,
+     or a later `## ❌ research-loop -`). Such a comment means research-loop
+     amended or withdrew the spec outside the `## ✅` comment this skill
+     reads, so the chosen spec may be stale — bounce with
+     `failure_category: "spec_ambiguous"`, detail naming the newer
+     comment's id and first line. Human comments that do not mention
+     `research-loop` in their first line never trigger this.
    - **If neither of the above yields the `### Overview` / `###
      Acceptance Criteria` / `### Scope` structure** (no research-loop
      comment at all, an inline comment missing the structure, or a
