@@ -541,6 +541,10 @@ async function main(): Promise<void> {
       assigneeAccountId,
     });
 
+    for (const key of result.skippedLanded ?? []) {
+      log(`[${SKILL_NAME}] ${key}: skipped, already landed (runs.jsonl has a landed run); not re-refining`);
+    }
+
     switch (result.action) {
       case "empty-queue":
         log(

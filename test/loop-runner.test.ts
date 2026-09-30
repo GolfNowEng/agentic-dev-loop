@@ -3,7 +3,7 @@ import { runLoopIteration } from "../src/loop-runner.ts";
 import type { RunSkillFn, RunSkillResult, RunLoopIterationDeps, LoopIterationResult } from "../src/loop-runner.ts";
 import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
 import type { Config } from "../src/types.ts";
-import { readRunLog } from "../src/runs-log.ts";
+import { readRunLog, appendRunLog } from "../src/runs-log.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -118,6 +118,58 @@ describe("runLoopIteration", () => {
     expect(result.action).toBe("empty-queue");
     expect(runSkill).not.toHaveBeenCalled();
     expect(jiraClient.assignTicket).not.toHaveBeenCalled();
+  });
+
+  describe("landed-ticket guard", () => {
+    const landedLine = {
+      ticket: "PROJ-142", skill: "ticket-refine", skill_version: "abc1234", model: "opus",
+      started: "2026-08-16T14:02:11Z", ended: "2026-08-16T14:19:40Z", outcome: "landed" as const,
+      phase_reached: "verify", red_confirmed: false, verify_loops: 0, retries: 0,
+      failure_category: null, detail: "", pr: null, cost_usd: 0, tokens: { in: 0, out: 0 },
+    };
+
+    it("skips a polled ticket that already has a landed line: no claim, no run", async () => {
+      await appendRunLog(runsLogPath, landedLine);
+      const pollOldestMatching = vi
+        .fn()
+        .mockResolvedValueOnce(makeTicket({ key: "PROJ-142" }))
+        .mockResolvedValueOnce(null);
+      const jiraClient = makeMockJiraClient({ pollOldestMatching });
+      const runSkill: RunSkillFn = vi.fn(async () => makeRunSkillResult());
+
+      const result = await runLoopIteration(makeDeps({ jiraClient, runSkill }));
+
+      expect(result.action).toBe("empty-queue");
+      expect(result.skippedLanded).toEqual(["PROJ-142"]);
+      expect(jiraClient.claim).not.toHaveBeenCalled();
+      expect(runSkill).not.toHaveBeenCalled();
+    });
+
+    it("re-polls with the skipped key excluded and processes the next ticket", async () => {
+      await appendRunLog(runsLogPath, landedLine);
+      const pollOldestMatching = vi
+        .fn()
+        .mockResolvedValueOnce(makeTicket({ key: "PROJ-142" }))
+        .mockResolvedValueOnce(makeTicket({ key: "PROJ-143" }));
+      const jiraClient = makeMockJiraClient({ pollOldestMatching });
+
+      const result = await runLoopIteration(makeDeps({ jiraClient }));
+
+      expect(result.action).toBe("processed");
+      expect(result.ticket).toBe("PROJ-143");
+      expect(result.skippedLanded).toEqual(["PROJ-142"]);
+      expect(pollOldestMatching.mock.calls[1][0]).toContain('key not in ("PROJ-142")');
+    });
+
+    it("still processes a ticket whose only prior runs did not land", async () => {
+      await appendRunLog(runsLogPath, { ...landedLine, outcome: "bounced" });
+      const jiraClient = makeMockJiraClient();
+
+      const result = await runLoopIteration(makeDeps({ jiraClient }));
+
+      expect(result.action).toBe("processed");
+      expect(result.skippedLanded).toBeUndefined();
+    });
   });
 
   it("claim-race: when claim() fails, the loop skips the ticket and does not throw", async () => {

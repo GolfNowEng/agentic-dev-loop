@@ -5,6 +5,26 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-09-30 — A ticket that already landed is never re-refined
+
+Symmetric to dev-loop's landed-ticket guard. If the `pipeline:research` ->
+`pipeline:dev` label swap failed after a `landed` verdict (or a human left
+the label in place), the ticket still matched the refine poll and could be
+claimed and re-refined, costing a full Opus run and a duplicate `✅` spec.
+The poll's `status = "To Do"` clause was only a partial guard.
+
+**Fix**: `runLoopIteration` now checks `runs/<slug>.jsonl` (new
+`hasLandedRun`) for every polled ticket *before* claiming it. A ticket with
+a `landed` line is skipped -- no claim, no run, no cost -- and the poll
+repeats with `AND key not in (...)` (new `excludeKeysFromJql`) so it cannot
+block the queue. `main.ts` logs `<KEY>: skipped, already landed`.
+`npm run reset-project` removes a ticket's runs lines, so a deliberate
+re-refine after a reset still works.
+
+Not covered: the guard keys on the `landed` run line only, not on an
+existing `✅ research-loop` Jira comment, so a ticket whose runs line was
+lost (e.g. a fresh clone) is not protected.
+
 ## 2026-09-29 — `ticket-refine` publishes the `✅` spec once, after the verifier passes; self-heal fixes merge into the draft
 
 On TARS-1452 (GitHub Issue #454) the `## ✅ research-loop -` spec comment was

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRefineJql, buildDevJql } from "../src/jql.ts";
+import { buildRefineJql, buildDevJql, excludeKeysFromJql } from "../src/jql.ts";
 import type { Config } from "../src/types.ts";
 
 function makeConfig(): Config {
@@ -56,5 +56,23 @@ describe("buildDevJql", () => {
   it("preserves the ORDER BY oldest-first clause from the template", () => {
     const jql = buildDevJql(makeConfig());
     expect(jql).toContain("ORDER BY created ASC");
+  });
+});
+
+describe("excludeKeysFromJql", () => {
+  it("returns the jql unchanged when there are no keys to exclude", () => {
+    expect(excludeKeysFromJql('labels = "x"', [])).toBe('labels = "x"');
+  });
+
+  it("appends a key-not-in clause", () => {
+    expect(excludeKeysFromJql('labels = "x"', ["A-1", "A-2"])).toBe(
+      'labels = "x" AND key not in ("A-1","A-2")',
+    );
+  });
+
+  it("inserts the clause before ORDER BY, case-insensitively", () => {
+    expect(excludeKeysFromJql('labels = "x" order by created ASC', ["A-1"])).toBe(
+      'labels = "x" AND key not in ("A-1") order by created ASC',
+    );
   });
 });
