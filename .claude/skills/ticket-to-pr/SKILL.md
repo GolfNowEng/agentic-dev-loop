@@ -315,7 +315,11 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
    Criteria text directly — that comment already names concrete
    routes/URLs and expected outcomes for every ticket seen so far, and this
    skill already trusts it literally per its "no inference" rule, so no
-   new heuristic (diff-scanning, route-guessing) is needed here. Use real
+   new heuristic (diff-scanning, route-guessing) is needed here. If
+   `qa-agent` reported any AC as **unverified (needs human)** (typically
+   UI behind the login, which automation cannot reach), start that AC's
+   action entry with `[Not verified by automation] ` so the reviewer knows
+   this step is theirs alone; do not drop or soften it. Use real
    paths (e.g. `` `/rotten-tomatoes/critics?query=tina+kakad` ``), never a
    page name in prose. This becomes `verdict.json`'s `qa_notes` array (see
    schema below) and is rendered into Jira's QA Notes field as a "Manual
