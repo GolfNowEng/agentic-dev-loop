@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { reconcileMergedTickets, findOpenPrUrl } from "../src/reconcile.ts";
+import { reconcileMergedTickets, findOpenPrUrl, findLandedPrUrl } from "../src/reconcile.ts";
 import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
 import type { GitHubClient } from "../src/github-client.ts";
 import type { Config, RunLogLine } from "../src/types.ts";
@@ -33,7 +33,7 @@ function makeConfig(): Config {
 }
 
 function makeTicket(overrides: Partial<JiraTicket> = {}): JiraTicket {
-  return { key: "PROJ-1", status: "Code Review", assignee: "user-123", ...overrides };
+  return { key: "PROJ-1", status: "Development Complete", assignee: "user-123", ...overrides };
 }
 
 function makeRunLogLine(overrides: Partial<RunLogLine> = {}): RunLogLine {
@@ -142,211 +142,184 @@ describe("findOpenPrUrl", () => {
   });
 });
 
-describe("reconcileMergedTickets", () => {
-  it("finds a Code-Review ticket whose PR merged, and closes the mirror Issue", async () => {
-    await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
-      const jiraClient: JiraClient = {
-        pollOldestMatching: vi.fn(),
-        pollAllMatching: vi.fn(async () => [makeTicket()]),
-        claimTicket: vi.fn(),
-        transitionStatus: vi.fn(),
-        swapLabel: vi.fn(),
-        assignTicket: vi.fn(),
-        addComment: vi.fn(),
-        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
-      };
-      const githubClient: GitHubClient = {
-        findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "https://github.com/org/repo/issues/42" })),
-        addComment: vi.fn(),
-        closeIssue: vi.fn(async () => {}),
-        closePr: vi.fn(async () => "already-closed" as const),
-      };
-      const execGhPrView = vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-02T00:00:00Z" }));
+describe("findLandedPrUrl", () => {
+  it("returns the PR of the latest landed line and ignores bounced lines", async () => {
+    await withRunsLog(
+      [
+        makeRunLogLine({ outcome: "landed", pr: "https://github.com/org/repo/pull/9" }),
+        makeRunLogLine({ outcome: "error", pr: null, failure_category: "agent_error" }),
+        makeRunLogLine({ outcome: "bounced", pr: "https://github.com/org/repo/pull/77", failure_category: "blocked" }),
+      ],
+      async (p) => {
+        expect(await findLandedPrUrl(p, "PROJ-1")).toBe("https://github.com/org/repo/pull/9");
+      },
+    );
+  });
 
+  it("returns null when the ticket never landed", async () => {
+    await withRunsLog([makeRunLogLine({ outcome: "bounced", pr: null, failure_category: "spec_ambiguous" })], async (p) => {
+      expect(await findLandedPrUrl(p, "PROJ-1")).toBeNull();
+    });
+  });
+});
+
+const NOW = new Date("2026-01-05T00:00:00Z");
+
+function makeJira(overrides: Partial<JiraClient> = {}): JiraClient {
+  return {
+    pollOldestMatching: vi.fn(),
+    pollAllMatching: vi.fn(async () => []),
+    claimTicket: vi.fn(),
+    transitionStatus: vi.fn(),
+    swapLabel: vi.fn(),
+    removeLabel: vi.fn(async () => {}),
+    assignTicket: vi.fn(),
+    addComment: vi.fn(),
+    closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
+    ...overrides,
+  };
+}
+
+function makeGh(overrides: Partial<GitHubClient> = {}): GitHubClient {
+  return {
+    findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "https://github.com/org/repo/issues/42", state: "OPEN" as const })),
+    addComment: vi.fn(async () => {}),
+    closeIssue: vi.fn(async () => {}),
+    closePr: vi.fn(async () => "already-closed" as const),
+    ...overrides,
+  };
+}
+
+const merged = () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-02T03:04:05Z" });
+const open = () => JSON.stringify({ state: "OPEN", mergedAt: null });
+
+describe("reconcileMergedTickets", () => {
+  it("closes the mirror Issue and removes pipeline:dev for a landed ticket whose PR merged while the loop was off (Jira status is irrelevant, no JQL used)", async () => {
+    await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
+      const jiraClient = makeJira();
+      const githubClient = makeGh();
       const result = await reconcileMergedTickets({
-        jiraClient,
-        githubClient,
-        config: makeConfig(),
-        runsLogPath,
-        execGhPrView,
+        jiraClient, githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
       });
 
       expect(result).toEqual({ checked: 1, closed: ["PROJ-1"], errors: [] });
       expect(githubClient.closeIssue).toHaveBeenCalledWith(42, "completed");
+      expect(jiraClient.removeLabel).toHaveBeenCalledWith("PROJ-1", "pipeline:dev");
+      expect(jiraClient.pollAllMatching).not.toHaveBeenCalled();
     });
   });
 
-  it("does nothing for a Code-Review ticket whose PR is still open", async () => {
+  it("leaves a landed ticket whose PR is still open completely alone", async () => {
     await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
-      const jiraClient: JiraClient = {
-        pollOldestMatching: vi.fn(),
-        pollAllMatching: vi.fn(async () => [makeTicket()]),
-        claimTicket: vi.fn(),
-        transitionStatus: vi.fn(),
-        swapLabel: vi.fn(),
-        assignTicket: vi.fn(),
-        addComment: vi.fn(),
-        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
-      };
-      const githubClient: GitHubClient = {
-        findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "x" })),
-        addComment: vi.fn(),
-        closeIssue: vi.fn(),
-        closePr: vi.fn(async () => "already-closed" as const),
-      };
-      const execGhPrView = vi.fn(async () => JSON.stringify({ state: "OPEN", mergedAt: null }));
-
+      const jiraClient = makeJira();
+      const githubClient = makeGh();
       const result = await reconcileMergedTickets({
-        jiraClient,
-        githubClient,
-        config: makeConfig(),
-        runsLogPath,
-        execGhPrView,
+        jiraClient, githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => open()), now: NOW,
       });
 
       expect(result).toEqual({ checked: 1, closed: [], errors: [] });
       expect(githubClient.closeIssue).not.toHaveBeenCalled();
+      expect(jiraClient.removeLabel).not.toHaveBeenCalled();
     });
   });
 
-  it("is a safe no-op when no ticket is at Code Review", async () => {
-    await withRunsLog([], async (runsLogPath) => {
-      const jiraClient: JiraClient = {
-        pollOldestMatching: vi.fn(),
-        pollAllMatching: vi.fn(async () => []),
-        claimTicket: vi.fn(),
-        transitionStatus: vi.fn(),
-        swapLabel: vi.fn(),
-        assignTicket: vi.fn(),
-        addComment: vi.fn(),
-        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
-      };
-      const githubClient: GitHubClient = {
-        findIssueByJiraKey: vi.fn(),
-        addComment: vi.fn(),
-        closeIssue: vi.fn(),
-        closePr: vi.fn(async () => "already-closed" as const),
-      };
+  it("is a safe no-op when runs.jsonl has no landed tickets", async () => {
+    await withRunsLog([makeRunLogLine({ outcome: "bounced", pr: null, failure_category: "spec_ambiguous" })], async (runsLogPath) => {
       const execGhPrView = vi.fn();
-
       const result = await reconcileMergedTickets({
-        jiraClient,
-        githubClient,
-        config: makeConfig(),
-        runsLogPath,
-        execGhPrView,
+        jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, execGhPrView, now: NOW,
       });
-
       expect(result).toEqual({ checked: 0, closed: [], errors: [] });
       expect(execGhPrView).not.toHaveBeenCalled();
     });
   });
 
-  it("skips a Code-Review ticket with no 'landed' line in runs.jsonl (no PR URL to check), recording it as an error, not a crash", async () => {
-    await withRunsLog([], async (runsLogPath) => {
-      const jiraClient: JiraClient = {
-        pollOldestMatching: vi.fn(),
-        pollAllMatching: vi.fn(async () => [makeTicket()]),
-        claimTicket: vi.fn(),
-        transitionStatus: vi.fn(),
-        swapLabel: vi.fn(),
-        assignTicket: vi.fn(),
-        addComment: vi.fn(),
-        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
-      };
-      const githubClient: GitHubClient = {
-        findIssueByJiraKey: vi.fn(),
-        addComment: vi.fn(),
-        closeIssue: vi.fn(),
-        closePr: vi.fn(async () => "already-closed" as const),
-      };
+  it("ignores landed lines older than the 30-day window", async () => {
+    await withRunsLog([makeRunLogLine({ started: "2025-11-01T00:00:00.000Z", ended: "2025-11-01T00:10:00.000Z" })], async (runsLogPath) => {
       const execGhPrView = vi.fn();
-
       const result = await reconcileMergedTickets({
-        jiraClient,
-        githubClient,
-        config: makeConfig(),
-        runsLogPath,
-        execGhPrView,
+        jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, execGhPrView, now: NOW,
       });
-
-      expect(result.checked).toBe(1);
-      expect(result.closed).toEqual([]);
-      expect(result.errors).toEqual([
-        { ticket: "PROJ-1", message: expect.stringContaining("no landed/bounced run with a PR found") },
-      ]);
+      expect(result.checked).toBe(0);
       expect(execGhPrView).not.toHaveBeenCalled();
     });
   });
 
-  it("re-running on an already-closed mirror Issue is a safe no-op -- idempotency guard", async () => {
+  it("checks each ticket once, using its latest landed PR", async () => {
+    await withRunsLog(
+      [
+        makeRunLogLine({ pr: "https://github.com/org/repo/pull/1", ended: "2026-01-01T00:00:00.000Z" }),
+        makeRunLogLine({ pr: "https://github.com/org/repo/pull/2", ended: "2026-01-02T00:00:00.000Z" }),
+      ],
+      async (runsLogPath) => {
+        const execGhPrView = vi.fn(async () => open());
+        const result = await reconcileMergedTickets({
+          jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, execGhPrView, now: NOW,
+        });
+        expect(result.checked).toBe(1);
+        expect(execGhPrView).toHaveBeenCalledTimes(1);
+        expect(execGhPrView).toHaveBeenCalledWith("https://github.com/org/repo/pull/2");
+      },
+    );
+  });
+
+  it("an already-closed mirror Issue gets no second comment or close, but the label is still removed", async () => {
     await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
-      const jiraClient: JiraClient = {
-        pollOldestMatching: vi.fn(),
-        pollAllMatching: vi.fn(async () => [makeTicket()]),
-        claimTicket: vi.fn(),
-        transitionStatus: vi.fn(),
-        swapLabel: vi.fn(),
-        assignTicket: vi.fn(),
-        addComment: vi.fn(),
-        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
-      };
-      // closeIssue itself is already a safe no-op on an already-closed
-      // issue (see Task 3) -- this test just confirms reconcile still
-      // reports the ticket as "closed" (its merge was confirmed) even on
-      // a second pass, and doesn't error just because gh reports it as
-      // already closed.
-      const githubClient: GitHubClient = {
-        findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "x" })),
-        addComment: vi.fn(),
-        closeIssue: vi.fn(async () => {}), // real RealGitHubClient already swallows "already closed"
-        closePr: vi.fn(async () => "already-closed" as const),
-      };
-      const execGhPrView = vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-02T00:00:00Z" }));
+      const jiraClient = makeJira();
+      const githubClient = makeGh({
+        findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "x", state: "CLOSED" as const })),
+      });
+      const result = await reconcileMergedTickets({
+        jiraClient, githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
+      });
 
-      const first = await reconcileMergedTickets({ jiraClient, githubClient, config: makeConfig(), runsLogPath, execGhPrView });
-      const second = await reconcileMergedTickets({ jiraClient, githubClient, config: makeConfig(), runsLogPath, execGhPrView });
-
-      expect(first.closed).toEqual(["PROJ-1"]);
-      expect(second.closed).toEqual(["PROJ-1"]);
-      expect(second.errors).toEqual([]);
+      expect(result.closed).toEqual(["PROJ-1"]);
+      expect(githubClient.addComment).not.toHaveBeenCalled();
+      expect(githubClient.closeIssue).not.toHaveBeenCalled();
+      expect(jiraClient.removeLabel).toHaveBeenCalledWith("PROJ-1", "pipeline:dev");
     });
   });
 
-  it("a gh pr view failure for one ticket is recorded as an error and does not stop the pass from checking the rest", async () => {
+  it("does not re-check a ticket already reconciled earlier in this process (shared `reconciled` set)", async () => {
+    await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
+      const execGhPrView = vi.fn(async () => merged());
+      const reconciled = new Set<string>();
+      const deps = { jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, execGhPrView, now: NOW, reconciled };
+
+      await reconcileMergedTickets(deps);
+      const second = await reconcileMergedTickets(deps);
+
+      expect(execGhPrView).toHaveBeenCalledTimes(1);
+      expect(second).toEqual({ checked: 0, closed: [], errors: [] });
+    });
+  });
+
+  it("a failed label removal does not block the Issue close and is not reported as an error", async () => {
+    await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
+      const jiraClient = makeJira({ removeLabel: vi.fn(async () => { throw new Error("jira 500"); }) });
+      const githubClient = makeGh();
+      const result = await reconcileMergedTickets({
+        jiraClient, githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
+      });
+
+      expect(githubClient.closeIssue).toHaveBeenCalledWith(42, "completed");
+      expect(result).toEqual({ checked: 1, closed: ["PROJ-1"], errors: [] });
+    });
+  });
+
+  it("a gh pr view failure for one ticket is recorded and does not stop the rest", async () => {
     await withRunsLog(
       [
         makeRunLogLine({ ticket: "PROJ-1", pr: "https://github.com/org/repo/pull/9" }),
         makeRunLogLine({ ticket: "PROJ-2", pr: "https://github.com/org/repo/pull/10" }),
       ],
       async (runsLogPath) => {
-        const jiraClient: JiraClient = {
-          pollOldestMatching: vi.fn(),
-          pollAllMatching: vi.fn(async () => [makeTicket({ key: "PROJ-1" }), makeTicket({ key: "PROJ-2" })]),
-          claimTicket: vi.fn(),
-          transitionStatus: vi.fn(),
-          swapLabel: vi.fn(),
-          assignTicket: vi.fn(),
-          addComment: vi.fn(),
-          closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
-        };
-        const githubClient: GitHubClient = {
-          findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "x" })),
-          addComment: vi.fn(),
-          closeIssue: vi.fn(async () => {}),
-          closePr: vi.fn(async () => "already-closed" as const),
-        };
         const execGhPrView = vi.fn(async (url: string) => {
-          if (url.includes("/9")) throw new Error("gh: network error");
-          return JSON.stringify({ state: "MERGED", mergedAt: "2026-01-02T00:00:00Z" });
+          if (url.endsWith("/9")) throw new Error("gh: network error");
+          return merged();
         });
-
         const result = await reconcileMergedTickets({
-          jiraClient,
-          githubClient,
-          config: makeConfig(),
-          runsLogPath,
-          execGhPrView,
+          jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, execGhPrView, now: NOW,
         });
 
         expect(result.checked).toBe(2);
@@ -358,81 +331,39 @@ describe("reconcileMergedTickets", () => {
 });
 
 describe("reconcileMergedTickets -- close comment", () => {
-  async function runMerged(opts: {
-    mergedAt: string | null;
-    addComment?: GitHubClient["addComment"];
-  }) {
-    let githubClient!: GitHubClient;
-    let result!: Awaited<ReturnType<typeof reconcileMergedTickets>>;
+  it("posts the templated comment on the mirror Issue before closing it", async () => {
     await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
-      const jiraClient: JiraClient = {
-        pollOldestMatching: vi.fn(),
-        pollAllMatching: vi.fn(async () => [makeTicket()]),
-        claimTicket: vi.fn(),
-        transitionStatus: vi.fn(),
-        swapLabel: vi.fn(),
-        assignTicket: vi.fn(),
-        addComment: vi.fn(),
-        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
-      };
-      githubClient = {
-        findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "https://github.com/org/repo/issues/42" })),
-        addComment: opts.addComment ?? vi.fn(async () => {}),
-        closeIssue: vi.fn(async () => {}),
-        closePr: vi.fn(async () => "already-closed" as const),
-      };
-      const execGhPrView = vi.fn(async () =>
-        JSON.stringify({ state: opts.mergedAt ? "MERGED" : "OPEN", mergedAt: opts.mergedAt }),
-      );
-      result = await reconcileMergedTickets({
-        jiraClient,
-        githubClient,
-        config: makeConfig(),
-        runsLogPath,
-        execGhPrView,
+      const githubClient = makeGh();
+      await reconcileMergedTickets({
+        jiraClient: makeJira(), githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
       });
+
+      const [issueNumber, body] = (githubClient.addComment as ReturnType<typeof vi.fn>).mock.calls[0] as [number, string];
+      expect(issueNumber).toBe(42);
+      expect(body).toBe(
+        [
+          "**Closed automatically by dev-loop**",
+          "",
+          "PR: https://github.com/org/repo/pull/9",
+          "Merged: 2026-01-02 03:04 UTC",
+          "Ticket: PROJ-1",
+          "Reason: PR merged, closed as completed",
+        ].join("\n"),
+      );
+      const c = (githubClient.addComment as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      const x = (githubClient.closeIssue as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      expect(c).toBeLessThan(x);
     });
-    return { githubClient, result };
-  }
-
-  it("posts a templated 'closed automatically by dev-loop' comment on the mirror Issue before closing it", async () => {
-    const { githubClient } = await runMerged({ mergedAt: "2026-01-02T03:04:05Z" });
-
-    expect(githubClient.addComment).toHaveBeenCalledTimes(1);
-    const [issueNumber, body] = (githubClient.addComment as ReturnType<typeof vi.fn>).mock.calls[0] as [number, string];
-    expect(issueNumber).toBe(42);
-    expect(body).toBe(
-      [
-        "**Closed automatically by dev-loop**",
-        "",
-        "PR: https://github.com/org/repo/pull/9",
-        "Merged: 2026-01-02 03:04 UTC",
-        "Ticket: PROJ-1",
-        "Reason: PR merged, closed as completed",
-      ].join("\n"),
-    );
-
-    const commentOrder = (githubClient.addComment as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-    const closeOrder = (githubClient.closeIssue as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-    expect(commentOrder).toBeLessThan(closeOrder);
   });
 
-  it("still closes the Issue, and reports no error, when posting the comment fails", async () => {
-    const { githubClient, result } = await runMerged({
-      mergedAt: "2026-01-02T03:04:05Z",
-      addComment: vi.fn(async () => {
-        throw new Error("gh: rate limited");
-      }),
+  it("still closes the Issue, with no error, when posting the comment fails", async () => {
+    await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
+      const githubClient = makeGh({ addComment: vi.fn(async () => { throw new Error("rate limited"); }) });
+      const result = await reconcileMergedTickets({
+        jiraClient: makeJira(), githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
+      });
+      expect(githubClient.closeIssue).toHaveBeenCalledWith(42, "completed");
+      expect(result.errors).toEqual([]);
     });
-
-    expect(githubClient.closeIssue).toHaveBeenCalledWith(42, "completed");
-    expect(result).toEqual({ checked: 1, closed: ["PROJ-1"], errors: [] });
-  });
-
-  it("posts no comment when the PR has not merged", async () => {
-    const { githubClient } = await runMerged({ mergedAt: null });
-
-    expect(githubClient.addComment).not.toHaveBeenCalled();
-    expect(githubClient.closeIssue).not.toHaveBeenCalled();
   });
 });

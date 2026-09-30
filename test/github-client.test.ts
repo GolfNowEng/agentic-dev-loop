@@ -13,13 +13,13 @@ describe("StubGitHubClient", () => {
 describe("RealGitHubClient", () => {
   it("findIssueByJiraKey searches by title prefix and returns the first match", async () => {
     const execFn = vi.fn(async () =>
-      JSON.stringify([{ number: 42, url: "https://github.com/org/repo/issues/42" }]),
+      JSON.stringify([{ number: 42, url: "https://github.com/org/repo/issues/42", state: "CLOSED" }]),
     );
     const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
 
     const issue = await client.findIssueByJiraKey("PROJ-1");
 
-    expect(issue).toEqual({ number: 42, url: "https://github.com/org/repo/issues/42" });
+    expect(issue).toEqual({ number: 42, url: "https://github.com/org/repo/issues/42", state: "CLOSED" });
     expect(execFn).toHaveBeenCalledWith([
       "issue",
       "list",
@@ -30,7 +30,7 @@ describe("RealGitHubClient", () => {
       "--state",
       "all",
       "--json",
-      "number,url",
+      "number,url,state",
     ]);
   });
 

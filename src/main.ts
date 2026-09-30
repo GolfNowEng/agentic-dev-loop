@@ -468,6 +468,9 @@ async function main(): Promise<void> {
     return { verdict, started, ended, costUsd: usage.costUsd, tokens: usage.tokens };
   };
 
+  const execGhPrView = realExecGhPrView();
+  const reconciled = new Set<string>();
+
   for (;;) {
     try {
       const reconcileResult = await reconcileMergedTickets({
@@ -475,10 +478,11 @@ async function main(): Promise<void> {
         githubClient,
         config,
         runsLogPath,
-        execGhPrView: realExecGhPrView(),
+        execGhPrView,
+        reconciled,
       });
       if (reconcileResult.closed.length > 0) {
-        log(`[${SKILL_NAME}] reconciliation: closed mirror Issue(s) for ${reconcileResult.closed.join(", ")}`);
+        log(`[${SKILL_NAME}] reconciliation: merged PR(s) reconciled (mirror Issue closed, pipeline label removed) for ${reconcileResult.closed.join(", ")}`);
       }
       for (const err of reconcileResult.errors) {
         logError(`[${SKILL_NAME}] reconciliation: ${err.ticket}: ${err.message}`);
@@ -502,10 +506,14 @@ async function main(): Promise<void> {
       runsLogPath,
       runsToday,
       assigneeAccountId,
+      execGhPrView,
     });
 
     switch (result.kind) {
       case "idle":
+        for (const s of result.skipped ?? []) {
+          log(`[${SKILL_NAME}] ${s.ticket}: skipped, ${s.reason}`);
+        }
         log(
           `[${SKILL_NAME}] queue empty, sleeping ${loopConfig.pollIntervalSec}s`,
         );

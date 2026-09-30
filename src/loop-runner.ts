@@ -11,6 +11,8 @@ import type { Config, RunLogLine, Verdict } from "./types.ts";
 import { buildDevJql, buildRefineJql } from "./jql.ts";
 import { checkCeilings, hasReachedMaxRunsPerDay } from "./ceilings.ts";
 import { appendRunLog } from "./runs-log.ts";
+import { findLandedPrUrl } from "./reconcile.ts";
+import type { ExecGhPrViewFn } from "./reconcile.ts";
 
 /**
  * Injected stand-in for spawning "claude -p" headless with the skill.
@@ -43,7 +45,7 @@ export type RunSkillFn = (ticketKey: string) => Promise<{
  * long-running process, or a test) can decide what to do next.
  */
 export type LoopIterationResult =
-  | { kind: "idle" }
+  | { kind: "idle"; skipped?: Array<{ ticket: string; reason: string }> }
   | { kind: "skipped-race"; ticket: string }
   | { kind: "ran"; ticket: string; logLine: RunLogLine; jiraSyncError?: string }
   | {
@@ -76,6 +78,8 @@ export interface LoopIterationDeps {
    * assign-if-unassigned a ticket right after it's picked up.
    */
   assigneeAccountId: string;
+  /** Used by the landed-ticket guard to read the state of a ticket's earlier PR. */
+  execGhPrView: ExecGhPrViewFn;
 }
 
 /**
@@ -97,6 +101,36 @@ async function postGitHubDetail(
     return undefined;
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
+  }
+}
+
+/** Append `AND key != "K"` clauses to a JQL, ahead of any ORDER BY. */
+function excludeKeys(jql: string, keys: string[]): string {
+  if (keys.length === 0) return jql;
+  const exclusion = keys.map((k) => ` AND key != "${k}"`).join("");
+  const orderBy = jql.search(/\s+ORDER\s+BY\s/i);
+  return orderBy === -1 ? jql + exclusion : jql.slice(0, orderBy) + exclusion + jql.slice(orderBy);
+}
+
+/**
+ * Why this ticket must not be re-run, or null if it may run: its latest
+ * "landed" PR is merged or still open, or that PR's state can't be read.
+ */
+async function landedSkipReason(
+  runsLogPath: string,
+  ticketKey: string,
+  execGhPrView: ExecGhPrViewFn,
+): Promise<string | null> {
+  const prUrl = await findLandedPrUrl(runsLogPath, ticketKey);
+  if (!prUrl) return null;
+  try {
+    const status = JSON.parse(await execGhPrView(prUrl)) as { state: string; mergedAt: string | null };
+    if (status.mergedAt) return `already landed, PR merged (${prUrl})`;
+    if (status.state === "OPEN") return `already landed, PR still open (${prUrl})`;
+    return null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return `already landed (${prUrl}) but its PR state could not be read: ${message}`;
   }
 }
 
@@ -131,7 +165,7 @@ async function postGitHubDetail(
 export async function runLoopIteration(
   deps: LoopIterationDeps,
 ): Promise<LoopIterationResult> {
-  const { jiraClient, githubClient, config, runSkill, loopKind, runsLogPath, runsToday, assigneeAccountId } =
+  const { jiraClient, githubClient, config, runSkill, loopKind, runsLogPath, runsToday, assigneeAccountId, execGhPrView } =
     deps;
 
   // Ceiling check before even starting a new run.
@@ -142,12 +176,27 @@ export async function runLoopIteration(
     };
   }
 
-  const jql =
+  const baseJql =
     loopKind === "refine" ? buildRefineJql(config) : buildDevJql(config, assigneeAccountId);
 
-  const ticket = await jiraClient.pollOldestMatching(jql);
-  if (!ticket) {
-    return { kind: "idle" };
+  // Landed-ticket guard (dev loop only). A ticket whose latest "landed" run's
+  // PR is merged or still open must never be re-run, whatever Jira status it
+  // now has (merge automation and hand moves put it in statuses the poll JQL
+  // can't exclude). Each such ticket is excluded from the poll by key and
+  // the poll repeated, so a stuck one never blocks the queue behind it.
+  // Fails closed: an unreadable PR state also skips.
+  const skipped: Array<{ ticket: string; reason: string }> = [];
+  let ticket = null;
+  for (;;) {
+    const jql = excludeKeys(baseJql, skipped.map((s) => s.ticket));
+    ticket = await jiraClient.pollOldestMatching(jql);
+    if (!ticket) {
+      return skipped.length > 0 ? { kind: "idle", skipped } : { kind: "idle" };
+    }
+    if (loopKind !== "dev") break;
+    const reason = await landedSkipReason(runsLogPath, ticket.key, execGhPrView);
+    if (!reason) break;
+    skipped.push({ ticket: ticket.key, reason });
   }
 
   let assignSyncError: string | undefined;

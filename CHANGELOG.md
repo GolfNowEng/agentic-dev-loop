@@ -6,6 +6,40 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-30 — Landed tickets are never re-run, whatever their Jira status or whether the loop was on for the merge
+
+TARS-1452 landed (PR #455) and was merged while dev-loop was off. Jira's
+merge automation moved it from Code Review to Development Complete (and a
+human later to Deployed to INT). `pollJql.dev` only excludes Blocked and
+Code Review, so the ticket matched again and was re-picked over and over;
+each run noticed the work was done, asked a question instead of writing a
+verdict, and looped. Reconcile never caught it either: it only examined
+tickets currently in Code Review, so the mirror Issue (#454) stayed open with
+no close comment. Same family as TARS-1465, but this happens on every merge.
+
+**Fix**: neither decision depends on Jira status any more.
+- `runLoopIteration` skips a polled ticket before `runSkill` when its latest
+  `landed` run's PR is merged or still open (or unreadable): no run, no cost,
+  one log line, and the poll repeats with that key excluded so the queue is
+  not blocked.
+- `reconcileMergedTickets` selects from `runs.jsonl` (latest `landed` per
+  ticket, 30-day window) instead of a Code Review JQL, so it works when the
+  loop was off at merge time. On a merged PR it comments on and closes the
+  mirror Issue (skipped if already closed) and now **removes `pipeline:dev`
+  from the Jira ticket** (new `JiraClient.removeLabel`), leaving only
+  `repo:*`. Reconcile therefore now writes to Jira (label only; status and
+  assignee untouched); a failed removal is swallowed and the guard covers it.
+- `GitHubIssue` now carries `state` (`gh issue list --json …,state`).
+
+**Cleanup**: TARS-1452 had `pipeline:dev` removed and #454 was commented on
+and closed by hand.
+
+Tests: 10 net new across `test/reconcile.test.ts`, `test/loop-runner.test.ts`,
+`test/jira-client.test.ts`, `test/github-client.test.ts` (merge while loop
+off, open PR left alone, 30-day window, already-closed Issue, label failure
+non-blocking, guard prevents `runSkill`, guard doesn't block the queue,
+closed-unmerged PR re-runs, fails closed).
+
 ## 2026-09-29 — Phase 0 bounces when a newer research-loop comment follows the chosen spec
 
 `ticket-to-pr` reads only the newest `## ✅ research-loop -` Issue comment.

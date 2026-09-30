@@ -51,6 +51,7 @@ function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
     claimTicket: vi.fn(async () => true),
     transitionStatus: vi.fn(async () => {}),
     swapLabel: vi.fn(async () => {}),
+    removeLabel: vi.fn(async () => {}),
     assignTicket: vi.fn(async () => {}),
     addComment: vi.fn(async () => {}),
     closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
@@ -101,6 +102,9 @@ function makeDeps(overrides: Partial<LoopIterationDeps> = {}): LoopIterationDeps
     runsLogPath: "",
     runsToday: 0,
     assigneeAccountId: ASSIGNEE_ACCOUNT_ID,
+    execGhPrView: vi.fn(async () => {
+      throw new Error("execGhPrView not stubbed for this test");
+    }),
     ...overrides,
   };
 }
@@ -1129,6 +1133,103 @@ describe("buildQaNotesAdf", () => {
     expect(adf.content[0]).toEqual({
       type: "paragraph",
       content: [{ type: "text", text: expect.stringContaining("PR:") }],
+    });
+  });
+});
+
+describe("runLoopIteration -- landed-ticket guard", () => {
+  const landedLine = {
+    ticket: "PROJ-1", skill: "ticket-to-pr", skill_version: "x", model: "sonnet",
+    started: "2026-01-01T00:00:00.000Z", ended: "2026-01-01T00:10:00.000Z",
+    outcome: "landed", phase_reached: "pr", red_confirmed: true, verify_loops: 1, retries: 0,
+    failure_category: null, detail: "landed", pr: "https://github.com/org/repo/pull/9",
+    cost_usd: 1, tokens: { in: 1, out: 1 },
+  };
+
+  /** pollOldestMatching stand-in: returns the first queued ticket whose key the JQL hasn't excluded. */
+  function queuePoll(tickets: JiraTicket[]) {
+    return vi.fn(async (jql: string) => tickets.find((t) => !jql.includes(`key != "${t.key}"`)) ?? null);
+  }
+
+  async function withLanded<T>(fn: (path: string) => Promise<T>): Promise<T> {
+    return withTempRunsLog(async (path) => {
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(path, JSON.stringify(landedLine) + "\n", "utf8");
+      return fn(path);
+    });
+  }
+
+  it("does not run the skill for a polled ticket whose landed PR merged (post-merge Jira status, label still present)", async () => {
+    await withLanded(async (runsLogPath) => {
+      const runSkill: RunSkillFn = vi.fn();
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: queuePoll([makeTicket({ status: "Development Complete" })]),
+      });
+      const execGhPrView = vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-02T00:00:00Z" }));
+
+      const result = await runLoopIteration(makeDeps({ jiraClient, runSkill, runsLogPath, execGhPrView }));
+
+      expect(runSkill).not.toHaveBeenCalled();
+      expect(result).toEqual({ kind: "idle", skipped: [{ ticket: "PROJ-1", reason: expect.stringContaining("merged") }] });
+    });
+  });
+
+  it("does not run the skill for a ticket whose landed PR is still open", async () => {
+    await withLanded(async (runsLogPath) => {
+      const runSkill: RunSkillFn = vi.fn();
+      const jiraClient = makeMockJiraClient({ pollOldestMatching: queuePoll([makeTicket()]) });
+      const execGhPrView = vi.fn(async () => JSON.stringify({ state: "OPEN", mergedAt: null }));
+
+      const result = await runLoopIteration(makeDeps({ jiraClient, runSkill, runsLogPath, execGhPrView }));
+
+      expect(runSkill).not.toHaveBeenCalled();
+      expect(result.kind).toBe("idle");
+    });
+  });
+
+  it("skips past a landed ticket and runs the next eligible one (a stuck landed ticket never blocks the queue)", async () => {
+    await withLanded(async (runsLogPath) => {
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({ outcome: "bounced", pr: null, failure_category: "spec_ambiguous" }),
+        started: "2026-01-03T00:00:00.000Z", ended: "2026-01-03T00:01:00.000Z", costUsd: 1, tokens: MEASURED_TOKENS,
+      }));
+      const jiraClient = makeMockJiraClient({
+        pollOldestMatching: queuePoll([makeTicket({ key: "PROJ-1" }), makeTicket({ key: "PROJ-2" })]),
+      });
+      const execGhPrView = vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-02T00:00:00Z" }));
+
+      const result = await runLoopIteration(makeDeps({ jiraClient, runSkill, runsLogPath, execGhPrView }));
+
+      expect(runSkill).toHaveBeenCalledWith("PROJ-2");
+      expect(result.kind).toBe("ran");
+    });
+  });
+
+  it("still runs a ticket whose previous landed PR was closed without merging", async () => {
+    await withLanded(async (runsLogPath) => {
+      const runSkill: RunSkillFn = vi.fn(async () => ({
+        verdict: makeVerdict({ outcome: "bounced", pr: null, failure_category: "spec_ambiguous" }),
+        started: "2026-01-03T00:00:00.000Z", ended: "2026-01-03T00:01:00.000Z", costUsd: 1, tokens: MEASURED_TOKENS,
+      }));
+      const jiraClient = makeMockJiraClient({ pollOldestMatching: queuePoll([makeTicket()]) });
+      const execGhPrView = vi.fn(async () => JSON.stringify({ state: "CLOSED", mergedAt: null }));
+
+      await runLoopIteration(makeDeps({ jiraClient, runSkill, runsLogPath, execGhPrView }));
+
+      expect(runSkill).toHaveBeenCalledWith("PROJ-1");
+    });
+  });
+
+  it("fails closed: if the PR state cannot be read, the ticket is skipped, not run", async () => {
+    await withLanded(async (runsLogPath) => {
+      const runSkill: RunSkillFn = vi.fn();
+      const jiraClient = makeMockJiraClient({ pollOldestMatching: queuePoll([makeTicket()]) });
+      const execGhPrView = vi.fn(async () => { throw new Error("gh: network"); });
+
+      const result = await runLoopIteration(makeDeps({ jiraClient, runSkill, runsLogPath, execGhPrView }));
+
+      expect(runSkill).not.toHaveBeenCalled();
+      expect(result.kind).toBe("idle");
     });
   });
 });

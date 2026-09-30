@@ -277,40 +277,39 @@ this — omitted entirely (not sent as `{}`) when a transition needs none
 (e.g. the `bounced` transition), so a transition with no screen requirement
 isn't given an unnecessary payload.
 
-## Startup-time merge-reconciliation pass
+## Per-poll merge-reconciliation pass and landed-ticket guard
 
-At the top of every poll cycle (before `runLoopIteration`), `main.ts`
-runs `reconcileMergedTickets` (`src/reconcile.ts`): finds every ticket at
-`handoffLabel` + `statusNames.prOpen` (Code Review) via a new
-`JiraClient.pollAllMatching` query, resolves each one's PR URL from the
-most recent `"landed"` line in `runs/<slug>.jsonl` for that ticket key,
-and checks the real merge state via `gh pr view <url> --json
-state,mergedAt`. For any that merged, closes the mirror GitHub Issue
-(`state_reason: "completed"`) via `GitHubClient.closeIssue`, first
-posting a short "Closed automatically by dev-loop" comment (PR URL, merge
-time, ticket key, reason) so the closed Issue carries context; a failed
-comment never blocks the close — but does **not** touch the Jira ticket's status or label. A human still closes the
-Jira ticket by hand; this pass exists only so the GitHub Issue doesn't
-stay open indefinitely after a merge that happened while dev-loop was
-offline (GitHub's own `Closes #N` convention auto-closes the Issue on a
-merge that happens while dev-loop is *running*, but a merge missed while
-offline needs this catch-up).
+Merges happen while dev-loop is off, and Jira's own merge automation then
+moves the ticket out of Code Review (e.g. to Development Complete), so
+neither decision below looks at Jira status.
 
-This is a narrower scope than the original Jira-label-trigger design
-sketched (`pipeline:dev` → `pipeline:merged`, both systems) — that design
-depended on a `stageLabels`/`pipeline:pr-open` label scheme that was
-never built (see research-loop's `docs/future-enhancements.md`'s
-checkpoint section). Reopening the full label-based version is tracked
-there, not here.
+**Reconcile.** At the top of every poll cycle (before `runLoopIteration`),
+`main.ts` runs `reconcileMergedTickets` (`src/reconcile.ts`). It takes every
+ticket whose latest `"landed"` line in `runs/<slug>.jsonl` ended within the
+last 30 days (no Jira query), checks the real merge state via `gh pr view
+<url> --json state,mergedAt`, and for each merged PR:
 
-A ticket with no `"landed"` line in its own `runs.jsonl` (e.g. it reached
-Code Review through a means this pass can't trace a PR URL from) is
-recorded as a per-ticket error and skipped, not a crash — the pass keeps
-checking every other candidate ticket regardless. Idempotent by
-construction: `GitHubClient.closeIssue` is itself a safe no-op on an
-already-closed issue, so re-running this pass on a ticket whose Issue is
-already closed just re-confirms the merge and reports it closed again,
-without erroring.
+1. comments on the mirror GitHub Issue ("Closed automatically by dev-loop":
+   PR URL, merge time, ticket key, reason) and closes it
+   (`state_reason: "completed"`); skipped if the Issue is already closed;
+2. removes `handoffLabel` (`pipeline:dev`) from the Jira ticket with
+   `JiraClient.removeLabel`, leaving only the repo label.
+
+The label removal is the only Jira write: status and assignee are never
+touched (a human closes the Jira ticket). A failed comment or label removal
+never blocks the rest and is not reported as an error. `main.ts` passes a
+process-lifetime `reconciled` set so a finished ticket is not re-checked
+every cycle; a restart re-checks recent ones, which is harmless (idempotent).
+A per-ticket `gh` failure is recorded in `errors` and the pass continues.
+
+**Landed-ticket guard.** After polling and before `runSkill`,
+`runLoopIteration` (dev loop only) looks up the polled ticket's latest
+`"landed"` PR. If that PR is merged or still open, the ticket is skipped
+(no run, no cost, one log line per skip) and the poll is repeated with
+`AND key != "…"` so it cannot block tickets behind it. If the PR's state
+cannot be read, the ticket is also skipped. This is the backstop for a
+failed label removal, or a merge reconcile has not seen yet. A landed PR
+closed without merging does not block a re-run.
 
 ## Appendix A (Jira wiring)
 

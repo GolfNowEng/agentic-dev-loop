@@ -252,6 +252,20 @@ describe("RealJiraClient", () => {
     });
   });
 
+  it("removeLabel PUTs the labels field with a single remove op", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    await client.removeLabel("PROJ-1", "pipeline:dev");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://example.atlassian.net/rest/api/3/issue/PROJ-1");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body as string)).toEqual({
+      update: { labels: [{ remove: "pipeline:dev" }] },
+    });
+  });
+
   it("assignTicket PUTs the assignee field with the given accountId", async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
     const client = new RealJiraClient(CREDENTIALS, makeConfig());

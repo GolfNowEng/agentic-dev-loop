@@ -24,6 +24,8 @@
 export interface GitHubIssue {
   number: number;
   url: string;
+  /** As reported by `gh issue list --json state`. */
+  state: "OPEN" | "CLOSED";
 }
 
 /** GitHub's own three close reasons -- state_reason on the API, --reason on gh. */
@@ -111,6 +113,7 @@ export type ExecGhFn = (args: string[]) => Promise<string>;
 interface GhIssueListEntry {
   number: number;
   url: string;
+  state: "OPEN" | "CLOSED";
 }
 
 /** gh's own --reason flag values use a literal space for "not planned", unlike the API's state_reason "not_planned". */
@@ -165,12 +168,12 @@ export class RealGitHubClient implements GitHubClient {
       "--state",
       "all",
       "--json",
-      "number,url",
+      "number,url,state",
     ]);
     const entries = JSON.parse(stdout) as GhIssueListEntry[];
     const first = entries[0];
     if (!first) return null;
-    return { number: first.number, url: first.url };
+    return { number: first.number, url: first.url, state: first.state };
   }
 
   async addComment(issueNumber: number, body: string): Promise<void> {

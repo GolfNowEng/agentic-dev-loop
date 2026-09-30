@@ -62,6 +62,12 @@ export interface JiraClient {
   swapLabel(ticketKey: string, from: string, to: string): Promise<void>;
 
   /**
+   * Remove a single label from a ticket. Jira treats removing a label the
+   * ticket doesn't have as a no-op, so this is safe to repeat.
+   */
+  removeLabel(ticketKey: string, label: string): Promise<void>;
+
+  /**
    * Assign a ticket to the given Jira account ID. Callers should only
    * invoke this when the ticket is currently unassigned -- this method
    * itself does not check, it just performs the assignment.
@@ -152,6 +158,10 @@ export class StubJiraClient implements JiraClient {
 
   async swapLabel(_ticketKey: string, _from: string, _to: string): Promise<void> {
     throw StubJiraClient.notConfigured("swapLabel");
+  }
+
+  async removeLabel(_ticketKey: string, _label: string): Promise<void> {
+    throw StubJiraClient.notConfigured("removeLabel");
   }
 
   async assignTicket(_ticketKey: string, _accountId: string): Promise<void> {
@@ -387,6 +397,13 @@ export class RealJiraClient implements JiraClient {
       body: JSON.stringify({
         update: { labels: [{ remove: from }, { add: to }] },
       }),
+    });
+  }
+
+  async removeLabel(ticketKey: string, label: string): Promise<void> {
+    await this.request(`/rest/api/3/issue/${ticketKey}`, {
+      method: "PUT",
+      body: JSON.stringify({ update: { labels: [{ remove: label }] } }),
     });
   }
 
