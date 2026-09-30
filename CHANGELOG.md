@@ -34,6 +34,12 @@ UI criteria get no automated browser evidence.
 `[Not verified by automation]`, so those criteria are visible to the human
 reviewer in Jira's QA Notes and the PR body instead of only in `progress.jsonl`.
 
+`ticket-to-pr` also passes the qa-agent the dev-loop checkout path
+(`DEVLOOP_DIR`, from its own `pwd`); previously `qa-agent.md` referenced an
+unfilled `<dev-loop>` placeholder, so the agent had no reliable way to find
+`src/qa-browser.ts`. The path is for tool calls only and is barred from PR,
+Jira, `qa_notes` and `verdict.json` (it contains the home directory).
+
 ## 2026-09-30 — Landed tickets are never re-run, whatever their Jira status or whether the loop was on for the merge
 
 TARS-1452 landed (PR #455) and was merged while dev-loop was off. A GitHub

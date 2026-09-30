@@ -73,8 +73,9 @@ server shutdown is never conditional.
 ## qa-agent
 
 `.claude/agents/qa-agent.md` — a genuinely fresh-context subagent spawned
-during Verify. It sees only the ticket key and the path to `ticket-to-pr`'s
-already-created run worktree (never the implementer's reasoning) — and
+during Verify. It sees only the ticket key, the path to `ticket-to-pr`'s
+already-created run worktree, and the dev-loop checkout path (to run
+`src/qa-browser.ts`; never echoed into PR/Jira) — never the implementer's reasoning — and
 checks, against the research-loop comment's AC/Scope (not the description):
 AC satisfaction, scope discipline (no files touched beyond what Scope
 names), regressions, test quality, and unrelated diff noise. Not
