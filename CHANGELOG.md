@@ -40,6 +40,27 @@ unfilled `<dev-loop>` placeholder, so the agent had no reliable way to find
 `src/qa-browser.ts`. The path is for tool calls only and is barred from PR,
 Jira, `qa_notes` and `verdict.json` (it contains the home directory).
 
+**Setup on a new machine**: `npm install`, then `npm run setup-qa` once (fetches
+the Chromium build matching the pinned Playwright). Without it the helper
+reports the browser as unavailable and the qa-agent marks criteria unverified.
+The helper exits 0 on success, 1 on a failed step or missing browser, and 2 on
+bad arguments (including any non-localhost URL); it always prints one JSON line.
+
+**Correction**: the first version of these instructions said local dev
+"needs no login". That was wrong (it was inferred from a server log line that
+came from an already-logged-in browser tab), was merged briefly, and was fixed
+the same day; the login form is real and the text above is current.
+
+**Finding to follow up in webtarsthree (not changed here)**: neither the
+client nor the server verifies a token's signature. The client trusts any
+decodable JWT in `localStorage['tars_user']`; the server's
+`requestContext.js` decodes the Bearer payload into `req.user`, and group
+checks (enforced only in prod/staging/int) read `req.user.groups` from it.
+The app is behind the VPN, which limits exposure but does not make identity
+verified. Handed off as an analysis prompt covering the planned Okta SSO and
+an approved automated-test auth path; until that lands, login-gated UI stays
+human-verified.
+
 ## 2026-09-30 — Landed tickets are never re-run, whatever their Jira status or whether the loop was on for the merge
 
 TARS-1452 landed (PR #455) and was merged while dev-loop was off. A GitHub
