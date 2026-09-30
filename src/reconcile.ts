@@ -1,23 +1,18 @@
 /**
- * dev-loop's startup-time merge-reconciliation pass. Per
- * docs/future-enhancements.md's Jira label-based trigger design: nothing
- * in this pipeline reacts to a GitHub PR merge event -- GitHub's own
- * "Closes #N" convention auto-closes the mirror Issue on a merge that
- * happens while dev-loop is running, but a merge that happens while
- * dev-loop is offline (or a PR that predates that convention being used)
- * can't assume the auto-close already ran. This pass finds every ticket
- * currently sitting at Code Review (handoffLabel + statusNames.prOpen),
- * resolves each one's PR URL from its own runs.jsonl history (the most
- * recent "landed" line for that ticket key -- no new field needed,
- * RunLogLine.pr already carries it), checks the real merge state via
- * `gh pr view --json state,mergedAt`, and for any that merged, posts a
- * "closed automatically by dev-loop" comment on, then closes, the mirror
- * GitHub Issue (state_reason "completed"). Deliberately does NOT
- * touch the Jira ticket's own status/label -- a human closes the Jira
- * ticket by hand; this pass only keeps the GitHub Issue from going stale.
- * This is a startup-time/per-poll-cycle reconciliation step, not a
- * separately-scheduled job or webhook -- called once per iteration from
- * main.ts's poll loop, before runLoopIteration.
+ * dev-loop's per-poll merge-reconciliation pass. Nothing in this pipeline
+ * reacts to a GitHub PR merge event, and a merge routinely happens while
+ * dev-loop is off, after which Jira's own merge automation moves the ticket
+ * out of Code Review (e.g. to Development Complete). So this pass does not
+ * look at Jira status at all: it works from runs.jsonl, taking every ticket
+ * whose latest "landed" line is inside a recent window, and asks GitHub
+ * (`gh pr view --json state,mergedAt`) whether that PR merged. For each
+ * merged one it comments on and closes the mirror GitHub Issue (state_reason
+ * "completed", skipped if already closed) and removes the handoff label
+ * (pipeline:dev) from the Jira ticket, leaving only the repo label. That is
+ * the only Jira write this pass makes: it never changes status or assignee,
+ * and a failed label removal is swallowed (runLoopIteration's landed-ticket
+ * guard is the backstop). Called once per iteration from main.ts's poll
+ * loop, before runLoopIteration.
  */
 
 import type { JiraClient } from "./jira-client.ts";
@@ -28,16 +23,26 @@ import { readRunLog } from "./runs-log.ts";
 /** Stand-in for `gh pr view <url> --json state,mergedAt`, returning its raw JSON stdout. Injected so tests never shell out for real. */
 export type ExecGhPrViewFn = (prUrl: string) => Promise<string>;
 
+/** How far back a "landed" line still counts as a candidate. */
+const LANDED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
 export interface ReconcileDeps {
   jiraClient: JiraClient;
   githubClient: GitHubClient;
   config: Config;
   runsLogPath: string;
   execGhPrView: ExecGhPrViewFn;
+  /** Injected clock for the landed window; defaults to the real one. */
+  now?: Date;
+  /**
+   * Ticket keys already fully reconciled by this process. Pass the same Set
+   * on every call so a merged ticket is not re-checked each poll cycle.
+   */
+  reconciled?: Set<string>;
 }
 
 export interface ReconcileResult {
-  /** How many Code-Review tickets this pass examined. */
+  /** How many landed tickets this pass examined. */
   checked: number;
   /** Ticket keys whose PR was confirmed merged and whose mirror Issue was closed this pass (or already closed -- see closeIssue's own idempotency). */
   closed: string[];
@@ -51,17 +56,6 @@ interface GhPrViewResult {
 }
 
 /**
- * Build the JQL for "tickets at Code Review" -- handoffLabel (the same
- * label pollJql.dev already matches on) plus status = statusNames.prOpen.
- * A separate template from pollJql.dev itself (that one now also excludes
- * bounced-status tickets, which is irrelevant here -- Code Review status
- * is never bounced status).
- */
-function buildPrOpenJql(config: Config): string {
-  return `labels = "${config.jira.handoffLabel}" AND labels = "${config.jira.repoLabel}" AND status = "${config.jira.statusNames.prOpen}" ORDER BY created ASC`;
-}
-
-/**
  * Find the most recent run for this ticket key in runs.jsonl that has a
  * PR URL attached -- "landed" (fully succeeded) or "bounced" (intake
  * found a pre-existing PR already open, nothing new to do; see
@@ -70,11 +64,8 @@ function buildPrOpenJql(config: Config): string {
  * PR for a ticket being torn down, not just one from a run that fully
  * landed -- per this session's decision that a reset should close
  * whatever PR exists, regardless of whether that specific run succeeded.
- * Exported for reset-project's remote-close module; this pass's own call
- * site below is unaffected by the widening -- a ticket only ever reaches
- * Code Review (this pass's own JQL target) via a "landed" line in the
- * first place, so the extra "bounced" lines it now also considers here
- * never change which line wins for THIS caller.
+ * Exported for reset-project's remote-close module. Reconcile and the
+ * landed-ticket guard use findLandedPrUrl / findLandedTickets instead.
  */
 export async function findOpenPrUrl(runsLogPath: string, ticketKey: string): Promise<string | null> {
   let lines;
@@ -88,6 +79,36 @@ export async function findOpenPrUrl(runsLogPath: string, ticketKey: string): Pro
   );
   const last = openPrLines[openPrLines.length - 1];
   return last?.pr ?? null;
+}
+
+/** A ticket's most recent "landed" run: its PR and when the run ended. */
+export interface LandedTicket {
+  ticket: string;
+  pr: string;
+  ended: string;
+}
+
+/** Latest "landed" line with a PR per ticket key, in runs.jsonl order of first appearance. Missing/unreadable log -> []. */
+export async function findLandedTickets(runsLogPath: string): Promise<LandedTicket[]> {
+  let lines;
+  try {
+    lines = await readRunLog(runsLogPath);
+  } catch {
+    return [];
+  }
+  const latest = new Map<string, LandedTicket>();
+  for (const l of lines) {
+    if (l.outcome === "landed" && l.pr) {
+      latest.set(l.ticket, { ticket: l.ticket, pr: l.pr, ended: l.ended });
+    }
+  }
+  return [...latest.values()];
+}
+
+/** PR URL of the ticket's latest "landed" run, or null if it never landed. */
+export async function findLandedPrUrl(runsLogPath: string, ticketKey: string): Promise<string | null> {
+  const found = (await findLandedTickets(runsLogPath)).find((t) => t.ticket === ticketKey);
+  return found?.pr ?? null;
 }
 
 /**
@@ -126,23 +147,19 @@ async function postCloseComment(
 
 export async function reconcileMergedTickets(deps: ReconcileDeps): Promise<ReconcileResult> {
   const { jiraClient, githubClient, config, runsLogPath, execGhPrView } = deps;
+  const now = deps.now ?? new Date();
+  const reconciled = deps.reconciled;
 
-  const jql = buildPrOpenJql(config);
-  const tickets = await jiraClient.pollAllMatching(jql);
+  const candidates = (await findLandedTickets(runsLogPath)).filter(
+    (t) =>
+      !reconciled?.has(t.ticket) &&
+      now.getTime() - new Date(t.ended).getTime() <= LANDED_WINDOW_MS,
+  );
 
-  const result: ReconcileResult = { checked: tickets.length, closed: [], errors: [] };
+  const result: ReconcileResult = { checked: candidates.length, closed: [], errors: [] };
 
-  for (const ticket of tickets) {
+  for (const { ticket, pr: prUrl } of candidates) {
     try {
-      const prUrl = await findOpenPrUrl(runsLogPath, ticket.key);
-      if (!prUrl) {
-        result.errors.push({
-          ticket: ticket.key,
-          message: `no landed/bounced run with a PR found in ${runsLogPath} for ${ticket.key} -- cannot determine its PR URL`,
-        });
-        continue;
-      }
-
       const raw = await execGhPrView(prUrl);
       const prStatus = JSON.parse(raw) as GhPrViewResult;
 
@@ -150,19 +167,30 @@ export async function reconcileMergedTickets(deps: ReconcileDeps): Promise<Recon
         continue;
       }
 
-      const issue = await githubClient.findIssueByJiraKey(ticket.key);
-      if (issue) {
+      const issue = await githubClient.findIssueByJiraKey(ticket);
+      if (issue && issue.state !== "CLOSED") {
         await postCloseComment(githubClient, issue.number, {
           prUrl,
           mergedAt: prStatus.mergedAt,
-          ticketKey: ticket.key,
+          ticketKey: ticket,
         });
         await githubClient.closeIssue(issue.number, "completed");
       }
-      result.closed.push(ticket.key);
+
+      // Never blocks or fails the reconcile: the landed-ticket guard in
+      // runLoopIteration keeps a ticket that still carries the label from
+      // being re-run.
+      try {
+        await jiraClient.removeLabel(ticket, config.jira.handoffLabel);
+      } catch {
+        // Swallowed deliberately -- see above.
+      }
+
+      reconciled?.add(ticket);
+      result.closed.push(ticket);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      result.errors.push({ ticket: ticket.key, message });
+      result.errors.push({ ticket, message });
     }
   }
 
