@@ -47,3 +47,17 @@ export async function countRunsToday(filePath: string, now: Date): Promise<numbe
   const todayKey = now.toISOString().slice(0, 10);
   return lines.filter((line) => utcDateKey(line.started) === todayKey).length;
 }
+
+/**
+ * True if runs.jsonl already has a "landed" line for `ticketKey`. A missing
+ * file means nothing has been logged yet, so false, not an error.
+ */
+export async function hasLandedRun(filePath: string, ticketKey: string): Promise<boolean> {
+  let lines: RunLogLine[];
+  try {
+    lines = await readRunLog(filePath);
+  } catch {
+    return false;
+  }
+  return lines.some((line) => line.ticket === ticketKey && line.outcome === "landed");
+}

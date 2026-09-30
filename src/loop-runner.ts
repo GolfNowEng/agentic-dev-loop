@@ -25,7 +25,8 @@ import type { Config, RunLogLine, Verdict } from "./types.ts";
 import type { JiraClient, JiraTicket } from "./jira-client.ts";
 import { checkCeilings } from "./ceilings.ts";
 import { parseVerdict } from "./verdict.ts";
-import { appendRunLog } from "./runs-log.ts";
+import { appendRunLog, hasLandedRun } from "./runs-log.ts";
+import { excludeKeysFromJql } from "./jql.ts";
 
 /**
  * What running the skill against a ticket produced. Stands in for the
@@ -83,6 +84,12 @@ export interface LoopIterationResult {
    * discard an otherwise-real, already-completed run.
    */
   jiraSyncError?: string;
+  /**
+   * Polled tickets skipped before claiming because runs.jsonl already has a
+   * "landed" line for them (a failed pipeline:research -> pipeline:dev label
+   * swap left them matching the poll). Absent when none were skipped.
+   */
+  skippedLanded?: string[];
 }
 
 export interface RunLoopIterationDeps {
@@ -123,9 +130,18 @@ export async function runLoopIteration(
     return { action: "paused-ceiling", pauseReason: preCheck.detail };
   }
 
-  const ticket = await jiraClient.pollOldestMatching(jql);
+  // Never re-refine a ticket that already landed: skip it before claiming
+  // (no status change, no run, no cost) and re-poll with it excluded so it
+  // cannot block the queue.
+  const skippedLanded: string[] = [];
+  let ticket = await jiraClient.pollOldestMatching(jql);
+  while (ticket && (await hasLandedRun(runsLogPath, ticket.key))) {
+    skippedLanded.push(ticket.key);
+    ticket = await jiraClient.pollOldestMatching(excludeKeysFromJql(jql, skippedLanded));
+  }
+  const skipped = skippedLanded.length > 0 ? { skippedLanded } : {};
   if (!ticket) {
-    return { action: "empty-queue" };
+    return { action: "empty-queue", ...skipped };
   }
 
   const claimed = await jiraClient.claim(
@@ -134,7 +150,7 @@ export async function runLoopIteration(
     config.jira.claimStatus.to,
   );
   if (!claimed) {
-    return { action: "claim-raced", ticket: ticket.key };
+    return { action: "claim-raced", ticket: ticket.key, ...skipped };
   }
 
   let assignSyncError: string | undefined;
@@ -226,8 +242,9 @@ export async function runLoopIteration(
       ticket: ticket.key,
       logLine,
       jiraSyncError,
+      ...skipped,
     };
   }
 
-  return { action: "processed", ticket: ticket.key, logLine, jiraSyncError };
+  return { action: "processed", ticket: ticket.key, logLine, jiraSyncError, ...skipped };
 }

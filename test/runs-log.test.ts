@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { appendRunLog, readRunLog, countRunsToday } from "../src/runs-log.ts";
+import { appendRunLog, readRunLog, countRunsToday, hasLandedRun } from "../src/runs-log.ts";
 import type { RunLogLine } from "../src/types.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -119,5 +119,29 @@ describe("countRunsToday", () => {
     await appendRunLog(filePath, makeLine({ ticket: "PROJ-1", started: "2026-08-15T12:00:00Z" }));
     const count = await countRunsToday(filePath, new Date("2026-08-16T12:00:00Z"));
     expect(count).toBe(0);
+  });
+});
+
+describe("hasLandedRun", () => {
+  it("is false when the runs file does not exist", async () => {
+    expect(await hasLandedRun("/nonexistent/runs.jsonl", "PROJ-1")).toBe(false);
+  });
+
+  it("is true only for a landed line on that ticket", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "runs-log-landed-"));
+    const file = path.join(dir, "runs.jsonl");
+    const base = {
+      skill: "ticket-refine", skill_version: "x", model: "opus",
+      started: "2026-09-01T00:00:00Z", ended: "2026-09-01T00:01:00Z",
+      phase_reached: "verify", red_confirmed: false, verify_loops: 0, retries: 0,
+      failure_category: null, detail: "", pr: null, cost_usd: 0, tokens: { in: 0, out: 0 },
+    } as const;
+    await appendRunLog(file, { ...base, ticket: "PROJ-1", outcome: "bounced" });
+    await appendRunLog(file, { ...base, ticket: "PROJ-2", outcome: "landed" });
+    expect(await hasLandedRun(file, "PROJ-1")).toBe(false);
+    expect(await hasLandedRun(file, "PROJ-2")).toBe(true);
+    await appendRunLog(file, { ...base, ticket: "PROJ-1", outcome: "landed" });
+    expect(await hasLandedRun(file, "PROJ-1")).toBe(true);
+    await fs.rm(dir, { recursive: true, force: true });
   });
 });

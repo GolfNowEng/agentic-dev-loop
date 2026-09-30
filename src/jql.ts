@@ -33,3 +33,16 @@ export function buildDevJql(config: Config): string {
     .replace("{label}", config.jira.handoffLabel)
     .replace("{repoLabel}", config.jira.repoLabel);
 }
+
+/**
+ * Append `AND key not in (...)` to a JQL string, before any ORDER BY, so a
+ * poll can skip tickets the loop has already decided not to run. Returns
+ * the JQL unchanged when there is nothing to exclude.
+ */
+export function excludeKeysFromJql(jql: string, keys: string[]): string {
+  if (keys.length === 0) return jql;
+  const clause = `key not in (${keys.map((k) => `"${k}"`).join(",")})`;
+  const orderBy = /\s+order\s+by\s/i.exec(jql);
+  if (!orderBy) return `${jql} AND ${clause}`;
+  return `${jql.slice(0, orderBy.index)} AND ${clause}${jql.slice(orderBy.index)}`;
+}
