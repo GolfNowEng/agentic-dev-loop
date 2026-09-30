@@ -18,8 +18,17 @@ unreproducible, and left Chromium builds scattered in the Playwright cache.
 only sanctioned path: localhost-only, screenshot + console/page-error JSON.
 Playwright is pinned in dev-loop's devDependencies; one-time
 `npm run setup-qa` fetches Chromium. `qa-agent.md` now says: go straight to
-`localhost:3000` (no auth), use the helper, never install/download, and mark
-the criterion unverified if the browser is unavailable.
+`localhost:3000`, use the helper, never install/download, and mark the
+criterion unverified if the browser is unavailable.
+
+**Auth (deliberately unchanged, and a known blind spot)**: local dev shows a
+login form. Earlier runs got past it by forging an unsigned JWT
+(`/tmp/pwtest/fake_jwt.txt`, `qa-bot@example.com`, an admin group) into
+`localStorage['tars_user']`, which works only because webtarsthree's client
+never verifies the token. That is now off-limits: the helper has no auth
+handling and the qa-agent must report anything behind the login as
+**unverified (needs human)**. Until an approved mechanism exists, login-gated
+UI criteria get no automated browser evidence.
 
 ## 2026-09-30 — Landed tickets are never re-run, whatever their Jira status or whether the loop was on for the merge
 
