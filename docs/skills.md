@@ -88,10 +88,18 @@ Browser checks go through one pinned helper, `src/qa-browser.ts` (Playwright
 is a devDependency of dev-loop; a human runs `npm run setup-qa` once to fetch
 the matching Chromium). It is localhost-only, and the agent is forbidden from
 installing or downloading anything mid-run: if the browser is unavailable the
-criterion is reported **unverified**, not worked around. Local dev at
-`localhost:3000` needs no login. It never manages the worktree itself — that
-lifecycle belongs to `ticket-to-pr`. Returns `pass`/`fail` plus concrete
-findings the implementer can act on.
+criterion is reported **unverified**, not worked around.
+
+**Auth is deliberately not handled.** Local dev at `localhost:3000` shows a
+login form (webtarsthree's client gate is a token in `localStorage`; the real
+login uses the employee auth service). The qa-agent must not forge tokens or
+use credentials, so UI behind the login is reported **unverified (needs
+human)** for a person to check. See CHANGELOG 2026-09-30 for how earlier runs
+got past it and why that stopped.
+
+The qa-agent never manages the worktree itself — that lifecycle belongs to
+`ticket-to-pr`. Returns `pass`/`fail` plus concrete findings the implementer
+can act on.
 
 ## Model policy
 

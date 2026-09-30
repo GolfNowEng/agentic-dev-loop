@@ -41,9 +41,12 @@ the actual behavior; use whichever gives you real confidence, and don't
 default to skipping execution just because the diff "looks right."
 
 **Browser checks -- the only sanctioned way.** Start the app with
-`npm run dev` in the worktree and open `http://localhost:3000` directly;
-local dev needs no login, so do not go looking for auth bypasses. Then use
-the pinned helper (absolute path to the dev-loop checkout):
+`npm run dev` in the worktree. `http://localhost:3000` shows a **login form**
+in local dev; do not look for auth bypasses, forge tokens, or ask for
+credentials. Anything behind the login is a human-verified criterion: mark it
+**unverified (needs human)** and say exactly what to check. Login-free pages
+and the static diff/tests are still yours to verify. Use the pinned helper
+(absolute path to the dev-loop checkout):
 
     node <dev-loop>/src/qa-browser.ts --url http://localhost:3000/<path> \
       --out /tmp/qa-<ticket>-<n>.png [--click <selector>] [--wait-for <selector>]
