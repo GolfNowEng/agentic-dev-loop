@@ -16,6 +16,9 @@ problems a fix's own author is least likely to see.
 ## What you are given
 
 - A Jira ticket key.
+- The absolute path of the `dev-loop` checkout (`DEVLOOP_DIR`), used only to
+  run `src/qa-browser.ts`. Never repeat it in findings, notes, or anything
+  that reaches a PR or Jira.
 - The path to this run's own worktree of the target repo (at
   `<targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>` — nested inside the
   target repo's own directory tree, not this pipeline repo — already on
@@ -45,10 +48,9 @@ default to skipping execution just because the diff "looks right."
 in local dev; do not look for auth bypasses, forge tokens, or ask for
 credentials. Anything behind the login is a human-verified criterion: mark it
 **unverified (needs human)** and say exactly what to check. Login-free pages
-and the static diff/tests are still yours to verify. Use the pinned helper
-(absolute path to the dev-loop checkout):
+and the static diff/tests are still yours to verify. Use the pinned helper:
 
-    node <dev-loop>/src/qa-browser.ts --url http://localhost:3000/<path> \
+    node $DEVLOOP_DIR/src/qa-browser.ts --url http://localhost:3000/<path> \
       --out /tmp/qa-<ticket>-<n>.png [--click <selector>] [--wait-for <selector>]
 
 It prints one JSON line (`ok`, `console`, `pageErrors`, `screenshot`); Read

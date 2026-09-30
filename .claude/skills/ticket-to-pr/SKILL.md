@@ -294,8 +294,11 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
    commit — already true if Phase 2/3 were followed in order).
 4. Spawn `qa-agent` (see `.claude/agents/qa-agent.md`) as a genuine
    fresh-context subagent — it must not be told how the fix was
-   implemented, only given the ticket and the diff. Pass it the ticket key
-   and the branch name. Each `qa-agent` invocation is one verify loop —
+   implemented, only given the ticket and the diff. Pass it the ticket key,
+   the branch name, and the absolute path of this `dev-loop` checkout (your
+   own working directory, from `pwd`) so it can run `src/qa-browser.ts`.
+   That path is for the subagent's tool calls only — never write it into
+   the PR, Jira, `qa_notes`, or `verdict.json`. Each `qa-agent` invocation is one verify loop —
    increment `verify_loops` when it runs, not when a fix is committed. If
    it reports issues, address them and invoke `qa-agent` again for another
    loop; do not paper over a real finding. **The 3rd `qa-agent` invocation
