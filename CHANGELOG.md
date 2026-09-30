@@ -6,6 +6,21 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-09-30 — qa-agent gets one pinned browser helper instead of improvising Playwright installs
+
+The qa-agent was told to "start the app and exercise it" but not how, so on
+TARS-1455 it found no Playwright in the worktree, reused a stray
+`/tmp/pwtest` install (`npm i playwright` from an earlier run), and burned
+turns hunting for a login bypass. Nothing authorized that; it was slow,
+unreproducible, and left Chromium builds scattered in the Playwright cache.
+
+**Fix**: `src/qa-browser.ts` (tested in `test/qa-browser.test.ts`) is the
+only sanctioned path: localhost-only, screenshot + console/page-error JSON.
+Playwright is pinned in dev-loop's devDependencies; one-time
+`npm run setup-qa` fetches Chromium. `qa-agent.md` now says: go straight to
+`localhost:3000` (no auth), use the helper, never install/download, and mark
+the criterion unverified if the browser is unavailable.
+
 ## 2026-09-30 — Landed tickets are never re-run, whatever their Jira status or whether the loop was on for the merge
 
 TARS-1452 landed (PR #455) and was merged while dev-loop was off. A GitHub

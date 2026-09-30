@@ -82,7 +82,14 @@ limited to static diff reading: for ACs that are visual, timing-sensitive,
 or otherwise hard to trust from a diff and its tests alone, it starts the
 app and exercises the behavior directly — and if it does, stopping it is
 its own hard gate, independent of `ticket-to-pr`'s end-of-run Cleanup (it
-started it, it stops it). It never manages the worktree itself — that
+started it, it stops it).
+
+Browser checks go through one pinned helper, `src/qa-browser.ts` (Playwright
+is a devDependency of dev-loop; a human runs `npm run setup-qa` once to fetch
+the matching Chromium). It is localhost-only, and the agent is forbidden from
+installing or downloading anything mid-run: if the browser is unavailable the
+criterion is reported **unverified**, not worked around. Local dev at
+`localhost:3000` needs no login. It never manages the worktree itself — that
 lifecycle belongs to `ticket-to-pr`. Returns `pass`/`fail` plus concrete
 findings the implementer can act on.
 

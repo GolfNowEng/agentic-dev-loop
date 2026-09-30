@@ -12,11 +12,13 @@
     "stats": "node scripts/stats.mjs",
     "loop": "node --env-file=.env src/main.ts",
     "reset-project": "node src/reset-cli.ts",
-    "reset-project:remote": "node --env-file=.env src/reset-cli.ts"
+    "reset-project:remote": "node --env-file=.env src/reset-cli.ts",
+    "setup-qa": "playwright install chromium"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
+    "playwright": "^1.63.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10",
-    "@types/node": "^26.2.0"
+    "vitest": "^4.1.10"
   }
 }
