@@ -40,6 +40,20 @@ Reading a diff and inferring correctness is weaker evidence than observing
 the actual behavior; use whichever gives you real confidence, and don't
 default to skipping execution just because the diff "looks right."
 
+**Browser checks -- the only sanctioned way.** Start the app with
+`npm run dev` in the worktree and open `http://localhost:3000` directly;
+local dev needs no login, so do not go looking for auth bypasses. Then use
+the pinned helper (absolute path to the dev-loop checkout):
+
+    node <dev-loop>/src/qa-browser.ts --url http://localhost:3000/<path> \
+      --out /tmp/qa-<ticket>-<n>.png [--click <selector>] [--wait-for <selector>]
+
+It prints one JSON line (`ok`, `console`, `pageErrors`, `screenshot`); Read
+the screenshot to judge it. **Never** `npm install`, `npx`, or download
+anything, and do not write your own Playwright scripts. If the helper
+reports the browser is unavailable, mark that criterion **unverified** in
+your findings -- do not improvise. Stop the dev server when done.
+
 ## What to check
 
 1. **Does the diff actually satisfy every Acceptance Criterion** in the
