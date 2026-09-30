@@ -8,9 +8,10 @@ diagnose.
 
 ## 2026-09-30 — Landed tickets are never re-run, whatever their Jira status or whether the loop was on for the merge
 
-TARS-1452 landed (PR #455) and was merged while dev-loop was off. Jira's
-merge automation moved it from Code Review to Development Complete (and a
-human later to Deployed to INT). `pollJql.dev` only excludes Blocked and
+TARS-1452 landed (PR #455) and was merged while dev-loop was off. A GitHub
+workflow/automation on PR merge moved it from Code Review to Development
+Complete (it runs 35s after the merge and is attributed to the user account
+in Jira's changelog; a human later moved it to Deployed to INT). `pollJql.dev` only excludes Blocked and
 Code Review, so the ticket matched again and was re-picked over and over;
 each run noticed the work was done, asked a question instead of writing a
 verdict, and looped. Reconcile never caught it either: it only examined

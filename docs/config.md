@@ -279,8 +279,8 @@ isn't given an unnecessary payload.
 
 ## Per-poll merge-reconciliation pass and landed-ticket guard
 
-Merges happen while dev-loop is off, and Jira's own merge automation then
-moves the ticket out of Code Review (e.g. to Development Complete), so
+Merges happen while dev-loop is off, and a GitHub workflow/automation on PR
+merge then moves the ticket out of Code Review (e.g. to Development Complete), so
 neither decision below looks at Jira status.
 
 **Reconcile.** At the top of every poll cycle (before `runLoopIteration`),
