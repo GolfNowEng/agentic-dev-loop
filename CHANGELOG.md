@@ -30,6 +30,10 @@ handling and the qa-agent must report anything behind the login as
 **unverified (needs human)**. Until an approved mechanism exists, login-gated
 UI criteria get no automated browser evidence.
 
+`ticket-to-pr` now marks the matching `qa_notes` entry
+`[Not verified by automation]`, so those criteria are visible to the human
+reviewer in Jira's QA Notes and the PR body instead of only in `progress.jsonl`.
+
 ## 2026-09-30 — Landed tickets are never re-run, whatever their Jira status or whether the loop was on for the merge
 
 TARS-1452 landed (PR #455) and was merged while dev-loop was off. A GitHub

@@ -136,3 +136,6 @@ falling back to a terse `PR: <url>` / `Verify loops: N` stub when absent
 or empty. The PR body's `## QA Notes` section carries this same list (numbered,
 matching `push-branch`'s format); the earlier pass/fail summary was removed
 from the PR and lives only in `verdict.json` / `progress.jsonl`.
+When `qa-agent` reports an AC as **unverified (needs human)** (e.g. UI behind
+the login), that AC's first `qa_notes` entry is prefixed
+`[Not verified by automation] ` so it survives into Jira and the PR.
