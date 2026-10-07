@@ -6,6 +6,22 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-10-07 — ticket-to-pr resumes prior work instead of restarting; bounces report push state truthfully
+
+TARS-1490 bounced `verify_rejected` after its 3 verify loops with 4 good
+commits on `TARS-1490-sidebar-selection-after-create`. Re-running it would
+have failed at `git worktree add -b` (branch exists) or, worse, restarted from
+`origin/master` and discarded the work. The bounce comment also said the
+branch was "pushed" when it only existed locally (a bounce never pushes), so
+the work looked safer than it was.
+
+**Fix** (skill only, no `src/` change): a "Resume" section in `ticket-to-pr`.
+An existing `<TICKET>-*` branch with commits ahead of the default branch is
+reused; the newest research-loop spec stays the only work order; Plan/Red
+cover only what's missing (an AC already satisfied by earlier commits is not
+`spec_ambiguous`); `verify_loops` restarts at 0. Bounce details must verify
+push state with `git ls-remote` before saying "pushed".
+
 ## 2026-09-30 — qa-agent gets one pinned browser helper instead of improvising Playwright installs
 
 The qa-agent was told to "start the app and exercise it" but not how, so on

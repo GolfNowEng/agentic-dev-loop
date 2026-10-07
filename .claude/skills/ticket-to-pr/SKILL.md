@@ -158,6 +158,75 @@ pushed and PR'd.)
 worktree as the working directory unless stated otherwise. See "Cleanup"
 below for removing it once the run concludes.
 
+### Resume: continue prior work instead of starting over
+
+A ticket can be picked up again after a bounce (e.g. `verify_rejected`) with
+its earlier commits still sitting in a `<TICKET>-*` branch. **Do not start
+that work from scratch, and do not let `git worktree add -b` fail on the
+existing name.** Before the `worktree add` above, after the `fetch`:
+
+1. **Look for prior work.** List `<TICKET>-*` branches, local
+   (`git branch --list '<TICKET>-*'`) and remote
+   (`git branch -r --list 'origin/<TICKET>-*'`) in the checkout the worktree
+   is created from. A branch only counts as prior work if it has commits not
+   on `origin/<defaultBranch>` (`git rev-list --count
+   origin/<defaultBranch>..<branch>` > 0); a branch with zero commits ahead
+   is stale and is ignored (never reused, never deleted). Don't change the
+   existing branch's name: when prior work exists, `<slug>` is that
+   branch's, not a freshly derived one.
+2. **None found → fresh run**, exactly the `-b <TICKET>-<slug>
+   origin/<defaultBranch>` command above.
+3. **Exactly one found → resume.** Create the worktree on the existing
+   branch with no `-b` and no new base (`git worktree add <path>
+   <branch>`). If both a local and an `origin/` copy exist, the local one
+   must contain the remote one (`git merge-base --is-ancestor
+   origin/<branch> <branch>`); if the two have diverged, or `worktree add`
+   fails (e.g. branch checked out elsewhere), bounce `env_setup` with the
+   branch names and both tips — never pick one by guessing.
+   **More than one prior-work branch → bounce `env_setup`** naming them.
+4. **Bring it up to date.** If `origin/<defaultBranch>` has moved, `git merge
+   origin/<defaultBranch>` into the branch (merge, not rebase — the branch's
+   history may already be pushed). A conflict bounces `merge_conflict`.
+5. **Record it.** Write a `progress.jsonl` note: `resume: true`, the branch,
+   its tip SHA, and `git log --oneline origin/<defaultBranch>..HEAD`.
+
+What resuming changes in the phases (everything not listed is unchanged):
+
+- **The newest research-loop spec (Phase 0 step 2) is the only work
+  order.** Earlier commits are prior work against an older spec, not
+  authority: where the new spec differs, the new spec wins, and existing
+  code may need changing, not just extending. Still never relitigate it.
+- **Phase 1 (Plan)**: first run the target repo's tests on the branch as it
+  is and diff each AC against what the commits already cover. Plan only the
+  remaining work: ACs with no test yet, tests the new spec adds or changes,
+  and implementation still missing. Do not rewrite passing tests or
+  reimplement working code.
+- **Phase 2 (Red)**: only for ACs/tests that are new or changed. The
+  baseline is the branch tip, not `origin/<defaultBranch>`, so an AC whose
+  test already passes there because earlier commits implemented it is
+  *expected*: note it as already satisfied in `progress.jsonl`; do **not**
+  bounce `spec_ambiguous`. The "passes on unmodified code" bounce still
+  applies to a test you just wrote for a new/changed requirement. Set
+  `red_confirmed: true` if the branch already carries the original Red
+  commit (`test(<TICKET>): add failing tests …`) and any new tests also
+  failed for the right reason.
+- **Phase 4 (Verify)**: `verify_loops` counts **this run's** `qa-agent`
+  invocations, starting at 0. The 3-loop budget is per run, so a resumed
+  run gets a fresh 3. Prior runs' loop counts don't carry over. Give
+  `qa-agent` the research-loop spec's current text, and tell it which
+  defects earlier runs already reported (from the ticket's bounce comments)
+  so it checks those specifically.
+- **Phase 5 (PR)**: one PR for the whole branch, not just this run's
+  commits.
+
+**Say truthfully where the work lives.** Whenever a run bounces with
+commits on the branch, the bounce `detail` names the branch and states
+whether it is on `origin` — check with `git ls-remote --heads origin
+<branch>`, don't assume. Never write "pushed" unless that command returned
+the branch. A bounce does not push (nothing unreviewed goes to the remote),
+so the usual wording is "committed locally on `<branch>`, not pushed" with
+the tip SHA.
+
 ## Phases
 
 Each phase's `progress.jsonl` events use the phase name shown.

@@ -38,6 +38,15 @@ working in it manually is never affected by a background run:
    bounces `env_setup` rather than carrying its own copy. Writes
    `verdict.json`.
 
+**Resume, not restart.** If a `<TICKET>-*` branch already has commits ahead
+of the default branch (e.g. from an earlier `verify_rejected` bounce), the
+run creates its worktree *on that branch* instead of a fresh one, merges the
+default branch in, plans only the work the newest spec still needs, and gets
+a fresh 3-loop verify budget. Ambiguous cases (several candidate branches,
+local/remote divergence) bounce `env_setup` rather than guess. A bounce never
+pushes, and its `detail` must say whether the branch is on `origin`
+(`git ls-remote`), never just "pushed". See the skill's "Resume" section.
+
 Core rule: this skill **never edits the spec**. Any ambiguity, contradiction,
 or oversized scope is `research-loop`'s problem to fix upstream — this skill
 bounces with evidence instead of guessing.
