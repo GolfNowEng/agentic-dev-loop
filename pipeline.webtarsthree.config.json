@@ -15,7 +15,7 @@
       "qaNotesField": "customfield_14226"
     }
   },
-  "ceilings": { "maxRunsPerDay": 100, "maxCostPerRunUsd": 20, "runTimeoutMin": 45 },
+  "ceilings": { "maxRunsPerDay": 100, "maxCostPerRunUsd": 20, "runTimeoutMin": 75 },
   "autoPromoteLabel": "auto-promote",
   "targetRepo": {
     "url": "git@github.com:fandango/webtarsthree.git",
