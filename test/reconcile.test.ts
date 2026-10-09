@@ -223,6 +223,53 @@ describe("reconcileMergedTickets", () => {
     });
   });
 
+  it("when the recorded PR was closed unmerged but another PR for the ticket merged (TARS-1487: #470 closed, #476 merged), closes the Issue and removes pipeline:dev", async () => {
+    await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
+      const jiraClient = makeJira();
+      const githubClient = makeGh();
+      const execGhFindMergedPr = vi.fn(async () => ({ url: "https://github.com/org/repo/pull/12", mergedAt: "2026-01-03T04:05:06Z" }));
+      const result = await reconcileMergedTickets({
+        jiraClient, githubClient, config: makeConfig(), runsLogPath, now: NOW,
+        execGhPrView: vi.fn(async () => JSON.stringify({ state: "CLOSED", mergedAt: null })),
+        execGhFindMergedPr,
+      });
+
+      expect(execGhFindMergedPr).toHaveBeenCalledWith("PROJ-1");
+      expect(result).toEqual({ checked: 1, closed: ["PROJ-1"], errors: [] });
+      expect(githubClient.addComment).toHaveBeenCalledWith(42, expect.stringContaining("https://github.com/org/repo/pull/12"));
+      expect(githubClient.closeIssue).toHaveBeenCalledWith(42, "completed");
+      expect(jiraClient.removeLabel).toHaveBeenCalledWith("PROJ-1", "pipeline:dev");
+    });
+  });
+
+  it("closed-unmerged PR with no other merged PR for the ticket is left alone", async () => {
+    await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
+      const jiraClient = makeJira();
+      const githubClient = makeGh();
+      const result = await reconcileMergedTickets({
+        jiraClient, githubClient, config: makeConfig(), runsLogPath, now: NOW,
+        execGhPrView: vi.fn(async () => JSON.stringify({ state: "CLOSED", mergedAt: null })),
+        execGhFindMergedPr: vi.fn(async () => null),
+      });
+
+      expect(result).toEqual({ checked: 1, closed: [], errors: [] });
+      expect(githubClient.closeIssue).not.toHaveBeenCalled();
+      expect(jiraClient.removeLabel).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not search for another PR while the recorded PR is still open", async () => {
+    await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
+      const execGhFindMergedPr = vi.fn(async () => null);
+      await reconcileMergedTickets({
+        jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, now: NOW,
+        execGhPrView: vi.fn(async () => open()),
+        execGhFindMergedPr,
+      });
+      expect(execGhFindMergedPr).not.toHaveBeenCalled();
+    });
+  });
+
   it("is a safe no-op when runs.jsonl has no landed tickets", async () => {
     await withRunsLog([makeRunLogLine({ outcome: "bounced", pr: null, failure_category: "spec_ambiguous" })], async (runsLogPath) => {
       const execGhPrView = vi.fn();

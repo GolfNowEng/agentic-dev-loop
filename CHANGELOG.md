@@ -6,6 +6,26 @@ Newest first. Not every commit needs an entry — only ones that change
 what the loop is capable of or fix a failure mode a human had to
 diagnose.
 
+## 2026-10-08 — Reconcile finds the merged PR when the recorded one was closed unmerged
+
+TARS-1487: dev-loop landed #470, which was later closed unmerged; the work
+merged as #476 (not opened by dev-loop). Reconcile only checked the recorded
+PR (`mergedAt: null` -> silently skipped), so mirror Issue #466 stayed open,
+`pipeline:dev` stayed on the ticket, and it was re-picked and bounced
+("already implemented and merged").
+
+**Fix**: when the recorded PR is `CLOSED` and unmerged, reconcile calls the new
+optional `execGhFindMergedPr` (`gh pr list --state merged --search <KEY>`,
+filtered to PRs whose head branch or title contains the key as a whole token,
+so TARS-148 never matches TARS-1487). If one is found, the usual close
+comment + Issue close + label removal run, citing that PR. Open PRs are never
+searched. Wired in `main.ts` via `realExecGhFindMergedPr(config.github.repo)`.
+
+Tests: 3 new in `test/reconcile.test.ts`.
+
+**Cleanup**: #466 / TARS-1487's `pipeline:dev` label still need closing/removal
+(the new pass does it on the next poll once dev-loop restarts).
+
 ## 2026-10-07 — ticket-to-pr resumes prior work instead of restarting; bounces report push state truthfully
 
 TARS-1490 bounced `verify_rejected` after its 3 verify loops with 4 good

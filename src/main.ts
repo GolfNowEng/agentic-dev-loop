@@ -27,7 +27,7 @@ import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./
 import { RealGitHubClient, realExecGh } from "./github-client.ts";
 import { runLoopIteration } from "./loop-runner.ts";
 import type { RunSkillFn } from "./loop-runner.ts";
-import { reconcileMergedTickets, realExecGhPrView } from "./reconcile.ts";
+import { reconcileMergedTickets, realExecGhPrView, realExecGhFindMergedPr } from "./reconcile.ts";
 import { countRunsToday } from "./runs-log.ts";
 import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.ts";
 import { extractUsage } from "./claude-usage.ts";
@@ -479,6 +479,7 @@ async function main(): Promise<void> {
         config,
         runsLogPath,
         execGhPrView,
+        execGhFindMergedPr: realExecGhFindMergedPr(config.github.repo),
         reconciled,
       });
       if (reconcileResult.closed.length > 0) {
