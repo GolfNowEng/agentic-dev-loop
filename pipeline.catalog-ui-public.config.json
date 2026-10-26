@@ -3,12 +3,12 @@
     "triggerLabel": "pipeline:research",
     "handoffLabel": "pipeline:dev",
     "repoLabel": "repo:catalog-ui-public",
-    "claimStatus": { "from": "___", "to": "___" },
+    "claimStatus": { "from": "To Do", "to": "In Progress" },
     "pollJql": {
-      "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"___\" ORDER BY created ASC",
+      "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"To Do\" ORDER BY created ASC",
       "dev": "labels = \"{label}\" AND labels = \"{repoLabel}\" ORDER BY created ASC"
     },
-    "statusNames": { "bounced": "___", "prOpen": "___" }
+    "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" }
   },
   "ceilings": { "maxRunsPerDay": 100, "maxCostPerRunUsd": 50, "runTimeoutMin": 120 },
   "autoPromoteLabel": "auto-promote",

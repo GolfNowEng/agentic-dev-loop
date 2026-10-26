@@ -5,7 +5,7 @@
     "repoLabel": "repo:webtarsthree",
     "claimStatus": { "from": "To Do", "to": "In Progress" },
     "pollJql": {
-      "refine": "labels = \"{label}\" AND status = \"To Do\" ORDER BY created ASC",
+      "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"To Do\" ORDER BY created ASC",
       "dev": "labels = \"{label}\" ORDER BY created ASC"
     },
     "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" }
