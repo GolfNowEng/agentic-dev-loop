@@ -121,6 +121,16 @@ Confirmed dev-loop needed no fix on its comment-*writing* side —
 `JiraClient.addComment`/`GitHubClient.addComment` and `loop-runner.ts` are
 already create-only there, with no edit/PATCH path anywhere in that repo.
 
+**Code-level backstop**: a `PreToolUse` hook,
+`.claude/hooks/block-comment-edit-in-place.sh` (checker:
+`scripts/check-comment-edit-in-tool-input.ts`), denies any
+`addCommentToJiraIssue` call carrying a `commentId`, and any `gh api ...
+-X PATCH` on an existing issue comment or `gh issue comment --edit-last`
+— mirroring `block-secret-comments.sh`'s fail-closed contract (an
+unverifiable call is denied, not allowed through). Not a replacement for
+`SKILL.md`'s "always post a new comment" prose, just the real enforcement
+behind it, same relationship as the existing secret-redaction hooks.
+
 **Fix**: `ticket-refine`'s `SKILL.md` — "Setup: idempotent re-refinement"
 now says the title-prefix match is for reading prior context only, never
 an edit target; "Ticket content protocol" item 5 and the "Bouncing"
