@@ -563,11 +563,10 @@ No per-comment judgment call beyond this list — if content doesn't fit one
 of these four categories, it goes to GitHub, full stop.
 
 **No mandatory @-mention.** Earlier revisions of this protocol required
-@-mentioning `jira.mentionAccountId` on every Jira comment; confirmed
+@-mentioning a configured Jira accountId on every Jira comment; confirmed
 excessive in practice (real example: TARS-1462's Jira comment,
-2026-09-16). Comments no longer @-mention anyone. `jira.mentionAccountId`
-itself stays in config as an unused field for now — removing it is its
-own small cleanup, not bundled here.
+2026-09-16). Comments no longer @-mention anyone. The now-unused
+`jira.mentionAccountId` config field was removed (see `CHANGELOG.md`).
 
 **Comment title convention, both outcomes:**
 

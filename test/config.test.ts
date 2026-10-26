@@ -19,7 +19,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
       triggerLabel: "pipeline:research",
       handoffLabel: "pipeline:dev",
       repoLabel: "repo:webtarsthree",
-      mentionAccountId: "user-123",
       claimStatus: { from: "To Do", to: "In Progress" },
       pollJql: {
         refine: 'labels = "{label}" ORDER BY created ASC',
@@ -211,14 +210,6 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
     });
     const missing = findPlaceholders(config);
     expect(missing).toContain("jira.repoLabel");
-  });
-
-  it("lists jira.mentionAccountId when it's still set to the placeholder value", () => {
-    const config = makeConfig({
-      jira: { ...makeConfig().jira, mentionAccountId: "___" },
-    });
-    const missing = findPlaceholders(config);
-    expect(missing).toContain("jira.mentionAccountId");
   });
 
   it("lists github.repo when it's still set to the placeholder value", () => {

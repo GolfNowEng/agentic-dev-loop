@@ -205,9 +205,10 @@ comment — **everything else goes to the GitHub Issue**: recon findings,
 devil's-advocate attack findings, verifier results, working/interpretation
 notes, and bounce evidence detail not itself one of the four Jira-worthy
 kinds. Phase 1 introduced a requirement that every Jira comment under this
-rule @-mention `jira.mentionAccountId` (`Config.jira.mentionAccountId`);
-a later change (see `CHANGELOG.md`) dropped that requirement as excessive
-in practice — `jira.mentionAccountId` stays in config, unused, for now.
+rule @-mention a configured Jira accountId; a later change (see
+`CHANGELOG.md`) dropped that requirement as excessive in practice, and
+the now-unused `jira.mentionAccountId` config field was removed outright
+(see `CHANGELOG.md`'s most recent entry) rather than left dead.
 See `SKILL.md`'s "Ticket content protocol" for the full routing rule
 (items 1-8) and Step 0.5 for how the GitHub Issue is found/renamed each
 run.

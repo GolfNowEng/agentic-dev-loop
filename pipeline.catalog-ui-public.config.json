@@ -3,7 +3,6 @@
     "triggerLabel": "pipeline:research",
     "handoffLabel": "pipeline:dev",
     "repoLabel": "repo:catalog-ui-public",
-    "mentionAccountId": "___",
     "claimStatus": { "from": "___", "to": "___" },
     "pollJql": {
       "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"___\" ORDER BY created ASC",

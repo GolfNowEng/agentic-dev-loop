@@ -85,12 +85,6 @@ that still applies.
   `.pipeline/<slug>/repo` — faster, and skips a redundant clone since the
   checkout's `origin` is already the real remote. Omit on a machine with no
   local checkout yet; the clone-based flow is used instead.
-- `jira.mentionAccountId` — Jira accountId to @-mention in every Jira-worthy
-  comment this repo writes (per the routing rule; see `SKILL.md`'s "Ticket
-  content protocol"). Per-project config field, not an env var, since the
-  person to mention is a per-project decision (who owns this project's
-  tickets), not a per-machine/per-runner-identity setting. Similar to
-  `JIRA_ASSIGNEE_ACCOUNT_ID` in purpose but configured separately.
 - `github.repo` — `"owner/repo"` shorthand (e.g. `"fandango/webtarsthree"`)
   passed directly to `gh`'s own `--repo` flag. Phase 1 of the Jira-label-trigger
   design (see `docs/future-enhancements.md`): this pipeline mirrors every
@@ -151,8 +145,8 @@ Every Jira-specific value above starts as the literal placeholder string
 `assertNoPlaceholders()` in `src/config.ts` detect leftover placeholders —
 `RealJiraClient` refuses to make a Jira call while any remain. Filling these
 in for a real project means: confirming the three pipeline label strings
-(`triggerLabel`, `handoffLabel`, `repoLabel`), filling in `mentionAccountId`,
-and checking the *child ticket* workflow for real status names.
+(`triggerLabel`, `handoffLabel`, `repoLabel`) and checking the *child
+ticket* workflow for real status names.
 
 ## Adding a new project
 

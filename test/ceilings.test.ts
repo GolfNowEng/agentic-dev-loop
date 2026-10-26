@@ -8,7 +8,6 @@ function makeConfig(overrides: Partial<Config["ceilings"]> = {}): Config {
       triggerLabel: "pipeline:research",
       handoffLabel: "pipeline:dev",
       repoLabel: "repo:org-repo",
-      mentionAccountId: "user-123",
       claimStatus: { from: "Backlog", to: "In Progress" },
       pollJql: { refine: 'labels = "{label}"', dev: 'labels = "{label}"' },
       statusNames: { bounced: "Blocked", prOpen: "In Progress" },

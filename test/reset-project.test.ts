@@ -11,7 +11,6 @@ function makeConfig(targetRepoPath?: string): Config {
       triggerLabel: "pipeline:research",
       handoffLabel: "pipeline:dev",
       repoLabel: "repo:webtarsthree",
-      mentionAccountId: "user-123",
       claimStatus: { from: "To Do", to: "In Progress" },
       pollJql: {
         refine: 'labels = "{label}" ORDER BY created ASC',

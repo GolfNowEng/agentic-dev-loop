@@ -178,16 +178,6 @@ export interface Config {
      * field (see dev-loop's CHANGELOG.md, 2026-09-16).
      */
     repoLabel: string;
-    /**
-     * Jira accountId to @-mention in every Jira-worthy comment this repo
-     * writes (per the routing rule -- see SKILL.md's "Ticket content
-     * protocol"). Sourced the same way JIRA_ASSIGNEE_ACCOUNT_ID/
-     * assigneeAccountIdFromEnv already works in jira-client.ts, but this
-     * is a config field, not an env var, since the person to mention is a
-     * per-project decision (who owns this project's tickets), not a
-     * per-machine/per-runner-identity setting.
-     */
-    mentionAccountId: string;
     claimStatus: {
       from: string;
       to: string;
