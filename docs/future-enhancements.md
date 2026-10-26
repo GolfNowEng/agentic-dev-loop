@@ -590,6 +590,120 @@ dev-loop pipeline-behavior fix)**: the dev-loop bounce-loop bug (a
 bounced ticket re-polling and re-bouncing itself every ~5s) is fixed —
 `pollJql.dev` now excludes tickets already at `statusNames.bounced`.
 
+## Size-score enforcement (cross-run growth cap, Scope/Ground mismatch check, replacing checklist items 4/8) + devils-advocate/qa-agent checklist expansion (Part 4)
+
+**Idea**: this entry covers everything that was *cut* from the verifier-
+agent size-scoring work to ship a safe MVP first (see `CHANGELOG.md` for
+the MVP itself — schema + pure shadow telemetry: `size_trajectory` logged
+on every passing run, nothing reads it, items 4/8 of the Definition-of-
+ready checklist untouched). None of the below is built. All of it requires
+its own design pass and its own adversarial review before landing — do not
+build any of it off this entry's sketch alone.
+
+**Why cut from the MVP**: a full spec covering all of this was drafted
+(`.claude/reviews/part3-4-spec-draft.md`, two revisions) and put through
+two full rounds of 3-reviewer adversarial review. Both rounds found
+critical, non-converging issues — most importantly, that every version
+kept bundling genuinely-inert telemetry changes together with live,
+verdict-affecting enforcement changes while claiming the whole thing was
+"pure telemetry" (the growth cap and the Scope/Ground mismatch check are
+both verdict-affecting; shipping them under a shadow-mode banner that says
+"the score affects nothing" is a real contradiction, confirmed
+independently by two different reviewer seats across both rounds). Rather
+than attempt a third patch-the-holes revision, scope was cut to an MVP
+that changes zero behavior (by construction, no reviewer could find a
+contradiction in something that doesn't affect any decision), with
+everything that *acts* on the score deferred here. See
+`.claude/reviews/part3-4-spec-draft.md` for the full rejected spec and the
+specific findings, if resuming this work later.
+
+**Deferred items**:
+
+1. **Cross-run growth cap**: a ticket that keeps getting re-refined
+   (re-pickup after bounce or human comment) and keeps growing in scope
+   across runs should eventually be force-bounced `too_large` rather than
+   cycling indefinitely. Not yet scoped: what a genuine hard cap looks
+   like (every revision drafted so far left runs 1-3 fully uncapped, had
+   no defined behavior past run 4, and never caught a ticket that's
+   "stable but oversized" with low per-run growth — flagged as not
+   actually a cap, independently, by both rounds of review); whether
+   "4th run" or "≥4th run" is the trigger; how `reset-project` should
+   interact with it (does resetting a project's run history also reset
+   the cap counter — almost certainly yes, but not verified against
+   `docs/reset.md`'s actual delete list).
+2. **Scope/Ground mismatch check**: give `verifier-agent` Ground's own
+   recon findings (file/subsystem list) alongside the synthesized draft,
+   so it can catch Scope's self-reported file/subsystem count
+   undercounting what Ground actually touched — a plausibility check on
+   the size-score inputs themselves, not just the score. Not yet scoped:
+   how big a mismatch triggers what (bounce vs. advisory note); this was
+   flagged as only solving the egregious-undercount case, not subtler
+   self-grading — the self-grading problem (the score's own dimensions 2/3
+   are built from Scope's self-reported counts) is not actually fixed by
+   this check, only narrowed. Needs a harder look at whether the score
+   should source file/subsystem counts from something other than Scope's
+   own self-report before this is worth building.
+3. **Replacing checklist items 4 (qualitative size bound) and 8 (flat
+   ~10-AC threshold) with the score as a gate**: once enough shadow-mode
+   `size_trajectory` data exists across real runs (see the Checkpoint
+   report below), decide whether the mechanical score is actually a
+   better signal than the two checks it would replace, and if so, design
+   the actual gate (what score range bounces `too_large`, how it degrades
+   gracefully for the first N tickets before enough history exists to
+   trust it). This is the whole reason the MVP computes and logs the
+   score without acting on it — a Checkpoint report reading the
+   accumulated shadow data is the dependency for this item, not a
+   calendar date.
+4. **Part 4 — devils-advocate-agent angles 5-6 and qa-agent items 6-9**:
+   new checklist items for failure classes caught only by post-merge
+   GitHub Copilot review on real tickets TARS-1554/1565 (unbounded
+   memory/canvas allocation, PNG alpha-channel loss, a flaky
+   origin/master-dependent test, unmemoized re-renders, missing
+   `role="alert"`, two responsive-breakpoint bugs). Needs: a full rewrite
+   of `devils-advocate-agent.md`'s "four angles" framing (its own text and
+   Output section are written as "four angles," not just missing two new
+   bullets — a straight append doesn't fit without contradicting the
+   file's own "don't hunt for a fifth angle" instruction); `qa-agent.md`
+   (dev-loop) renumbered items 6-9 with item 9 scoped to layout/CSS diffs
+   only (not every diff); and a held-out eval against real historical
+   tickets to calibrate false-positive rate before trusting the new
+   checks live — not yet scoped: a real, enforceable cost ceiling for
+   that eval (both drafted revisions had an unenforceable one — checked
+   only between tickets, not per-ticket, and Agent-tool calls don't report
+   cost the way `claude -p --output-format json` does, so no real
+   measurement source was ever named) and a genuine dry-run guarantee (the
+   subagents are defined with "Tools: All tools" — invoking them directly
+   to bypass the host skill's orchestration doesn't by itself prevent a
+   live write without an explicit tool restriction).
+5. **`runs/<project>.jsonl` / `.pipeline/<slug>/runs/` retention policy**:
+   both grow unboundedly today (append-only, gitignored, never pruned).
+   Flagged in the first review round and never addressed in either spec
+   revision. Not yet scoped: age-based vs. count-based retention, whether
+   `.pipeline/` scratch dirs need the same treatment as `runs/`'s audit
+   log, and whether this is really specific to the size-score work at all
+   (it predates it and would be worth fixing independently either way).
+
+## Test-spec rigor for stateful ACs (ticket-refine)
+
+**Idea**: for ACs on stateful components, have Synthesize build a
+trigger-by-trigger matrix: list every trigger that changes or clears the
+state, and require one named test per trigger, walked one cell at a time
+as the final self-heal check (an empty cell is a defect). Related ideas:
+move the test-assertion rules a human supplied after a bounce into the
+skill text, and when only test-spec defects remain with the product
+design settled, resume Synthesize from the existing `draft-spec.md`
+instead of bouncing. Any change here should add a check or remove waste,
+never relax a gate: accuracy first, slower is fine.
+
+**Why**: `TARS-1495` bounced `spec_ambiguous` four times; the last two
+were test-spec defects (the self-heal cap ran out before they were all
+found), and `TARS-1440` hit the same cap earlier. It landed `ready` after
+a human gave it a discrimination principle plus rules A-E (Jira comment
+1051952), then a trigger matrix, resume-from-draft and 2 extra cycles
+(comment 1052014). Not vetted: that is one ticket, the human's comment
+spelled out the matrix shape, and the bounce counts come from the runs
+log `detail` fields only. Look into it properly when picking this up.
+
 ## GitHub Issue + Projects board as pipeline state owner (Jira = product/planning only)
 
 **Idea**: move pipeline execution state out of Jira and into GitHub. Jira
