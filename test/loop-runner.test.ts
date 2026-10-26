@@ -192,6 +192,31 @@ describe("runLoopIteration", () => {
     expect(lines).toHaveLength(0);
   });
 
+  it("claim-error: when claim() throws (e.g. a Jira transition screen's required field), the loop skips the ticket and does not crash the process", async () => {
+    const jiraClient = makeMockJiraClient({
+      pollOldestMatching: vi.fn(async () => makeTicket({ key: "PROJ-142" })),
+      claim: vi.fn(async () => {
+        throw new Error('400 Bad Request: "Field \'Story Points\' is required."');
+      }),
+    });
+    const runSkill: RunSkillFn = vi.fn(async () => makeRunSkillResult());
+
+    let result;
+    await expect(
+      (async () => {
+        result = await runLoopIteration(makeDeps({ jiraClient, runSkill }));
+      })(),
+    ).resolves.not.toThrow();
+
+    expect(result!.action).toBe("claim-error");
+    expect(result!.ticket).toBe("PROJ-142");
+    expect(result!.jiraSyncError).toContain("Story Points");
+    expect(runSkill).not.toHaveBeenCalled();
+    // No run should have been logged for a ticket that was never claimed.
+    const lines = await readRunLog(runsLogPath).catch(() => []);
+    expect(lines).toHaveLength(0);
+  });
+
   it("assigns the ticket to the configured human when it's currently unassigned", async () => {
     const jiraClient = makeMockJiraClient({
       pollOldestMatching: vi.fn(async () => makeTicket({ key: "PROJ-142", assignee: null })),

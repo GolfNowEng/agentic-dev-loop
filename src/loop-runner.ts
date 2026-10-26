@@ -66,6 +66,7 @@ export type RunSkillFn = (ticket: JiraTicket) => Promise<RunSkillResult>;
 export type LoopIterationAction =
   | "empty-queue"
   | "claim-raced"
+  | "claim-error"
   | "processed"
   | "paused-ceiling";
 
@@ -76,13 +77,17 @@ export interface LoopIterationResult {
   /** Present when action is "paused-ceiling". */
   pauseReason?: string;
   /**
-   * Present if the post-verdict Jira write (swapLabel/transitionStatus)
-   * threw -- e.g. a malformed request, a transient API error. The run
-   * itself still completed and is still logged; this only means Jira's
-   * state may now be out of sync with runs.jsonl (the ticket may still
-   * sit at its old label/status). Surfaced so a caller can alert a human,
-   * but never thrown -- one Jira write failing must not kill the loop or
-   * discard an otherwise-real, already-completed run.
+   * A Jira write failure message, surfaced so a caller can alert a human,
+   * but never thrown. Two distinct cases share this field:
+   *   - action "processed": the post-verdict write (swapLabel/
+   *     transitionStatus) threw. The run itself still completed and is
+   *     still logged; this only means Jira's state may be out of sync
+   *     with runs.jsonl (the ticket may still sit at its old label/status).
+   *   - action "claim-error": claim() itself threw, before any run
+   *     happened -- nothing was logged for this ticket at all; see
+   *     "claim-error" above.
+   * Either way, one Jira write failing must never kill the loop or discard
+   * an otherwise-real, already-completed run.
    */
   jiraSyncError?: string;
   /**
@@ -145,11 +150,30 @@ export async function runLoopIteration(
     return { action: "empty-queue", ...skipped };
   }
 
-  const claimed = await jiraClient.claim(
-    ticket.key,
-    config.jira.claimStatus.from,
-    config.jira.claimStatus.to,
-  );
+  // A claim() throw (as opposed to its clean `false` lost-race return) is a
+  // real Jira-side error -- e.g. a transition's screen has a required field
+  // claim() doesn't send (see docs/future-enhancements.md's claim()-doesn't-
+  // send-required-screen-fields entry). Left uncaught, this would propagate
+  // out of runLoopIteration and kill the entire unattended poll loop over
+  // one bad ticket. Caught here and reported as a distinct "claim-error"
+  // action instead -- this does not fix the underlying Jira metadata gap
+  // (still deferred), it only stops that gap from taking down the process.
+  let claimed: boolean;
+  try {
+    claimed = await jiraClient.claim(
+      ticket.key,
+      config.jira.claimStatus.from,
+      config.jira.claimStatus.to,
+    );
+  } catch (err) {
+    const claimError = err instanceof Error ? err.message : String(err);
+    return {
+      action: "claim-error",
+      ticket: ticket.key,
+      jiraSyncError: claimError,
+      ...skipped,
+    };
+  }
   if (!claimed) {
     return { action: "claim-raced", ticket: ticket.key, ...skipped };
   }

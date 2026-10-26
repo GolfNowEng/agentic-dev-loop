@@ -24,8 +24,12 @@ export type PollAction =
  * had the identical zero-delay re-poll after a "processed" result.
  *
  * "claim-raced" continues immediately (a claim race should retry right
- * away). "empty-queue" sleeps for `pollIntervalSec` (unchanged). "paused-
- * ceiling" always exits, regardless of `once`.
+ * away). "claim-error" sleeps for `pollIntervalSec` instead -- unlike a
+ * race (which resolves itself), a claim() throw is a persistent Jira-side
+ * error (e.g. a transition's required screen field); retrying immediately
+ * would hot-loop on the same broken ticket every iteration. "empty-queue"
+ * sleeps for `pollIntervalSec` (unchanged). "paused-ceiling" always exits,
+ * regardless of `once`.
  */
 export function decideNextAction(
   resultKind: LoopIterationAction,
@@ -45,5 +49,7 @@ export function decideNextAction(
       return { kind: "sleep", ms: loopConfig.postRunDelaySec * 1000 };
     case "claim-raced":
       return { kind: "continue" };
+    case "claim-error":
+      return { kind: "sleep", ms: loopConfig.pollIntervalSec * 1000 };
   }
 }

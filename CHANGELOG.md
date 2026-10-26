@@ -5,6 +5,30 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-10-26 — claim() throwing no longer crashes the whole loop
+
+`jiraClient.claim()` only ever sent `{ transition: { id } }`, no `fields`
+-- if that transition's screen had a required field claim() didn't send,
+the call threw a `400` all the way out of `runLoopIteration` and killed
+the entire unattended poll loop over one bad ticket, rather than being
+treated as a per-ticket skip the way a lost claim race already is. Hit
+live on TARS-1460 (see `docs/future-enhancements.md`'s `claim()`-doesn't-
+send-required-screen-fields entry, which remains open for the underlying
+"what should claim() actually send" question). This change only stops the
+crash: `claim()` is now wrapped in try/catch, with a new `claim-error`
+action logged clearly and the loop sleeping `pollIntervalSec` before
+continuing (not an immediate retry, since this is a persistent error, not
+a resolving race) -- the ticket is retried on the next poll once a human
+fixes the transition/ticket manually.
+
+## 2026-10-26 — Removed unused jira.mentionAccountId config field
+
+Dead since the mandatory @-mention requirement was dropped (see the entry
+below) -- both `docs/skills.md` and `SKILL.md` had already flagged it as
+"its own small cleanup, not bundled" at the time. Pure deletion: the
+`Config.jira` type, the placeholder validator, all three
+`pipeline.*.config.json` files, and test fixtures.
+
 ## 2026-10-26 — Jira comment format unified: Context + Needs-decision bullets, both outcomes
 
 `ticket-refine`'s Jira comments had drifted into two inconsistent shapes: a

@@ -45,4 +45,14 @@ describe("decideNextAction", () => {
     expect(decideNextAction("paused-ceiling", makeLoopConfig(), false)).toEqual({ kind: "exit" });
     expect(decideNextAction("paused-ceiling", makeLoopConfig(), true)).toEqual({ kind: "exit" });
   });
+
+  it("claim-error: sleeps for pollIntervalSec, not continue -- a claim() that threw (e.g. a Jira transition screen's required field) is persistent, not a resolving race, so retrying immediately would hot-loop on the same broken ticket every iteration", () => {
+    const action = decideNextAction("claim-error", makeLoopConfig({ pollIntervalSec: 60 }), false);
+    expect(action).toEqual({ kind: "sleep", ms: 60_000 });
+  });
+
+  it("claim-error: exits when running once-only", () => {
+    const action = decideNextAction("claim-error", makeLoopConfig(), true);
+    expect(action).toEqual({ kind: "exit" });
+  });
 });

@@ -554,6 +554,11 @@ async function main(): Promise<void> {
       case "claim-raced":
         log(`[${SKILL_NAME}] claim raced on ${result.ticket}, retrying`);
         break;
+      case "claim-error":
+        logError(
+          `[${SKILL_NAME}] ${result.ticket}: claim() failed (${result.jiraSyncError}) -- skipping this ticket rather than crashing the loop. This is likely a Jira transition screen requiring a field claim() doesn't send (see docs/future-enhancements.md); fix the ticket/transition manually, then it will be retried on the next poll.`,
+        );
+        break;
       case "processed":
         log(`[${SKILL_NAME}] ${result.ticket}: ${result.logLine?.detail}`);
         if (result.jiraSyncError) {
