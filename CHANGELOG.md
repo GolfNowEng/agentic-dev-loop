@@ -5,6 +5,28 @@ Notable fixes and behavior changes to the research-loop pipeline itself
 first. Not every commit needs an entry — only ones that change what the
 loop is capable of or fix a failure mode a human had to diagnose.
 
+## 2026-10-26 — Jira comment format unified: Context + Needs-decision bullets, both outcomes
+
+`ticket-refine`'s Jira comments had drifted into two inconsistent shapes: a
+passing verdict got one run-on paragraph, while a bounce got a fixed
+`**Verdict:**`/`**Summary:**`/`**Needs from you:**` three-line header
+followed by free-form prose. Neither was genuinely skimmable, and the two
+outcomes didn't read as the same kind of comment.
+
+**Fix**: both outcomes now write one Jira comment in the same shape — title,
+then an optional `**Context:**` paragraph (0-3 sentences), then a
+`**Needs decision:**` section (one bullet per distinct decision point; a
+passing verdict omits this section entirely when `autoPromoteLabel` is
+configured, since there's nothing to decide), then the
+`[GitHub Issue](<url>)` link. "Ticket content protocol" items 2 and 3 in
+`.claude/skills/ticket-refine/SKILL.md` define the shape; the "Bouncing"
+section's step 2 now points at item 3 instead of duplicating it.
+`docs/skills.md`'s own summary of the bounce shape was updated to match.
+This changes only the Jira-facing comment body — the GitHub Issue's full
+`### Overview`/`### Acceptance Criteria`/`### Scope` content, and the
+comment title convention (`✅`/`❌ research-loop - <short context>`) that
+re-pickup matches on, are unchanged.
+
 ## 2026-09-30 — A ticket that already landed is never re-refined
 
 Symmetric to dev-loop's landed-ticket guard. If the `pipeline:research` ->

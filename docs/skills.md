@@ -76,10 +76,10 @@ review gate; once a ticket crosses into Review, `dev-loop` trusts it fully.
 A bounce is written to one comment titled `❌ research-loop - <short
 context>` — same greppable leading-icon + `research-loop -` prefix
 convention as the passing-verdict `✅ research-loop - <short context>`
-comment, with a fixed Verdict/Summary/Needs-from-you header so a human can
-tell at a glance what decision unblocks the ticket, before the free-form
-evidence below it. Neither title carries an @-mention — dropped as
-excessive in practice (see `CHANGELOG.md`).
+comment, in the same Context + Needs-decision shape as a passing verdict
+(see `SKILL.md`'s "Ticket content protocol" item 3), so a human can tell
+at a glance what decision unblocks the ticket. Neither title carries an
+@-mention — dropped as excessive in practice (see `CHANGELOG.md`).
 
 **Cleanup is a hard gate, unconditional, every run**: stop the dev server if
 one was started, and remove this run's worktree — regardless of outcome

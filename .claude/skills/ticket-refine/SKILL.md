@@ -597,28 +597,64 @@ requirement).
    The Jira description is never used as a scratchpad, and never
    rewritten, exactly as before.
 2. **On a passing verdict**, write **one Jira comment**, titled `✅
-   research-loop - <short context>` (per the convention above),
-   containing:
-   - A one-paragraph summary (not the full Overview/AC/Scope write-up).
-   - `[GitHub Issue](<url>)` — the GitHub Issue itself carries the full
-     `### Overview` / `### Acceptance Criteria` / `### Scope` refined
-     spec content as its own comment (see item 4 below) — `ticket-to-pr`
-     reads the GitHub Issue as its real work order, not this Jira
-     comment, once dev-loop migrates in Phase 2; until then, this Jira
-     comment's link is what a human clicks through to review the real
-     content.
+   research-loop - <short context>` (per the convention above), in this
+   shape, each part its own paragraph:
+   ```
+   ✅ research-loop - <short context>
+
+   **Context:** <0-3 sentences max, plain language, what this ticket now
+     does. Default to including this; omit it only in the rare case the
+     title plus Needs-decision bullets already give a reader everything
+     they need — that should be rare, not the default path.>
+
+   **Needs decision:**
+   - If `autoPromoteLabel` is configured for this project: omit this
+     whole "Needs decision" section entirely — there is nothing to
+     decide, the loop runner promotes automatically.
+   - Otherwise: exactly one bullet, something like "Approve — move to
+     `<handoffLabel>` to send to dev-loop" (phrase it for this project's
+     actual configured label).
+
+   [GitHub Issue](<url>)
+   ```
+   The GitHub Issue itself carries the full `### Overview` / `###
+   Acceptance Criteria` / `### Scope` refined spec content as its own
+   comment (see item 4 below) — `ticket-to-pr` reads the GitHub Issue as
+   its real work order, not this Jira comment; this comment's link is
+   what a human clicks through to review the real content. The existing
+   secret/credential and absolute-path redaction rules (items 7-8 below)
+   apply to this comment's Context/Needs-decision text exactly as they
+   always have — nothing about this new shape changes what's safe to
+   write here.
 3. **On a bounce**, write **one Jira comment**, titled `❌ research-loop -
    <short context>` (per the convention above — make the failure category
-   obvious in plain language), containing the same fixed
-   Verdict/Summary/Needs-from-you header as before, but with the free-form
-   evidence section replaced by `[GitHub Issue](<url>)` carrying the full
-   evidence — unless the bounce category is itself one of the four
-   Jira-worthy kinds above (e.g. `spec_ambiguous` naming the specific
-   ambiguous readings *is* the blocking-ambiguity content Jira is for) —
-   in that case, the ambiguity/scope-call/confirmation-request content
-   itself stays in this Jira comment directly, and only the *supporting*
-   evidence (grounding detail, attack findings that fed the judgment)
-   goes to the linked GitHub Issue.
+   obvious in plain language in the title itself, e.g. `❌ research-loop -
+   scope too large, needs split`), in the same shape:
+   ```
+   ❌ research-loop - <short context>
+
+   **Context:** <0-3 sentences max, plain language, what's wrong. Omit
+     only in the rare case the title already says it all.>
+
+   **Needs decision:**
+   - <one bullet per distinct decision point — a bounce always has at
+     least one, never zero. Each bullet names a specific, concrete
+     action: "Approve the drafted split: Ticket A — <scope>; Ticket B —
+     <scope>," "Decide between reading A: <...> or reading B: <...>,"
+     "Confirm this belongs to the Critics service, not Catalog." Never
+     collapse multiple distinct decisions into one run-on bullet with
+     semicolons standing in for real separation — one bullet per
+     decision, full stop.>
+
+   [GitHub Issue](<url>)
+   ```
+   unless the bounce category is itself one of the four Jira-worthy
+   kinds (e.g. `spec_ambiguous` naming the specific ambiguous readings,
+   `too_large` naming the scope call and its drafted split) — in that
+   case the ambiguity/scope-call/confirmation-request content itself IS
+   the Needs-decision content, stated directly as bullets; only
+   supporting evidence (grounding detail, attack findings that fed the
+   judgment) goes to the linked GitHub Issue, same as before.
 4. **The GitHub Issue itself carries the full refined-ticket content** on
    a passing verdict — post the complete `### Overview` / `### Acceptance
    Criteria` / `### Scope` template (identical structure to the old
@@ -694,29 +730,8 @@ A bounce is a normal, successful exit — not a crash. On any bounce:
    research-loop - <short context>` (per the convention above, e.g. `❌
    research-loop - blocked, needs a human decision`) — greppable by the
    leading icon + `research-loop -` prefix, no longer by the old fixed
-   strings this replaces. Open the comment body with this fixed
-   three-line header, then the evidence free-form below it (evidence
-   genuinely varies by category — a `blocked` bounce and a
-   `spec_contradicted` bounce don't look alike, and forcing them into one
-   shape would lose signal):
-   ```
-   **Verdict:** bounced (`<failure_category>`)
-   **Summary:** <one sentence — what's wrong, in plain language>
-   **Needs from you:** <one sentence — the specific decision or action
-     that unblocks this ticket, e.g. "approve the drafted split," "decide
-     assertion strategy A or B," "confirm this should be filed against
-     the Critics service">
-   ---
-   <free-form evidence: file paths, what was found vs. claimed, the
-   specific ambiguous readings, the suggested split, drafted follow-up
-   tickets, etc.>
-   ```
-   The free-form evidence below the fixed header lives in Jira only when
-   the bounce category itself is Jira-worthy content per the routing rule
-   (e.g. `spec_ambiguous` naming the ambiguous readings, `too_large`
-   naming the scope call and its drafted split); otherwise this comment's
-   evidence section is `[GitHub Issue](<url>)` carrying the full detail,
-   per "Ticket content protocol" item 3 above.
+   strings this replaces. Use the Jira comment shape defined in "Ticket
+   content protocol" item 3 above (Context + Needs-decision bullets).
    On re-pickup after a bounce, read the most-recently-created matching
    comment (same title convention as a passing verdict) as prior context,
    but **always post a brand-new comment** — never edit the existing one
