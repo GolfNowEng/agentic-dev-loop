@@ -7,7 +7,14 @@
  */
 
 import { readFile } from "node:fs/promises";
-import type { VerdictOutcome, PhaseReached, Verdict } from "./types.ts";
+import type {
+  VerdictOutcome,
+  PhaseReached,
+  Verdict,
+  SizeTrajectory,
+  TShirtSize,
+  SizeDelta,
+} from "./types.ts";
 
 const VALID_OUTCOMES: VerdictOutcome[] = ["landed", "ready", "bounced", "error", "killed"];
 const VALID_PHASES: PhaseReached[] = [
@@ -18,6 +25,8 @@ const VALID_PHASES: PhaseReached[] = [
   "verify",
   "pr",
 ];
+const VALID_TSHIRTS: TShirtSize[] = ["S", "M", "L", "XL"];
+const VALID_DELTAS: SizeDelta[] = ["grew", "shrank", "unchanged"];
 
 function isValidVerdictShape(value: unknown): value is Verdict {
   if (typeof value !== "object" || value === null) return false;
@@ -31,6 +40,31 @@ function isValidVerdictShape(value: unknown): value is Verdict {
   if (typeof v.detail !== "string") return false;
 
   return true;
+}
+
+/**
+ * Parses a shadow-mode `size_trajectory` value. Fully independent of
+ * isValidVerdictShape/parseVerdict -- a malformed trajectory returns null
+ * and must never flip a Verdict's `outcome` to "error". Pure telemetry:
+ * nothing downstream acts on the parsed value yet (see
+ * docs/future-enhancements.md).
+ */
+export function parseSizeTrajectory(value: unknown): SizeTrajectory | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+
+  if (!VALID_TSHIRTS.includes(v.step4_tshirt as TShirtSize)) return null;
+  if (!VALID_DELTAS.includes(v.delta as SizeDelta)) return null;
+  if (typeof v.final_score !== "number" || !Number.isFinite(v.final_score)) {
+    return null;
+  }
+  if (v.final_score < 0 || v.final_score > 10) return null;
+
+  return {
+    step4_tshirt: v.step4_tshirt as TShirtSize,
+    delta: v.delta as SizeDelta,
+    final_score: v.final_score,
+  };
 }
 
 /** The fallback Verdict produced for any missing/malformed input. */
@@ -64,7 +98,21 @@ export function parseVerdict(raw: string | undefined | null): Verdict {
     return errorVerdict("verdict.json did not match the expected Verdict shape");
   }
 
-  return parsed;
+  // size_trajectory is parsed independently of the shape check above --
+  // a malformed trajectory must never flip outcome to "error". Sanitize
+  // it here, at the parse boundary, so nothing downstream (loop-runner's
+  // RunLogLine carry-over, runs.jsonl) ever sees an unvalidated value.
+  const verdict = parsed as Verdict;
+  if (verdict.size_trajectory !== undefined) {
+    const sanitized = parseSizeTrajectory(verdict.size_trajectory);
+    if (sanitized === null) {
+      delete verdict.size_trajectory;
+    } else {
+      verdict.size_trajectory = sanitized;
+    }
+  }
+
+  return verdict;
 }
 
 /**

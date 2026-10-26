@@ -323,6 +323,70 @@ describe("runLoopIteration", () => {
     expect(result.logLine?.outcome).toBe("landed");
   });
 
+  describe("size_trajectory / log_version carry-over", () => {
+    it("carries a well-formed size_trajectory from verdict.json into the RunLogLine, and stamps log_version", async () => {
+      const jiraClient = makeMockJiraClient();
+      const runSkill: RunSkillFn = vi.fn(async () =>
+        makeRunSkillResult({
+          verdictRaw: JSON.stringify({
+            outcome: "landed",
+            phase_reached: "pr",
+            failure_category: null,
+            detail: "Refined and ready for human review.",
+            size_trajectory: { step4_tshirt: "M", delta: "unchanged", final_score: 4.5 },
+          }),
+        }),
+      );
+
+      const result = await runLoopIteration(makeDeps({ jiraClient, runSkill }));
+
+      expect(result.logLine?.size_trajectory).toEqual({
+        step4_tshirt: "M",
+        delta: "unchanged",
+        final_score: 4.5,
+      });
+      expect(result.logLine?.log_version).toBe("1.1");
+      const lines = await readRunLog(runsLogPath);
+      expect(lines[0].size_trajectory).toEqual({
+        step4_tshirt: "M",
+        delta: "unchanged",
+        final_score: 4.5,
+      });
+    });
+
+    it("drops a malformed size_trajectory rather than persisting it unsanitized, and never flips outcome to error", async () => {
+      const jiraClient = makeMockJiraClient();
+      const runSkill: RunSkillFn = vi.fn(async () =>
+        makeRunSkillResult({
+          verdictRaw: JSON.stringify({
+            outcome: "landed",
+            phase_reached: "pr",
+            failure_category: null,
+            detail: "Refined and ready for human review.",
+            size_trajectory: { step4_tshirt: "HUGE", delta: "grew", final_score: 999 },
+          }),
+        }),
+      );
+
+      const result = await runLoopIteration(makeDeps({ jiraClient, runSkill }));
+
+      expect(result.logLine?.outcome).toBe("landed");
+      expect(result.logLine?.size_trajectory).toBeUndefined();
+      const lines = await readRunLog(runsLogPath);
+      expect(lines[0].size_trajectory).toBeUndefined();
+    });
+
+    it("a verdict with no size_trajectory at all produces a RunLogLine with no size_trajectory field", async () => {
+      const jiraClient = makeMockJiraClient();
+      const runSkill: RunSkillFn = vi.fn(async () => makeRunSkillResult());
+
+      const result = await runLoopIteration(makeDeps({ jiraClient, runSkill }));
+
+      expect(result.logLine?.size_trajectory).toBeUndefined();
+      expect(result.logLine?.log_version).toBe("1.1");
+    });
+  });
+
   it("ceiling breach (runTimeoutMin) pauses the loop instead of continuing silently", async () => {
     const jiraClient = makeMockJiraClient();
     const runSkill: RunSkillFn = vi.fn(async () =>

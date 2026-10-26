@@ -41,6 +41,31 @@ export type VerdictOutcome = RunOutcome | "ready";
 export type PhaseReached = "intake" | "plan" | "red" | "green" | "verify" | "pr";
 
 /**
+ * Current log schema version, written on every new RunLogLine/Verdict.
+ * An absent `log_version` means "1.0" (every run before this field
+ * existed) -- there is no backfill, absence is the implicit old value.
+ */
+export const CURRENT_LOG_VERSION = "1.1";
+
+/** T-shirt-sized trajectory signal verifier-agent reports at Step 4. */
+export type TShirtSize = "S" | "M" | "L" | "XL";
+
+/** How a ticket's size changed across self-heal/re-pickup cycles within this run. */
+export type SizeDelta = "grew" | "shrank" | "unchanged";
+
+/**
+ * Shadow-mode size signal, logged by verifier-agent on a passing run and
+ * carried into both verdict.json and runs.jsonl. Pure telemetry for this
+ * MVP -- nothing reads or acts on it yet (see docs/future-enhancements.md).
+ */
+export interface SizeTrajectory {
+  step4_tshirt: TShirtSize;
+  delta: SizeDelta;
+  /** Mechanically computed score, clamped to [0, 10]. */
+  final_score: number;
+}
+
+/**
  * One line of runs.jsonl. Field-for-field match with the schema in the
  * pipeline spec. This is the *only* shape the runs-log appender is allowed
  * to write.
@@ -66,6 +91,10 @@ export interface RunLogLine {
   pr: string | null;
   cost_usd: number;
   tokens: { in: number; out: number };
+  /** Schema version this line was written under. Absent means "1.0". */
+  log_version?: string;
+  /** Shadow-mode size telemetry, present only when the skill reported one. */
+  size_trajectory?: SizeTrajectory;
 }
 
 /**
@@ -91,6 +120,15 @@ export interface Verdict {
   pr?: string | null;
   cost_usd?: number;
   tokens?: { in: number; out: number };
+  /** Schema version this verdict was written under. Absent means "1.0". */
+  log_version?: string;
+  /**
+   * Shadow-mode size telemetry (see docs/future-enhancements.md). Parsed
+   * independently by parseSizeTrajectory in verdict.ts -- a malformed
+   * value here must never flip `outcome` to "error"; isValidVerdictShape
+   * is deliberately unaware of this field.
+   */
+  size_trajectory?: SizeTrajectory;
 }
 
 /**

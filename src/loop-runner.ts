@@ -22,6 +22,7 @@
  */
 
 import type { Config, RunLogLine, Verdict } from "./types.ts";
+import { CURRENT_LOG_VERSION } from "./types.ts";
 import type { JiraClient, JiraTicket } from "./jira-client.ts";
 import { checkCeilings } from "./ceilings.ts";
 import { parseVerdict } from "./verdict.ts";
@@ -226,6 +227,12 @@ export async function runLoopIteration(
     pr: verdict.pr ?? null,
     cost_usd: result.costUsd,
     tokens: result.tokens,
+    log_version: CURRENT_LOG_VERSION,
+    // verdict.size_trajectory was already sanitized by parseVerdict (via
+    // parseSizeTrajectory) above -- a malformed value never reaches here.
+    ...(verdict.size_trajectory !== undefined
+      ? { size_trajectory: verdict.size_trajectory }
+      : {}),
   };
 
   await appendRunLog(runsLogPath, logLine);

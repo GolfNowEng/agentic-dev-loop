@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseVerdict, readVerdict, errorVerdict } from "../src/verdict.ts";
+import { parseVerdict, readVerdict, errorVerdict, parseSizeTrajectory } from "../src/verdict.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -98,6 +98,84 @@ describe("readVerdict", () => {
     ).resolves.not.toThrow();
     expect(verdict!.outcome).toBe("error");
     expect(verdict!.failure_category).toBe("agent_error");
+  });
+});
+
+describe("parseSizeTrajectory", () => {
+  it("parses a well-formed size_trajectory", () => {
+    const result = parseSizeTrajectory({
+      step4_tshirt: "M",
+      delta: "unchanged",
+      final_score: 4.5,
+    });
+    expect(result).toEqual({
+      step4_tshirt: "M",
+      delta: "unchanged",
+      final_score: 4.5,
+    });
+  });
+
+  it("returns null for a non-object value", () => {
+    expect(parseSizeTrajectory(undefined)).toBeNull();
+    expect(parseSizeTrajectory(null)).toBeNull();
+    expect(parseSizeTrajectory("not an object")).toBeNull();
+    expect(parseSizeTrajectory(42)).toBeNull();
+  });
+
+  it("returns null for an invalid step4_tshirt value", () => {
+    expect(
+      parseSizeTrajectory({ step4_tshirt: "XXL", delta: "grew", final_score: 5 }),
+    ).toBeNull();
+  });
+
+  it("returns null for an invalid delta value", () => {
+    expect(
+      parseSizeTrajectory({ step4_tshirt: "S", delta: "exploded", final_score: 5 }),
+    ).toBeNull();
+  });
+
+  it("returns null for a non-finite final_score", () => {
+    expect(
+      parseSizeTrajectory({ step4_tshirt: "S", delta: "grew", final_score: NaN }),
+    ).toBeNull();
+    expect(
+      parseSizeTrajectory({ step4_tshirt: "S", delta: "grew", final_score: Infinity }),
+    ).toBeNull();
+  });
+
+  it("returns null for a final_score outside [0, 10]", () => {
+    expect(
+      parseSizeTrajectory({ step4_tshirt: "S", delta: "grew", final_score: -0.1 }),
+    ).toBeNull();
+    expect(
+      parseSizeTrajectory({ step4_tshirt: "S", delta: "grew", final_score: 10.1 }),
+    ).toBeNull();
+  });
+
+  it("accepts the boundary values 0 and 10", () => {
+    expect(
+      parseSizeTrajectory({ step4_tshirt: "S", delta: "grew", final_score: 0 }),
+    ).not.toBeNull();
+    expect(
+      parseSizeTrajectory({ step4_tshirt: "XL", delta: "shrank", final_score: 10 }),
+    ).not.toBeNull();
+  });
+
+  it("never throws on a malformed value", () => {
+    expect(() => parseSizeTrajectory("garbage")).not.toThrow();
+    expect(() => parseSizeTrajectory({})).not.toThrow();
+  });
+
+  it("does not affect isValidVerdictShape/parseVerdict -- a malformed size_trajectory never flips outcome to error", () => {
+    const raw = JSON.stringify({
+      outcome: "ready",
+      phase_reached: "verify",
+      failure_category: null,
+      detail: "Refined ticket written.",
+      size_trajectory: { step4_tshirt: "NOT_VALID", delta: "grew", final_score: 999 },
+    });
+    const verdict = parseVerdict(raw);
+    expect(verdict.outcome).toBe("ready");
   });
 });
 
