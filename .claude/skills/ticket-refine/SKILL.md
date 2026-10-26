@@ -359,6 +359,15 @@ If this step concludes the ticket is oversized, bounce `too_large` with the
 suggested split attached as evidence, rather than synthesizing a
 partial/incorrect ticket.
 
+**Shadow-mode size telemetry (pure logging, no behavior change)**: append
+one `progress.jsonl` note this step, every run regardless of outcome:
+`{"ts": "<ISO-8601 UTC>", "phase": "scope", "event": "note", "detail": "step4_tshirt: <S|M|L|XL>"}`
+— a qualitative read of how this ticket's work feels sized (S/M/L/XL),
+independent of whatever Step 4 above already decided about `too_large`.
+This note does not affect this step's own `too_large` decision in any
+way — it's logged purely so later runs have a trajectory to compare
+against. See `docs/skills.md`'s "Shadow-mode size telemetry" section.
+
 ### Step 5 — Blocked detection
 
 If the work can't proceed regardless of how well-specified it is (external
@@ -393,7 +402,12 @@ produced the ticket rubber-stamping itself.
   means "passed the verifier as written". The
   ticket stays at `triggerLabel`, refined and awaiting human approval (the
   loop runner only swaps the label to `handoffLabel` if `autoPromoteLabel`
-  is present — this skill just reports the verdict either way).
+  is present — this skill just reports the verdict either way). On this
+  passing verifier run, it also reports a `size_trajectory` object
+  (`step4_tshirt`, `delta`, `final_score` — see
+  `.claude/agents/verifier-agent.md`'s "Size scoring" section); copy that
+  object verbatim into `verdict.json`'s `size_trajectory` field (see
+  schema below) — pure telemetry, this does not affect the verdict itself.
 - If it fails: classify the failure before deciding what to do with it —
   see "Self-heal vs. bounce" below. Never skip this classification and
   bounce by default; a mechanical failure resolved via self-heal is a
@@ -767,7 +781,9 @@ Write to `RUN_DIR/verdict.json`:
   "skill_version": "<git SHA of this SKILL.md's commit in research-loop>",
   "model": "sonnet",
   "cost_usd": 0,
-  "tokens": { "in": 0, "out": 0 }
+  "tokens": { "in": 0, "out": 0 },
+  "log_version": "1.1",
+  "size_trajectory": { "step4_tshirt": "S | M | L | XL", "delta": "grew | shrank | unchanged", "final_score": 0 }
 }
 ```
 
@@ -776,7 +792,16 @@ runner's `RunOutcome` type also has `"landed"` (used by `ticket-to-pr`) —
 both map to a passing verdict, `ready` is simply the more accurate word for
 what this skill produces (a ticket, not a PR). `cost_usd`/`tokens` are left
 as `0`/zeros — the loop runner derives real values from `claude -p
---output-format json`'s own usage report.
+--output-format json`'s own usage report. `log_version` is always
+`"1.1"` as of this schema version — the loop runner stamps the same value
+onto the `RunLogLine` it derives, regardless of what this field says
+(`src/loop-runner.ts` owns `CURRENT_LOG_VERSION`, not this skill).
+`size_trajectory` is only ever included on a passing (`outcome: "ready"`)
+verdict, copied verbatim from `verifier-agent`'s report — see
+`docs/skills.md`'s "Shadow-mode size telemetry" section. It is pure
+telemetry: `src/verdict.ts`'s `parseSizeTrajectory` validates it
+independently of the rest of this shape, and a malformed value is dropped
+before it ever reaches `runs.jsonl` — it can never affect `outcome`.
 
 ## Invocation (for the loop runner)
 

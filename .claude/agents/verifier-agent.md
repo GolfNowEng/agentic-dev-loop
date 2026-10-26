@@ -63,6 +63,46 @@ each item below.
    behavior ACs is a `too_large` signal (judgment call: report it, do not
    propose a fix).
 
+## Size scoring (shadow telemetry — report only, does not affect your verdict)
+
+On a **passing** run only (every checklist item above passes), also compute
+and report a `size_trajectory` object — pure logging for a future decision,
+not part of the Definition-of-ready checklist, and it must never change
+your `ready`/`bounced` verdict or interact with items 4 or 8 above in any
+way:
+
+- **`step4_tshirt`**: copy the `step4_tshirt` value `ticket-refine` already
+  logged to `progress.jsonl` at Step 4 (S/M/L/XL) — do not recompute it
+  yourself; you are reporting it, not re-deriving it.
+- **`delta`**: `"grew"`, `"shrank"`, or `"unchanged"` — whether this run's
+  self-heal cycles (if any) made the draft larger, smaller, or left its
+  size unchanged, judged by AC/file count before vs. after the cycles. A
+  run with zero self-heal cycles is always `"unchanged"`.
+- **`final_score`**: a mechanical, clamped-to-`[0, 10]` number from four
+  equally-weighted dimensions, each scored `0`-`2.5` and summed:
+  1. Parent-AC count (count top-level AC bullets only — per the sibling
+     `jira-create-ticket` skill's grouping convention, a grouped parent
+     bullet with indented children counts once, not once per child):
+     `0` ACs → `0`, `1`-`3` → `2.5`, `4`-`6` → `1.5`, `7`-`9` → `0.5`,
+     `10+` → `0`.
+  2. Files touched (count Scope's own enumerated file list): `1`-`2` →
+     `2.5`, `3`-`5` → `1.5`, `6`-`8` → `0.5`, `9+` → `0`.
+  3. Subsystems touched (count distinct top-level directories/modules
+     among Scope's enumerated files): `1` → `2.5`, `2` → `1.5`, `3` →
+     `0.5`, `4+` → `0`.
+  4. Self-heal growth: `0` cycles → `2.5`, `1`-`2` cycles with `delta`
+     `"unchanged"` or `"shrank"` → `1.5`, any cycle count with `delta`
+     `"grew"` → `0.5`.
+  Sum the four dimension scores and clamp to `[0, 10]` (the formula above
+  cannot exceed 10 or go below 0, but clamp defensively anyway). This
+  mechanical count is itself sourced from Scope's self-report — a known
+  limitation, not yet addressed (see `docs/future-enhancements.md`'s
+  size-score entry).
+
+Report this object to `ticket-refine` alongside your `ready` verdict —
+it is not written anywhere by you directly; `ticket-refine` copies it
+into `verdict.json`'s `size_trajectory` field (see `SKILL.md`'s schema).
+
 ## What NOT to do
 
 - Do not fix the draft yourself. You report a verdict and, on failure, the

@@ -57,7 +57,10 @@ affected by a background run:
 3. **Attack** — spawn `devils-advocate-agent` (below) to try to break the
    working assumptions from Interpret/Ground.
 4. **Scope & sequence** — if oversized, draft (never create) a split as
-   comments for the human gate to approve; bounce `too_large`.
+   comments for the human gate to approve; bounce `too_large`. Also logs a
+   `step4_tshirt` (S/M/L/XL) note to `progress.jsonl` every run — pure
+   shadow telemetry, no behavior change; see "Shadow-mode size telemetry"
+   below.
 5. **Blocked detection** — bounce `blocked` if work can't proceed regardless
    of spec quality (external dependency, missing access, upstream fault).
 6. **Synthesize** — write the refined ticket (working comments during work
@@ -119,7 +122,11 @@ which has one for uncommitted work — see dev-loop's `docs/skills.md`).
   labeled as assumptions.
 - **verifier-agent** (`.claude/agents/verifier-agent.md`) — an
   independent pass over the definition-of-ready checklist (see below); not
-  the same reasoning that produced the ticket rubber-stamping itself.
+  the same reasoning that produced the ticket rubber-stamping itself. On a
+  passing run, also mechanically computes and reports a `size_trajectory`
+  score (see "Shadow-mode size telemetry" below) — this is a separate
+  reporting duty, not a tenth checklist item; items 4 and 8 below are
+  unchanged by it.
 
 ## Definition-of-ready checklist
 
@@ -142,6 +149,28 @@ the equivalent `gh issue create`/`edit`/`comment` shape, since working
 content now flows to GitHub too (see "Jira/GitHub content routing (Phase
 1)" below). Neither hook is a replacement for this checklist item, just a
 heuristic backstop behind it.
+
+## Shadow-mode size telemetry
+
+Every passing run logs a `size_trajectory` — `step4_tshirt` (S/M/L/XL,
+Step 4's own qualitative read), `delta` (`grew`/`shrank`/`unchanged`
+across this run's self-heal/re-pickup cycles), and `final_score` (a
+mechanically computed, clamped-to-`[0,10]` number `verifier-agent`
+derives from parent-AC count, files touched, subsystems touched, and
+self-heal growth) — into `verdict.json` and, from there, `runs.jsonl` (see
+`docs/logging.md`). **This is pure telemetry: nothing reads or acts on
+it.** The Definition-of-ready checklist's items 4 (size bound) and 8 (AC
+shape / ~10-AC advisory) are completely unchanged — no new checklist item,
+no new bounce category, no new gate. The point is to accumulate real-run
+history before deciding whether this score should eventually replace
+items 4/8, or gate a cross-run growth cap — see
+`docs/future-enhancements.md`'s size-score entry for everything that was
+deliberately deferred out of this change, and why.
+
+`src/verdict.ts`'s `parseSizeTrajectory` validates this field completely
+independently of the rest of `Verdict` — a malformed `size_trajectory`
+is dropped (never persisted) and can never flip a verdict's `outcome` to
+`"error"`.
 
 ## Ticket content protocol
 

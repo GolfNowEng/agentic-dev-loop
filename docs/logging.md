@@ -12,7 +12,20 @@ Schema: `RunLogLine` in `src/types.ts` — ticket, skill, skill_version,
 model, started/ended timestamps, outcome, phase_reached, red_confirmed,
 verify_loops, retries, failure_category, detail, pr, cost_usd, tokens
 (`pr` and TDD fields are always null/zero for this repo's runs — they only
-apply to `dev-loop`).
+apply to `dev-loop`), plus two optional fields: `log_version` (schema
+version this line was written under — `"1.1"` as of the `size_trajectory`
+field below; a line with no `log_version` at all is implicitly `"1.0"`,
+never backfilled) and `size_trajectory` (shadow-mode size telemetry —
+`step4_tshirt`, `delta`, `final_score`, written by `verifier-agent` on a
+passing run and carried through from `verdict.json` unchanged — see
+`docs/skills.md`). **Pure telemetry**: nothing reads or acts on
+`size_trajectory` yet. It exists so enough real-run history accumulates to
+later decide whether it should replace the Definition-of-ready checklist's
+items 4/8 — see `docs/future-enhancements.md`'s size-score entry for what
+that would require and why it isn't built yet. A malformed
+`size_trajectory` in `verdict.json` is dropped (not persisted) by
+`parseSizeTrajectory` in `src/verdict.ts` before it ever reaches this
+file — it can never flip a run's `outcome`.
 
 ## .pipeline/&lt;slug&gt;/ — per-run scratch space
 
