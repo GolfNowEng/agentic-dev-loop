@@ -17,10 +17,11 @@
 // refuses any path outside the plan's own v2 roots, so --dry-run shows what
 // the real run does.
 
-import { appendFile, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, lstat, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import type { Config, Role } from "./types.ts";
+import { isProcessAlive } from "./session.ts";
 import { resolveRepoPath, RUN_ID, SESSION_ID, TICKET_KEY, UnsafePathError, v2CloneDir, v2ProjectDir, v2RunsArchive, v2RunsLog, v2SessionsDir } from "./paths.ts";
 
 export type ResetRole = Role | "all";
@@ -35,6 +36,19 @@ export interface ResetOptions {
   config?: Config | null;
   /** State root; defaults to the repo root. Tests pass a temp dir. */
   root?: string;
+  /** Role-scoped only: also archive records whose OTHER role has a landed phase. Default false. */
+  includeCrossRole?: boolean;
+  /** Let executeReset proceed while a live worker holds a session lock. Default false. */
+  ignoreLiveWorker?: boolean;
+  /** Liveness of a lock holder (pid + start time, epoch s); defaults to session.ts's isProcessAlive. */
+  isAlive?: (pid: number, started: number) => boolean;
+}
+
+/** A matching record a role-scoped reset leaves in place (the other role landed in it). */
+export interface RefusedRecord {
+  ticket: string;
+  /** "other role landed: <role> <pr|outcome>" */
+  reason: string;
 }
 
 export interface ResetPlan {
@@ -61,6 +75,14 @@ export interface ResetPlan {
   worktreesDir: string | null;
   /** `<name>.lock` files in the sessions dir: a worker may be running; reset doesn't stop it. */
   liveLocks: string[];
+  /** The subset of liveLocks whose holder process is alive: executeReset refuses unless ignoreLiveWorker. */
+  liveWorkerLocks: string[];
+  ignoreLiveWorker: boolean;
+  includeCrossRole: boolean;
+  /** Role-scoped resets: matching records kept because the other role landed in them. */
+  refusedRecords: RefusedRecord[];
+  /** Things skipped for safety (e.g. symlinks), printed as WARNING lines. */
+  warnings: string[];
 }
 
 export interface ResetSummary {
@@ -86,8 +108,14 @@ async function list(dir: string): Promise<string[]> {
   }
 }
 
-async function isDir(p: string): Promise<boolean> {
-  return stat(p).then((s) => s.isDirectory(), () => false);
+/** lstat-based: never follows a symlink. */
+async function kind(p: string): Promise<"dir" | "symlink" | "other" | null> {
+  try {
+    const st = await lstat(p);
+    return st.isSymbolicLink() ? "symlink" : st.isDirectory() ? "dir" : "other";
+  } catch {
+    return null;
+  }
 }
 
 const RUN_DIR_NAME = /^(research|dev)-(.+)$/;
@@ -101,19 +129,42 @@ const LEFTOVER = [/\.lock\.adopted-/, /^\.acquire\.stale-/, /^\.acquire\.reclaim
 const isLeftover = (name: string) => LEFTOVER.some((re) => re.test(name));
 const isLock = (name: string) => name.endsWith(".lock") && !name.startsWith(".");
 
-/** Does this log line belong to the reset? Unreadable lines only go with a whole-project role-all reset. */
-function lineMatches(line: string, ticket: string | null, role: ResetRole): boolean {
+type Phaseish = { role?: unknown; outcome?: unknown; pr?: unknown };
+
+/**
+ * Classify a log line for this reset: "archive", "skip" (not in scope), or
+ * a refusal reason (role-scoped: in scope, but the other role landed in it,
+ * so archiving it would drop that landed phase -- e.g. a dev PR the landed
+ * guard and reconcile rely on -- unless includeCrossRole).
+ * Unreadable lines only go with a whole-project role-all reset.
+ */
+function classify(line: string, ticket: string | null, role: ResetRole, includeCrossRole: boolean): "archive" | "skip" | RefusedRecord {
   let r: { ticket?: unknown; phases?: unknown; resume?: unknown } | null;
   try {
     r = JSON.parse(line);
   } catch {
-    return ticket === null && role === "all";
+    return ticket === null && role === "all" ? "archive" : "skip";
   }
-  if (!r || typeof r !== "object") return ticket === null && role === "all";
-  if (ticket !== null && r.ticket !== ticket) return false;
-  if (role === "all") return true;
-  const phases = Array.isArray(r.phases) ? (r.phases as Array<{ role?: unknown }>) : [];
-  return phases.some((p) => p?.role === role) || r.resume === role;
+  if (!r || typeof r !== "object") return ticket === null && role === "all" ? "archive" : "skip";
+  if (ticket !== null && r.ticket !== ticket) return "skip";
+  if (role === "all") return "archive";
+  const phases = Array.isArray(r.phases) ? (r.phases as Phaseish[]) : [];
+  if (!(phases.some((p) => p?.role === role) || r.resume === role)) return "skip";
+  if (includeCrossRole) return "archive";
+  const other = phases.find((p) => p && p.role !== role && (p.role === "research" || p.role === "dev") && p.outcome === "landed");
+  if (!other) return "archive";
+  const what = typeof other.pr === "string" && other.pr ? other.pr : "landed";
+  return { ticket: typeof r.ticket === "string" ? r.ticket : "?", reason: `other role landed: ${other.role} ${what}` };
+}
+
+function liveHolder(raw: string, isAlive: (pid: number, started: number) => boolean): boolean {
+  try {
+    const b = JSON.parse(raw) as { pid?: unknown; started?: unknown };
+    const ok = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v > 0;
+    return ok(b.pid) && ok(b.started) && isAlive(b.pid, b.started);
+  } catch {
+    return false;
+  }
 }
 
 async function readLines(path: string): Promise<string[] | null> {
@@ -136,20 +187,32 @@ export async function planReset(opts: ResetOptions): Promise<ResetPlan> {
 
   const runsLogPath = at(v2RunsLog(opts.project));
   const lines = await readLines(runsLogPath);
-  const recordsToArchive = (lines ?? []).filter((l) => lineMatches(l, ticket, role)).length;
+  const includeCrossRole = opts.includeCrossRole ?? false;
+  const classes = (lines ?? []).map((l) => classify(l, ticket, role, includeCrossRole));
+  const recordsToArchive = classes.filter((c) => c === "archive").length;
+  const refusedRecords = classes.filter((c): c is RefusedRecord => typeof c === "object");
+  const warnings: string[] = [];
 
   const projectDir = at(v2ProjectDir(opts.project));
   const sessionsDir = at(v2SessionsDir(opts.project));
   const cloneDir = at(v2CloneDir(opts.project));
   const runDirsToRemove: string[] = [];
-  for (const s of await list(projectDir)) {
+  /** A dir we may descend into; a symlink is skipped with a warning so rm never leaves .pipeline/v2/<project>/. */
+  const safeDir = async (p: string): Promise<boolean> => {
+    const k = await kind(p);
+    if (k === "symlink") warnings.push(`skipped symlink ${p} (never followed)`);
+    return k === "dir";
+  };
+  const projectEntries = (await safeDir(projectDir)) ? await list(projectDir) : [];
+  for (const s of projectEntries) {
     const sDir = join(projectDir, s);
-    if (!SESSION_ID.test(s) || sDir === sessionsDir || sDir === cloneDir || !(await isDir(sDir))) continue;
+    if (!SESSION_ID.test(s) || sDir === sessionsDir || sDir === cloneDir || !(await safeDir(sDir))) continue;
     for (const t of ticket !== null ? [ticket] : await list(sDir)) {
       if (!TICKET_KEY.test(t)) continue;
       const tDir = join(sDir, t);
+      if (!(await safeDir(tDir))) continue;
       for (const name of await list(tDir)) {
-        if (runDirMatches(name, role) && (await isDir(join(tDir, name)))) runDirsToRemove.push(join(tDir, name));
+        if (runDirMatches(name, role) && (await safeDir(join(tDir, name)))) runDirsToRemove.push(join(tDir, name));
       }
     }
   }
@@ -159,6 +222,13 @@ export async function planReset(opts: ResetOptions): Promise<ResetPlan> {
   const sessionLeftoversToRemove =
     ticket === null && role === "all" ? sessionFiles.filter(isLeftover).map((f) => join(sessionsDir, f)) : [];
   const liveLocks = sessionFiles.filter(isLock).map((f) => join(sessionsDir, f));
+  const isAlive = opts.isAlive ?? ((pid: number, started: number) => isProcessAlive(pid, started));
+  const liveWorkerLocks: string[] = [];
+  for (const l of liveLocks) {
+    if ((await kind(l)) !== "other") continue;
+    const raw = await readFile(l, "utf8").catch(() => "");
+    if (liveHolder(raw, isAlive)) liveWorkerLocks.push(l);
+  }
 
   let worktreesDir: string | null = null;
   let worktreesToRemove: string[] = [];
@@ -188,6 +258,11 @@ export async function planReset(opts: ResetOptions): Promise<ResetPlan> {
     worktreesToRemove,
     worktreesDir,
     liveLocks,
+    liveWorkerLocks,
+    ignoreLiveWorker: opts.ignoreLiveWorker ?? false,
+    includeCrossRole,
+    refusedRecords,
+    warnings,
   };
 }
 
@@ -204,6 +279,11 @@ function assertUnder(path: string, base: string, what: string): void {
  * interruption can at worst leave a duplicate in the archive.
  */
 export async function executeReset(plan: ResetPlan): Promise<ResetSummary> {
+  if (plan.liveWorkerLocks.length > 0 && !plan.ignoreLiveWorker) {
+    throw new Error(
+      `refusing to reset: a live worker holds ${plan.liveWorkerLocks.join(", ")}. Stop it first, or pass --ignore-live-worker.`,
+    );
+  }
   const projectDir = resolve(plan.root, v2ProjectDir(plan.project));
   const sessionsDir = resolve(plan.root, v2SessionsDir(plan.project));
   for (const d of plan.runDirsToRemove) assertUnder(d, projectDir, "run dir");
@@ -231,8 +311,9 @@ export async function executeReset(plan: ResetPlan): Promise<ResetSummary> {
 
   const lines = plan.runsLogExists ? await readLines(plan.runsLogPath) : null;
   if (lines === null) return summary;
-  const archived = lines.filter((l) => lineMatches(l, plan.ticketKey, plan.role));
-  const kept = lines.filter((l) => !lineMatches(l, plan.ticketKey, plan.role));
+  const archive = (l: string) => classify(l, plan.ticketKey, plan.role, plan.includeCrossRole) === "archive";
+  const archived = lines.filter(archive);
+  const kept = lines.filter((l) => !archive(l));
   if (archived.length === 0) return summary;
   await appendFile(plan.runsLogArchivePath, `${archived.join("\n")}\n`, "utf8");
   summary.recordsArchived = archived.length;
@@ -274,9 +355,14 @@ export function describeResetPlan(plan: ResetPlan): string {
         : "- worktrees: none matching (or no config to find them)",
     );
   }
+  for (const r of plan.refusedRecords) {
+    lines.push(`- REFUSED (${r.reason}): a ${r.ticket} record stays in the live log; --include-cross-role archives it`);
+  }
+  for (const w of plan.warnings) lines.push(`- WARNING: ${w}`);
   if (plan.liveLocks.length > 0) {
     lines.push(
-      `- WARNING: session lock(s) present, a worker may be running: ${plan.liveLocks.map(shortenPath).join(", ")}. Stop it first; reset does not.`,
+      `- WARNING: session lock(s) present, a worker may be running: ${plan.liveLocks.map(shortenPath).join(", ")}. Stop it first; reset does not.` +
+        (plan.liveWorkerLocks.length > 0 && !plan.ignoreLiveWorker ? " A real run refuses while the holder is alive (--ignore-live-worker overrides)." : ""),
     );
   }
   lines.push("- v1 history (runs/v1/, .pipeline/v1/, runs/<slug>.jsonl, .pipeline/<slug>/, research-loop/) is never touched");

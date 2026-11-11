@@ -12,6 +12,7 @@ the repo root (or `--root <dir>`), independent of the cwd.
 ```bash
 npm run reset-project -- --project webtarsthree --ticket TARS-1465 --dry-run           # role all
 npm run reset-project -- --project webtarsthree --ticket TARS-1465 --role research
+npm run reset-project -- --project webtarsthree --ticket TARS-1465 --role research --include-cross-role
 npm run reset-project -- --project webtarsthree --yes                                   # whole project
 npm run reset-project:remote -- --project webtarsthree --ticket TARS-1465 --close-remote --dry-run
 ```
@@ -23,6 +24,26 @@ npm run reset-project:remote -- --project webtarsthree --ticket TARS-1465 --clos
 | run dirs | `.pipeline/v2/<project>/<session>/<ticket>/<role>-<RUN_ID>/`, every session | both roles' |
 | `runs/v2/<project>.jsonl` | records with a phase of that role, or `resume: <role>` | every record for the ticket (whole project: every line, unreadable ones included) |
 | worktrees (`--ticket` only) | research: `<TICKET>-*-ground`; dev: the other `<TICKET>-*` | all `<TICKET>-*` |
+
+**Cross-role safety.** A record can hold both roles' phases (research
+landed, then dev in the same iteration). With `--role research` or
+`--role dev`, a matching record that also has a `landed` phase of the
+**other** role is **refused** by default: it stays in the live log, and
+the plan prints `REFUSED (other role landed: <role> <pr|outcome>)` for it.
+This matters because archiving `[research, dev landed PR X]` under
+`--role research` would remove PR X from the dev landed guard, from
+reconcile and from `--close-remote`'s PR lookup, so the dev poll could
+open a second PR. `--include-cross-role` archives such records anyway.
+`--role all` is unaffected.
+
+**Live worker.** A real (non-dry-run) reset refuses while a live worker
+holds a `*.lock` in `.pipeline/v2/<project>/sessions/` (holder pid and
+start time checked with session.ts's `isProcessAlive`); `--ignore-live-worker`
+overrides. `--dry-run` only prints the WARNING.
+
+**Symlinks.** The run-dir scan uses `lstat` and never follows a symlink:
+a symlinked session, ticket or run dir is skipped and printed as a
+WARNING, so a delete can never reach outside `.pipeline/v2/<project>/`.
 
 Archived records are appended to `runs/v2/<project>.reset-archive.jsonl`
 before the live log is rewritten (temp file + rename), or deleted when a

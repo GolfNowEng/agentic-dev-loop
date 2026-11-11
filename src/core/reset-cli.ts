@@ -1,6 +1,7 @@
 /**
  * CLI entrypoint:
  *   node src/core/reset-cli.ts --project <name> [--ticket <KEY>] [--role research|dev|all]
+ *                              [--include-cross-role] [--ignore-live-worker]
  *                              [--dry-run] [--yes] [--close-remote] [--root <dir>]
  *
  * Deterministic "start fresh" reset of this repo's own v2 pipeline state
@@ -10,7 +11,11 @@
  * docs/reset.md.
  *
  * --role (default all) limits the reset to one role's run dirs and the
- * records containing a phase of that role.
+ * records containing a phase of that role. A matching record in which the
+ * OTHER role landed is refused (kept, listed as REFUSED in the plan) unless
+ * --include-cross-role.
+ * A real run refuses while a live worker holds a session lock, unless
+ * --ignore-live-worker; --dry-run only warns.
  * Without --ticket: the WHOLE project. Requires --yes.
  * --root: the state root (default: this repo's root); tests pass a temp dir.
  *
@@ -57,6 +62,8 @@ async function main(): Promise<void> {
   const skipConfirm = argv.includes("--yes");
   const closeRemote = argv.includes("--close-remote");
   const role = getArgValue(argv, "--role") ?? "all";
+  const includeCrossRole = argv.includes("--include-cross-role");
+  const ignoreLiveWorker = argv.includes("--ignore-live-worker");
   const rootArg = getArgValue(argv, "--root");
   const root = rootArg === undefined ? undefined : resolve(rootArg);
 
@@ -102,7 +109,15 @@ async function main(): Promise<void> {
     return;
   }
 
-  const plan = await planReset({ project: slug, ticket: ticketKey, role: role as ResetRole, config, root });
+  const plan = await planReset({
+    project: slug,
+    ticket: ticketKey,
+    role: role as ResetRole,
+    config,
+    root,
+    includeCrossRole,
+    ignoreLiveWorker,
+  });
 
   // The PR lookup reads the logs BEFORE executeReset archives records, and
   // runs under --dry-run too so the preview matches the real run.
@@ -135,6 +150,14 @@ async function main(): Promise<void> {
     console.error(
       "[reset] a whole-project reset (no --ticket) requires --yes to confirm -- " +
         "this deletes EVERY ticket's history for this project, not just one.",
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  if (plan.liveWorkerLocks.length > 0 && !ignoreLiveWorker) {
+    console.error(
+      `[reset] refusing: a live worker holds ${plan.liveWorkerLocks.join(", ")}. Stop it first, or pass --ignore-live-worker.`,
     );
     process.exitCode = 1;
     return;

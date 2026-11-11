@@ -369,13 +369,15 @@ describe("symlinks are never followed", () => {
   });
 
   it("skips a symlinked session, ticket or run dir with a WARNING, and never deletes outside", async () => {
+    const plans = [];
     for (const ticket of ["TARS-1", undefined]) {
       const plan = await planReset({ root, project: P, ticket });
       expect(plan.runDirsToRemove).toEqual([join(root, `.pipeline/v2/${P}/dev-3/TARS-1/research-20261110T000000Z`)]);
       expect(plan.warnings.filter((w) => /symlink/.test(w))).toHaveLength(3);
       expect(describeResetPlan(plan)).toMatch(/WARNING: skipped symlink/);
-      await executeReset(plan);
+      plans.push(plan);
     }
+    for (const plan of plans) await executeReset(plan);
     expect(await readFile(join(outside, "TARS-1/dev-20261110T000000Z/keep.txt"), "utf8")).toBe("precious");
     expect(await readFile(join(outside, "dev-20261110T000000Z/keep.txt"), "utf8")).toBe("precious");
   });

@@ -24,6 +24,16 @@ Optional:
   that role's `<role>-<RUN_ID>` run dirs and archives only the records that
   contain a phase of that role (or a pending `resume` of it); `all` archives
   every record for the ticket (or project).
+- `--include-cross-role` — with `--role research|dev`, also archive a
+  matching record whose **other** role has a `landed` phase. Without it
+  such records are refused (kept, and shown as
+  `REFUSED (other role landed: <role> <pr|outcome>)` in the plan), so a
+  research reset can never drop a landed dev PR that the landed guard,
+  reconcile and `--close-remote` rely on. Only pass it when you mean to
+  forget the other role's landed run too. No effect with `--role all`.
+- `--ignore-live-worker` — a real reset refuses while a live worker holds
+  a session lock for the project; this overrides that. Prefer stopping the
+  worker instead.
 - `--dry-run` (print the plans, act on nothing), `--yes` (skip the
   whole-project confirmation gate), `--close-remote` (see below — requires
   `--ticket`, refused for a whole-project reset).
@@ -127,7 +137,11 @@ npm run reset-project:remote -- --project=webtarsthree --ticket=TARS-1465 --clos
 
 Check the `scope: ... role: ...` line and the paths in the printed plan
 before a non-dry run. If the plan warns that a session lock is present,
-a worker may be running for the project: stop it first.
+a worker may be running for the project: stop it first (a real run
+refuses while the holder is alive). `REFUSED` lines are records kept on
+purpose (see `--include-cross-role`). `WARNING: skipped symlink` means a
+symlinked dir under `.pipeline/v2/<project>/` was not followed or
+deleted; inspect it by hand.
 
 ## What gets deleted locally (per-ticket)
 
