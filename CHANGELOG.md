@@ -21,6 +21,7 @@ detail and evidence: [docs/migration-ledger.md](docs/migration-ledger.md).
 
 ### Pipeline guards (behavior changes)
 
+- `[core]` `src/core/paths.ts` is the single owner of on-disk paths: validated identifiers, containment checks (`UnsafePathError`), v2 layout (`runs/v2/`, `.pipeline/v2/`). The `--phase` runners and reset use its `legacy*` functions until Task 13/14.
 - `[core]` Every `claude -p` spawn gets `--max-budget-usd` (from
   `ceilings.maxCostPerRunUsd`), and a run past `runTimeoutMin` is killed with
   SIGTERM, then SIGKILL after a grace period, instead of being left running.

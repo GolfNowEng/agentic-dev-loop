@@ -162,3 +162,13 @@ and total cost — the "are we succeeding over time" view.
 npm run stats                              # last 7 days, webtarsthree
 npm run stats -- --project webtarsthree --days 30
 ```
+
+### v2 path layout
+
+All paths come from `src/core/paths.ts` (validated segments, contained under
+the repo root). v2: `runs/v2/<project>.jsonl`; run dirs
+`.pipeline/v2/<project>/<session>/<ticket>/<phase>-<runId>/` (raw usage is
+`usage.json` inside); clone `.pipeline/v2/<project>/repo`; `.../sessions`.
+v1 archive: `runs/v1/<role>/<project>.jsonl`. The `--phase` runners still use
+the legacy `runs/<slug>.jsonl` and `.pipeline/<slug>/` via `legacy*` functions
+until they are removed.

@@ -4,12 +4,11 @@
 // assignee account id and ticket keys here.
 
 import type { RoleView } from "./types.ts";
+import { TICKET_KEY } from "./paths.ts";
 
 /** Jira Cloud account ids, e.g. "712020:0a1b2c3d-...". */
 const ACCOUNT_ID = /^[A-Za-z0-9:_-]+$/;
 
-/** A Jira issue key, e.g. "TARS-1465" (plan Global Constraints). */
-export const TICKET_KEY = /^[A-Z][A-Z0-9_]+-\d+$/;
 
 /**
  * Fill a role's pollJql template: {label} (the role's triggerLabel),

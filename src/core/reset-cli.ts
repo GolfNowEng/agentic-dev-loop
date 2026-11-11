@@ -44,6 +44,7 @@ import {
 import { credentialsFromEnv, RealJiraClient } from "./jira-client.ts";
 import { RealGitHubClient, realExecGh } from "./github-client.ts";
 import type { Config } from "./types.ts";
+import { legacyRunsLog } from "./paths.ts";
 
 function getArgValue(argv: string[], name: string): string | undefined {
   const eqPrefix = `${name}=`;
@@ -102,7 +103,7 @@ async function main(): Promise<void> {
   // is executed) keeps the dry-run preview honest about what a real run
   // would actually find.
   const remotePlan = closeRemote && ticketKey
-    ? await planRemoteClose(ticketKey, plan.runsLogPath ?? join(repoRoot, "runs", `${slug}.jsonl`))
+    ? await planRemoteClose(ticketKey, plan.runsLogPath ?? join(repoRoot, legacyRunsLog(slug)))
     : null;
 
   console.log(`[reset] project: ${projectName} (slug: ${slug})${ticketKey ? `, ticket: ${ticketKey}` : ", WHOLE PROJECT"}`);
@@ -157,7 +158,7 @@ async function main(): Promise<void> {
     const remoteSummary = await executeRemoteClose(remotePlan, {
       jiraClient,
       githubClient,
-      runsLogPath: plan.runsLogPath ?? join(repoRoot, "runs", `${slug}.jsonl`),
+      runsLogPath: plan.runsLogPath ?? join(repoRoot, legacyRunsLog(slug)),
     });
     console.log(describeRemoteCloseSummary(remoteSummary));
   }

@@ -50,6 +50,7 @@ import { readVerdictFile, agentErrorVerdict } from "./core/verdict.ts";
 import { redactSensitive } from "./core/redact.ts";
 import { decideNextAction } from "./core/poll-loop.ts";
 import { buildPollJql } from "./core/jql.ts";
+import { legacyRunsRoot, legacyRawUsageDir, legacyRunsLog, legacyRunDirs } from "./core/paths.ts";
 import { spawnClaudeRun, startProgressTail } from "./core/spawn-claude.ts";
 import { runLoopIteration as runDevIteration } from "./roles/dev/phase.ts";
 import type { RunSkillFn as DevRunSkillFn } from "./roles/dev/phase.ts";
@@ -530,8 +531,8 @@ async function main(): Promise<void> {
   const githubClient = new RealGitHubClient(config.github, realExecGh());
 
   const slug = repoSlugFromUrl(config.targetRepo.url);
-  await mkdir("runs", { recursive: true });
-  const rawUsageDir = join(".pipeline", slug, "raw-usage");
+  await mkdir(legacyRunsRoot(), { recursive: true });
+  const rawUsageDir = legacyRawUsageDir(slug);
   await mkdir(rawUsageDir, { recursive: true });
 
   const ctx: PhaseContext = {
@@ -544,8 +545,8 @@ async function main(): Promise<void> {
     jiraClient,
     githubClient,
     slug,
-    runsLogPath: join("runs", `${slug}.jsonl`),
-    runsBaseDir: join(".pipeline", slug, "runs"),
+    runsLogPath: legacyRunsLog(slug),
+    runsBaseDir: legacyRunDirs(slug),
     rawUsageDir,
     excludeClaudeMd,
   };

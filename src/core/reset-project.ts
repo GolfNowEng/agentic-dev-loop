@@ -15,6 +15,7 @@ import { readFile, writeFile, appendFile, rm, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { Config } from "./types.ts";
+import { legacyPipelineDir, legacyRawUsageDir, legacyRunDirs, legacyRunsArchive, legacyRunsLog } from "./paths.ts";
 
 /**
  * Shorten a path under the home directory to ~/... for display only --
@@ -102,16 +103,16 @@ export async function planReset(
   ticketKey: string | undefined,
   config: Config | null,
 ): Promise<ResetPlan> {
-  const runsLogPath = join(repoRoot, "runs", `${slug}.jsonl`);
-  const runsLogArchivePath = join(repoRoot, "runs", `${slug}.reset-archive.jsonl`);
+  const runsLogPath = join(repoRoot, legacyRunsLog(slug));
+  const runsLogArchivePath = join(repoRoot, legacyRunsArchive(slug));
   const runsLogExists = await readFile(runsLogPath, "utf8").then(
     () => true,
     () => false,
   );
 
-  const pipelineDir = join(repoRoot, ".pipeline", slug);
-  const pipelineRunsDir = join(pipelineDir, "runs");
-  const pipelineRawUsageDir = join(pipelineDir, "raw-usage");
+  const pipelineDir = join(repoRoot, legacyPipelineDir(slug));
+  const pipelineRunsDir = join(repoRoot, legacyRunDirs(slug));
+  const pipelineRawUsageDir = join(repoRoot, legacyRawUsageDir(slug));
 
   if (!ticketKey) {
     return {
