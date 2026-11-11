@@ -37,7 +37,8 @@ skill no longer writes those. Two cases:
   below as a fresh refinement. The ticket's description is never touched —
   it's the stakeholder's original and stays exactly as written, permanently.
 - **Re-pickup after human comments** (ticket status was reset to `To Do`
-  with a steering comment added, still carrying `triggerLabel` —
+  with a steering comment added, still carrying the research trigger label
+  (`roles.research.triggerLabel` in the project config) —
   research-loop's intake and spec-review territory is one combined label
   state, not two, so there's no label to swap between at this point): read
   the human's comment(s) as steering input, and **revise** the existing
@@ -404,9 +405,10 @@ produced the ticket rubber-stamping itself.
   2) — set `verdict.outcome: "ready"`. Nothing carrying the `✅` title is
   ever posted before this point, so a `✅` comment on the Issue always
   means "passed the verifier as written". The
-  ticket stays at `triggerLabel`, refined and awaiting human approval (the
-  loop runner only swaps the label to `handoffLabel` if `autoPromoteLabel`
-  is present — this skill just reports the verdict either way). On this
+  ticket stays at `roles.research.triggerLabel`, refined and awaiting
+  human approval (the loop runner only swaps the label to
+  `roles.research.handoffLabel` if the ticket carries the `auto-promote`
+  label — this skill just reports the verdict either way). On this
   passing verifier run, it also reports a `size_trajectory` object
   (`step4_tshirt`, `delta`, `final_score` — see
   `.claude/agents/verifier-agent.md`'s "Size scoring" section); copy that
@@ -625,12 +627,13 @@ requirement).
      they need — that should be rare, not the default path.>
 
    **Needs decision:**
-   - If `autoPromoteLabel` is configured for this project: omit this
-     whole "Needs decision" section entirely — there is nothing to
-     decide, the loop runner promotes automatically.
+   - If the ticket carries the `auto-promote` label (read its labels via
+     `getJiraIssue`): omit this whole "Needs decision" section entirely —
+     there is nothing to decide, the loop runner promotes automatically.
    - Otherwise: exactly one bullet, something like "Approve — move to
-     `<handoffLabel>` to send to dev-loop" (phrase it for this project's
-     actual configured label).
+     `<roles.research.handoffLabel>` to send to dev-loop" (phrase it for
+     this project's actual configured label, from
+     `pipeline.<project>.config.json`).
 
    [GitHub Issue](<url>)
    ```

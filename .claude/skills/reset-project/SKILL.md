@@ -10,7 +10,8 @@ state in its own root: the **dev** phase in this repo's `runs/` and
 `.pipeline/`, the **research** phase in `research-loop/runs/` and
 `research-loop/.pipeline/`. The same script resets either one -- which one
 depends on the directory you run it from (it resolves `runs/`,
-`.pipeline/` and `pipeline.<project>.config.json` from its cwd). See
+`.pipeline/` from its cwd, and `pipeline.<project>.config.json` from its
+cwd if any is there, else from the repo root). See
 "Running it" below. A `--role research|dev|all` flag that picks the role
 for you arrives in Task 14 of the 2.0.0 plan; until then, the cwd is the
 role selector.
@@ -122,7 +123,8 @@ npm run reset-project:remote -- --project=webtarsthree --ticket=TARS-1465 --clos
 **Research phase** (v1 state in `research-loop/runs/` and
 `research-loop/.pipeline/`): `research-loop/` has no `package.json` any
 more, so `npm run` does not work there. Run the same script from
-`research-loop/` directly, so it reads research's configs and state:
+`research-loop/` directly, so it reads research's state (the project config
+comes from the repo root; `research-loop/` has no copy since 2.0.0):
 
 ```bash
 cd research-loop

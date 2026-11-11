@@ -33,7 +33,8 @@
  */
 
 import { join } from "node:path";
-import { loadConfig, resolveProjectConfigPath, repoSlugFromUrl } from "./config.ts";
+import { loadConfig, resolveProjectConfigPath, repoSlugFromUrl, listAvailableProjects } from "./config.ts";
+import { resolve } from "node:path";
 import { planReset, executeReset, describeResetPlan, describeResetSummary } from "./reset-project.ts";
 import {
   planRemoteClose,
@@ -70,7 +71,12 @@ async function main(): Promise<void> {
     return;
   }
 
-  const configPath = await resolveProjectConfigPath(projectName);
+  // The cwd is the state root (runs/, .pipeline/). The project config is
+  // read from the cwd when it has any, else from this repo's root: since
+  // 2.0.0, research-loop/ (the research phase's v1 state root) has no
+  // config copies of its own.
+  const configDir = (await listAvailableProjects(".")).length > 0 ? "." : resolve(import.meta.dirname, "../..");
+  const configPath = await resolveProjectConfigPath(projectName, configDir);
   let config: Config | null = null;
   try {
     config = await loadConfig(configPath);

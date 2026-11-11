@@ -14,12 +14,12 @@ export const TICKET_KEY = /^[A-Z][A-Z0-9_]+-\d+$/;
 /**
  * Fill a role's pollJql template: {label} (the role's triggerLabel),
  * {repoLabel}, {assignee}, {bouncedStatus}, {prOpenStatus}. Throws on any
- * other `{name}` left in the template, and on an assignee id that is not a
- * Jira account id. Substitution is a single pass, so a `{...}` inside a
+ * other `{name}` left in the template, and (only when the template uses
+ * {assignee}) on an assignee id that is not a Jira account id. Substitution is a single pass, so a `{...}` inside a
  * substituted value is never re-expanded.
  */
 export function buildPollJql(view: RoleView, vars: { assigneeAccountId: string }): string {
-  if (!ACCOUNT_ID.test(vars.assigneeAccountId)) {
+  if (view.pollJql.includes("{assignee}") && !ACCOUNT_ID.test(vars.assigneeAccountId)) {
     throw new Error(
       `buildPollJql: the assignee account id must match ${ACCOUNT_ID} (check JIRA_ASSIGNEE_ACCOUNT_ID); got ${JSON.stringify(vars.assigneeAccountId)}`,
     );

@@ -56,6 +56,13 @@ detail and evidence: [docs/migration-ledger.md](docs/migration-ledger.md).
 - `[dev]` webtarsthree's dev poll is now `pipeline:v2.0.0:dev`, without the
   assignee clause. Both webtarsthree polls exclude `dev-loop-eval` tickets.
   Merge reconciliation removes the dev trigger label.
+- `[research]` ticket-refine decides whether to include the "Needs decision" section of its
+  `✅ research-loop -` comment by whether the ticket carries the `auto-promote` label (what the
+  runner swaps on), not by the removed `autoPromoteLabel` key. Without this, every comment would
+  have gained an "Approve — move to ..." bullet. For the same ticket, comment output now matches v1.
+- `[core]` `reset-project` run from `research-loop/` (the research phase's
+  state root) reads the project config from the repo root, since
+  `research-loop/` no longer has its own copy.
 
 ### Fixes now shared by both phases (ledger class a)
 
