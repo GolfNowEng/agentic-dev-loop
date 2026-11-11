@@ -2,34 +2,22 @@ import { describe, it, expect, vi } from "vitest";
 import { reconcileMergedTickets, findLandedPrUrl } from "../../../src/roles/dev/reconcile.ts";
 import type { JiraClient, JiraTicket } from "../../../src/core/jira-client.ts";
 import type { GitHubClient } from "../../../src/core/github-client.ts";
-import type { Config, RunLogLine } from "../../../src/core/types.ts";
+import type { DevView, RunLogLine } from "../../../src/core/types.ts";
+import { roleView } from "../../../src/core/config.ts";
+import { makeV2Config } from "../../fixtures/config.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-function makeConfig(): Config {
-  return {
-    jira: {
-      triggerLabel: "pipeline:research",
-      handoffLabel: "pipeline:dev",
-      repoLabel: "repo:webtarsthree",
-      claimStatus: { from: "Ready", to: "In Progress" },
-      pollJql: {
-        refine: 'labels = "{label}" ORDER BY created ASC',
-        dev: 'labels = "{label}" AND status != "{bouncedStatus}" ORDER BY created ASC',
-      },
-      statusNames: { bounced: "Blocked", prOpen: "Code Review" },
-      codeReviewFields: {
-        piiField: "customfield_13504",
-        piiNoImpactOptionId: "14310",
-        qaNotesField: "customfield_14226",
-      },
-    },
-    github: { repo: "org/repo" },
-    ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
-    autoPromoteLabel: "auto-promote",
-    targetRepo: { url: "git@github.com:org/repo.git", defaultBranch: "main" },
-  };
+/** The dev role's settings; its triggerLabel is the label reconcile removes. */
+function makeView(): DevView {
+  return roleView(
+    makeV2Config((c) => {
+      c.roles.research.handoffLabel = "pipeline:dev";
+      c.roles.dev.triggerLabel = "pipeline:dev";
+    }),
+    "dev",
+  );
 }
 
 function makeTicket(overrides: Partial<JiraTicket> = {}): JiraTicket {
@@ -126,7 +114,7 @@ describe("reconcileMergedTickets", () => {
       const jiraClient = makeJira();
       const githubClient = makeGh();
       const result = await reconcileMergedTickets({
-        jiraClient, githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
+        jiraClient, githubClient, view: makeView(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
       });
 
       expect(result).toEqual({ checked: 1, closed: ["PROJ-1"], errors: [] });
@@ -141,7 +129,7 @@ describe("reconcileMergedTickets", () => {
       const jiraClient = makeJira();
       const githubClient = makeGh();
       const result = await reconcileMergedTickets({
-        jiraClient, githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => open()), now: NOW,
+        jiraClient, githubClient, view: makeView(), runsLogPath, execGhPrView: vi.fn(async () => open()), now: NOW,
       });
 
       expect(result).toEqual({ checked: 1, closed: [], errors: [] });
@@ -156,7 +144,7 @@ describe("reconcileMergedTickets", () => {
       const githubClient = makeGh();
       const execGhFindMergedPr = vi.fn(async () => ({ url: "https://github.com/org/repo/pull/12", mergedAt: "2026-01-03T04:05:06Z" }));
       const result = await reconcileMergedTickets({
-        jiraClient, githubClient, config: makeConfig(), runsLogPath, now: NOW,
+        jiraClient, githubClient, view: makeView(), runsLogPath, now: NOW,
         execGhPrView: vi.fn(async () => JSON.stringify({ state: "CLOSED", mergedAt: null })),
         execGhFindMergedPr,
       });
@@ -174,7 +162,7 @@ describe("reconcileMergedTickets", () => {
       const jiraClient = makeJira();
       const githubClient = makeGh();
       const result = await reconcileMergedTickets({
-        jiraClient, githubClient, config: makeConfig(), runsLogPath, now: NOW,
+        jiraClient, githubClient, view: makeView(), runsLogPath, now: NOW,
         execGhPrView: vi.fn(async () => JSON.stringify({ state: "CLOSED", mergedAt: null })),
         execGhFindMergedPr: vi.fn(async () => null),
       });
@@ -189,7 +177,7 @@ describe("reconcileMergedTickets", () => {
     await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
       const execGhFindMergedPr = vi.fn(async () => null);
       await reconcileMergedTickets({
-        jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, now: NOW,
+        jiraClient: makeJira(), githubClient: makeGh(), view: makeView(), runsLogPath, now: NOW,
         execGhPrView: vi.fn(async () => open()),
         execGhFindMergedPr,
       });
@@ -201,7 +189,7 @@ describe("reconcileMergedTickets", () => {
     await withRunsLog([makeRunLogLine({ outcome: "bounced", pr: null, failure_category: "spec_ambiguous" })], async (runsLogPath) => {
       const execGhPrView = vi.fn();
       const result = await reconcileMergedTickets({
-        jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, execGhPrView, now: NOW,
+        jiraClient: makeJira(), githubClient: makeGh(), view: makeView(), runsLogPath, execGhPrView, now: NOW,
       });
       expect(result).toEqual({ checked: 0, closed: [], errors: [] });
       expect(execGhPrView).not.toHaveBeenCalled();
@@ -212,7 +200,7 @@ describe("reconcileMergedTickets", () => {
     await withRunsLog([makeRunLogLine({ started: "2025-11-01T00:00:00.000Z", ended: "2025-11-01T00:10:00.000Z" })], async (runsLogPath) => {
       const execGhPrView = vi.fn();
       const result = await reconcileMergedTickets({
-        jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, execGhPrView, now: NOW,
+        jiraClient: makeJira(), githubClient: makeGh(), view: makeView(), runsLogPath, execGhPrView, now: NOW,
       });
       expect(result.checked).toBe(0);
       expect(execGhPrView).not.toHaveBeenCalled();
@@ -228,7 +216,7 @@ describe("reconcileMergedTickets", () => {
       async (runsLogPath) => {
         const execGhPrView = vi.fn(async () => open());
         const result = await reconcileMergedTickets({
-          jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, execGhPrView, now: NOW,
+          jiraClient: makeJira(), githubClient: makeGh(), view: makeView(), runsLogPath, execGhPrView, now: NOW,
         });
         expect(result.checked).toBe(1);
         expect(execGhPrView).toHaveBeenCalledTimes(1);
@@ -244,7 +232,7 @@ describe("reconcileMergedTickets", () => {
         findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "x", state: "CLOSED" as const })),
       });
       const result = await reconcileMergedTickets({
-        jiraClient, githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
+        jiraClient, githubClient, view: makeView(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
       });
 
       expect(result.closed).toEqual(["PROJ-1"]);
@@ -258,7 +246,7 @@ describe("reconcileMergedTickets", () => {
     await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
       const execGhPrView = vi.fn(async () => merged());
       const reconciled = new Set<string>();
-      const deps = { jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, execGhPrView, now: NOW, reconciled };
+      const deps = { jiraClient: makeJira(), githubClient: makeGh(), view: makeView(), runsLogPath, execGhPrView, now: NOW, reconciled };
 
       await reconcileMergedTickets(deps);
       const second = await reconcileMergedTickets(deps);
@@ -273,7 +261,7 @@ describe("reconcileMergedTickets", () => {
       const jiraClient = makeJira({ removeLabel: vi.fn(async () => { throw new Error("jira 500"); }) });
       const githubClient = makeGh();
       const result = await reconcileMergedTickets({
-        jiraClient, githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
+        jiraClient, githubClient, view: makeView(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
       });
 
       expect(githubClient.closeIssue).toHaveBeenCalledWith(42, "completed");
@@ -293,7 +281,7 @@ describe("reconcileMergedTickets", () => {
           return merged();
         });
         const result = await reconcileMergedTickets({
-          jiraClient: makeJira(), githubClient: makeGh(), config: makeConfig(), runsLogPath, execGhPrView, now: NOW,
+          jiraClient: makeJira(), githubClient: makeGh(), view: makeView(), runsLogPath, execGhPrView, now: NOW,
         });
 
         expect(result.checked).toBe(2);
@@ -309,7 +297,7 @@ describe("reconcileMergedTickets -- close comment", () => {
     await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
       const githubClient = makeGh();
       await reconcileMergedTickets({
-        jiraClient: makeJira(), githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
+        jiraClient: makeJira(), githubClient, view: makeView(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
       });
 
       const [issueNumber, body] = (githubClient.addComment as ReturnType<typeof vi.fn>).mock.calls[0] as [number, string];
@@ -334,7 +322,7 @@ describe("reconcileMergedTickets -- close comment", () => {
     await withRunsLog([makeRunLogLine()], async (runsLogPath) => {
       const githubClient = makeGh({ addComment: vi.fn(async () => { throw new Error("rate limited"); }) });
       const result = await reconcileMergedTickets({
-        jiraClient: makeJira(), githubClient, config: makeConfig(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
+        jiraClient: makeJira(), githubClient, view: makeView(), runsLogPath, execGhPrView: vi.fn(async () => merged()), now: NOW,
       });
       expect(githubClient.closeIssue).toHaveBeenCalledWith(42, "completed");
       expect(result.errors).toEqual([]);

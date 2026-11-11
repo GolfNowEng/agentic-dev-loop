@@ -4,34 +4,16 @@ import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { planReset, executeReset, describeResetPlan, describeResetSummary } from "../../src/core/reset-project.ts";
 import type { Config } from "../../src/core/types.ts";
+import { makeV2Config } from "../fixtures/config.ts";
 
 function makeConfig(targetRepoPath?: string): Config {
-  return {
-    jira: {
-      triggerLabel: "pipeline:dev",
-      handoffLabel: "pipeline:dev",
-      repoLabel: "repo:webtarsthree",
-      claimStatus: { from: "To Do", to: "In Progress" },
-      pollJql: {
-        refine: 'labels = "{label}" ORDER BY created ASC',
-        dev: 'labels = "{label}" AND assignee = "{assignee}" ORDER BY created ASC',
-      },
-      statusNames: { bounced: "Blocked", prOpen: "Code Review" },
-      codeReviewFields: {
-        piiField: "customfield_13504",
-        piiNoImpactOptionId: "14310",
-        qaNotesField: "customfield_14226",
-      },
-    },
-    ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
-    autoPromoteLabel: "auto-promote",
-    targetRepo: {
+  return makeV2Config((c) => {
+    c.targetRepo = {
       url: "git@github.com:fandango/webtarsthree.git",
       defaultBranch: "master",
       ...(targetRepoPath ? { path: targetRepoPath } : {}),
-    },
-    github: { repo: "fandango/webtarsthree" },
-  };
+    };
+  });
 }
 
 describe("planReset", () => {

@@ -1,37 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
 import { runLoopIteration } from "../../../src/roles/dev/phase.ts";
-import { buildQaNotesAdf, buildBounceCommentAdf } from "../../../src/roles/dev/code-review.ts";import type { RunSkillFn, LoopIterationDeps, LoopIterationResult } from "../../../src/roles/dev/phase.ts";
+import { buildQaNotesAdf, buildBounceCommentAdf } from "../../../src/roles/dev/code-review.ts";
+import type { RunSkillFn, LoopIterationDeps, LoopIterationResult } from "../../../src/roles/dev/phase.ts";
 import type { JiraClient, JiraTicket } from "../../../src/core/jira-client.ts";
 import type { GitHubClient } from "../../../src/core/github-client.ts";
-import type { Config, ExecutorVerdict } from "../../../src/core/types.ts";
+import type { DevView, ExecutorVerdict } from "../../../src/core/types.ts";
+import { roleView } from "../../../src/core/config.ts";
+import { makeV2Config } from "../../fixtures/config.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const ASSIGNEE_ACCOUNT_ID = "user-123";
 
-function makeConfig(): Config {
-  return {
-    jira: {
-      triggerLabel: "pipeline:research",
-      handoffLabel: "pipeline:dev",
-      claimStatus: { from: "Ready", to: "In Progress" },
-      pollJql: {
-        refine: 'labels = "{label}" ORDER BY created ASC',
-        dev: 'labels = "{label}" AND assignee = "{assignee}" ORDER BY created ASC',
-      },
-      statusNames: { bounced: "Blocked", prOpen: "In Progress" },
-      codeReviewFields: {
-        piiField: "customfield_13504",
-        piiNoImpactOptionId: "14310",
-        qaNotesField: "customfield_14226",
-      },
-    },
-    ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
-    autoPromoteLabel: "auto-promote",
-    targetRepo: { url: "git@github.com:org/repo.git", defaultBranch: "main" },
-    github: { repo: "fandango/webtarsthree" },
-  };
+/** The dev role's settings, built the way main.ts builds them: roleView over a v2 Config. */
+function makeView(): DevView {
+  return roleView(
+    makeV2Config((c) => {
+      c.jira.claimStatus = { from: "Ready", to: "In Progress" };
+      c.jira.statusNames = { bounced: "Blocked", prOpen: "In Progress" };
+      c.roles.dev.pollJql = 'labels = "{label}" AND assignee = "{assignee}" ORDER BY created ASC';
+      c.ceilings.maxRunsPerDay = 10;
+      c.roles.dev.ceilings = { maxCostPerRunUsd: 5, runTimeoutMin: 30 };
+    }),
+    "dev",
+  );
 }
 
 /** Ticket already assigned to the configured human -- the common case in most tests below. */
@@ -97,7 +90,7 @@ function makeDeps(overrides: Partial<LoopIterationDeps> = {}): LoopIterationDeps
   return {
     jiraClient: makeMockJiraClient(),
     githubClient: makeMockGitHubClient(),
-    config: makeConfig(),
+    view: makeView(),
     runSkill: vi.fn(),
     loopKind: "dev",
     runsLogPath: "",
@@ -299,14 +292,14 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const config = makeConfig();
+      const view = makeView();
       const deps = makeDeps({
         jiraClient,
-        config,
+        view,
         runSkill,
         runsLogPath,
         // Already at the ceiling before this run even started.
-        runsToday: config.ceilings.maxRunsPerDay,
+        runsToday: view.ceilings.maxRunsPerDay,
       });
 
       const result = await runLoopIteration(deps);
@@ -327,16 +320,16 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
-        verdict: makeVerdict({ cost_usd: config.ceilings.maxCostPerRunUsd + 1 }),
+        verdict: makeVerdict({ cost_usd: view.limits.maxCostPerRunUsd + 1 }),
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:05:00Z",
-        costUsd: config.ceilings.maxCostPerRunUsd + 1,
+        costUsd: view.limits.maxCostPerRunUsd + 1,
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -354,7 +347,7 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
+      const view = makeView();
       // The skill under-reports its own cost (e.g. a bug, or a misbehaving
       // agent) but the measured cost from the claude -p spawn is what
       // actually breaches the ceiling -- checkCeilings must trust the
@@ -363,11 +356,11 @@ describe("runLoopIteration", () => {
         verdict: makeVerdict({ cost_usd: 0.01 }),
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:05:00Z",
-        costUsd: config.ceilings.maxCostPerRunUsd + 1,
+        costUsd: view.limits.maxCostPerRunUsd + 1,
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -385,17 +378,17 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({ outcome: "landed" }),
         started: "2026-08-16T14:02:11Z",
         ended: "2026-08-16T14:05:00Z",
         // Breaches maxCostPerRunUsd, but only known AFTER the run completed.
-        costUsd: config.ceilings.maxCostPerRunUsd + 1,
+        costUsd: view.limits.maxCostPerRunUsd + 1,
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -407,7 +400,7 @@ describe("runLoopIteration", () => {
       expect(jiraClient.swapLabel).not.toHaveBeenCalled();
       expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
         "PROJ-4c",
-        config.jira.statusNames.prOpen,
+        view.statusNames.prOpen,
         expect.anything(),
       );
       const raw = await readFile(runsLogPath, "utf8");
@@ -426,7 +419,7 @@ describe("runLoopIteration", () => {
           throw new Error('PUT ... -> 400 Bad Request. {"errors":{"customfield_13504":"..."}}');
         }),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({ outcome: "landed" }),
         started: "2026-08-16T14:02:11Z",
@@ -435,7 +428,7 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       let result: LoopIterationResult | undefined;
       await expect(
@@ -461,7 +454,7 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict(),
         // Timeout is 30 min; make this run take much longer.
@@ -471,7 +464,7 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -489,7 +482,7 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({ outcome: "landed" }),
         started: "2026-08-16T14:02:11Z",
@@ -498,7 +491,7 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -510,7 +503,7 @@ describe("runLoopIteration", () => {
       expect(jiraClient.swapLabel).not.toHaveBeenCalled();
       expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
         "PROJ-6",
-        config.jira.statusNames.prOpen,
+        view.statusNames.prOpen,
         expect.anything(),
       );
     });
@@ -522,7 +515,7 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({
           outcome: "landed",
@@ -535,18 +528,18 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       await runLoopIteration(deps);
 
       expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
         "PROJ-6b",
-        config.jira.statusNames.prOpen,
+        view.statusNames.prOpen,
         {
-          [config.jira.codeReviewFields.piiField]: [
-            { id: config.jira.codeReviewFields.piiNoImpactOptionId },
+          [view.codeReviewFields.piiField]: [
+            { id: view.codeReviewFields.piiNoImpactOptionId },
           ],
-          [config.jira.codeReviewFields.qaNotesField]: expect.objectContaining({
+          [view.codeReviewFields.qaNotesField]: expect.objectContaining({
             type: "doc",
             content: expect.arrayContaining([
               expect.objectContaining({
@@ -569,7 +562,7 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({ outcome: "landed" }),
         started: "2026-08-16T14:02:11Z",
@@ -578,7 +571,7 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath, loopKind: "refine" });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath, loopKind: "refine" });
 
       await runLoopIteration(deps);
 
@@ -592,7 +585,7 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({
           outcome: "bounced",
@@ -607,7 +600,7 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -621,7 +614,7 @@ describe("runLoopIteration", () => {
       // exists for.
       expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
         "PROJ-7",
-        config.jira.statusNames.bounced,
+        view.statusNames.bounced,
       );
     });
   });
@@ -632,7 +625,7 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({
           outcome: "bounced",
@@ -647,7 +640,7 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       await runLoopIteration(deps);
 
@@ -792,7 +785,7 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({ outcome: "landed" }),
         started: "2026-08-16T14:02:11Z",
@@ -801,7 +794,7 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       await runLoopIteration(deps);
 
@@ -818,7 +811,7 @@ describe("runLoopIteration", () => {
           throw new Error("POST ... -> 400 Bad Request");
         }),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({
           outcome: "bounced",
@@ -832,7 +825,7 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       let result: LoopIterationResult | undefined;
       await expect(
@@ -847,7 +840,7 @@ describe("runLoopIteration", () => {
       }
       expect(jiraClient.transitionStatus).toHaveBeenCalledWith(
         "PROJ-7d",
-        config.jira.statusNames.bounced,
+        view.statusNames.bounced,
       );
     });
   });
@@ -858,7 +851,7 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
+      const view = makeView();
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({
           outcome: "bounced",
@@ -873,7 +866,7 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -886,14 +879,14 @@ describe("runLoopIteration", () => {
   it("a bounced verdict with an existing PR self-heals the status to Code Review when the ticket is NOT already there -- otherwise the ticket is stuck at whatever status it's really at (e.g. the original Code Review transition silently failed) with no path back, so it keeps re-matching pollJql.dev forever. Confirmed live on TARS-1465: PR #431 landed but the ticket's real status stayed 'In Progress' (the original transition never took), so it re-ran and re-bounced 7+ times over 45 minutes with no self-correction.", async () => {
     await withTempRunsLog(async (runsLogPath) => {
       // Ticket status is "In Progress" (makeTicket's default) while
-      // config.jira.statusNames.prOpen is "Code Review" -- the two differ,
+      // view.statusNames.prOpen is "Code Review" -- the two differ,
       // modeling a ticket whose Code Review transition never actually took.
       const ticket = makeTicket({ key: "TARS-1465" });
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
-      config.jira.statusNames.prOpen = "Code Review";
+      const view = makeView();
+      view.statusNames.prOpen = "Code Review";
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({
           outcome: "bounced",
@@ -907,7 +900,7 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 
@@ -928,8 +921,8 @@ describe("runLoopIteration", () => {
       const jiraClient = makeMockJiraClient({
         pollOldestMatching: vi.fn(async () => ticket),
       });
-      const config = makeConfig();
-      config.jira.statusNames.prOpen = "Code Review";
+      const view = makeView();
+      view.statusNames.prOpen = "Code Review";
       const runSkill: RunSkillFn = vi.fn(async () => ({
         verdict: makeVerdict({
           outcome: "bounced",
@@ -943,7 +936,7 @@ describe("runLoopIteration", () => {
         tokens: MEASURED_TOKENS,
       }));
 
-      const deps = makeDeps({ jiraClient, config, runSkill, runsLogPath });
+      const deps = makeDeps({ jiraClient, view, runSkill, runsLogPath });
 
       const result = await runLoopIteration(deps);
 

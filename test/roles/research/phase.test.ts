@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { runLoopIteration } from "../../../src/roles/research/phase.ts";
 import type { RunSkillFn, RunSkillResult, RunLoopIterationDeps, LoopIterationResult } from "../../../src/roles/research/phase.ts";
 import type { JiraClient, JiraTicket } from "../../../src/core/jira-client.ts";
-import type { Config } from "../../../src/core/types.ts";
+import type { ResearchView } from "../../../src/core/types.ts";
+import { roleView } from "../../../src/core/config.ts";
+import { makeV2Config } from "../../fixtures/config.ts";
 import { readRunLog, appendRunLog } from "../../../src/core/runs-log.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -10,26 +12,20 @@ import * as path from "node:path";
 
 const ASSIGNEE_ACCOUNT_ID = "user-123";
 
-function makeConfig(overrides: Partial<Config["ceilings"]> = {}): Config {
-  return {
-    jira: {
-      triggerLabel: "pipeline:research",
-      handoffLabel: "pipeline:dev",
-      repoLabel: "repo:org-repo",
-      claimStatus: { from: "Backlog", to: "In Progress" },
-      pollJql: { refine: 'labels = "{label}"', dev: 'labels = "{label}"' },
-      statusNames: { bounced: "Blocked", prOpen: "In Progress" },
-    },
-    ceilings: {
-      maxRunsPerDay: 100,
-      maxCostPerRunUsd: 50,
-      runTimeoutMin: 60,
-      ...overrides,
-    },
-    autoPromoteLabel: "auto-promote",
-    targetRepo: { url: "git@github.com:org/repo.git", defaultBranch: "main" },
-    github: { repo: "org/repo" },
-  };
+/** The research role's settings, built the way main.ts builds them: roleView over a v2 Config. */
+function makeView(limits: Partial<ResearchView["limits"]> = {}): ResearchView {
+  const view = roleView(
+    makeV2Config((c) => {
+      c.roles.research.triggerLabel = "pipeline:research";
+      c.roles.research.handoffLabel = "pipeline:dev";
+      c.roles.dev.triggerLabel = "pipeline:dev";
+      c.jira.claimStatus = { from: "Backlog", to: "In Progress" };
+      c.jira.statusNames = { bounced: "Blocked", prOpen: "In Progress" };
+      c.roles.research.ceilings = { maxCostPerRunUsd: 50, runTimeoutMin: 60 };
+    }),
+    "research",
+  );
+  return { ...view, limits: { ...view.limits, ...limits } };
 }
 
 /** Ticket already assigned to the configured human -- the common case in most tests below. */
@@ -98,7 +94,7 @@ describe("runLoopIteration", () => {
   function makeDeps(overrides: Partial<RunLoopIterationDeps> = {}): RunLoopIterationDeps {
     return {
       jiraClient: makeMockJiraClient(),
-      config: makeConfig(),
+      view: makeView(),
       jql: "epic in (EPIC-1)",
       runSkill: vi.fn(async () => makeRunSkillResult()),
       runsLogPath,
@@ -297,7 +293,7 @@ describe("runLoopIteration", () => {
     const result = await runLoopIteration(
       makeDeps({
         jiraClient,
-        config: makeConfig({ maxRunsPerDay: 1 }),
+        view: makeView({ maxRunsPerDay: 1 }),
         runSkill,
         runsToday: 1, // already at the ceiling before this run
       }),
@@ -314,7 +310,7 @@ describe("runLoopIteration", () => {
     );
 
     const result = await runLoopIteration(
-      makeDeps({ jiraClient, config: makeConfig({ maxCostPerRunUsd: 5 }), runSkill }),
+      makeDeps({ jiraClient, view: makeView({ maxCostPerRunUsd: 5 }), runSkill }),
     );
 
     expect(result.action).toBe("paused-ceiling");
@@ -334,9 +330,9 @@ describe("runLoopIteration", () => {
         }),
       }),
     );
-    const config = makeConfig({ maxCostPerRunUsd: 5 });
+    const view = makeView({ maxCostPerRunUsd: 5 });
 
-    const result = await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
+    const result = await runLoopIteration(makeDeps({ jiraClient, view, runSkill }));
 
     expect(result.action).toBe("paused-ceiling");
     // The verdict was real and passing -- its consequences must still happen,
@@ -420,7 +416,7 @@ describe("runLoopIteration", () => {
     );
 
     const result = await runLoopIteration(
-      makeDeps({ jiraClient, config: makeConfig({ runTimeoutMin: 30 }), runSkill }),
+      makeDeps({ jiraClient, view: makeView({ runTimeoutMin: 30 }), runSkill }),
     );
 
     expect(result.action).toBe("paused-ceiling");
@@ -439,9 +435,9 @@ describe("runLoopIteration", () => {
         }),
       }),
     );
-    const config = makeConfig();
+    const view = makeView();
 
-    await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
+    await runLoopIteration(makeDeps({ jiraClient, view, runSkill }));
 
     expect(jiraClient.swapLabel).not.toHaveBeenCalled();
   });
@@ -462,14 +458,14 @@ describe("runLoopIteration", () => {
         }),
       }),
     );
-    const config = makeConfig();
+    const view = makeView();
 
-    await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
+    await runLoopIteration(makeDeps({ jiraClient, view, runSkill }));
 
     expect(jiraClient.swapLabel).toHaveBeenCalledWith(
       "PROJ-142",
-      config.jira.triggerLabel,
-      config.jira.handoffLabel,
+      view.triggerLabel,
+      view.handoffLabel,
     );
   });
 
@@ -485,9 +481,9 @@ describe("runLoopIteration", () => {
         }),
       }),
     );
-    const config = makeConfig();
+    const view = makeView();
 
-    const result = await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
+    const result = await runLoopIteration(makeDeps({ jiraClient, view, runSkill }));
 
     expect(jiraClient.swapLabel).not.toHaveBeenCalled();
     expect(result.logLine?.outcome).toBe("landed");
@@ -505,9 +501,9 @@ describe("runLoopIteration", () => {
         }),
       }),
     );
-    const config = makeConfig();
+    const view = makeView();
 
-    const result = await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
+    const result = await runLoopIteration(makeDeps({ jiraClient, view, runSkill }));
 
     expect(result.logLine?.outcome).toBe("bounced");
     expect(jiraClient.swapLabel).not.toHaveBeenCalled();
@@ -535,12 +531,12 @@ describe("runLoopIteration", () => {
         }),
       }),
     );
-    const config = makeConfig();
+    const view = makeView();
 
     let result: LoopIterationResult | undefined;
     await expect(
       (async () => {
-        result = await runLoopIteration(makeDeps({ jiraClient, config, runSkill }));
+        result = await runLoopIteration(makeDeps({ jiraClient, view, runSkill }));
       })(),
     ).resolves.not.toThrow();
 

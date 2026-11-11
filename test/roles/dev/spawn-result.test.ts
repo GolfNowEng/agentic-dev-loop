@@ -7,23 +7,16 @@ import { runLoopIteration } from "../../../src/roles/dev/phase.ts";
 import type { SpawnClaudeResult } from "../../../src/core/spawn-claude.ts";
 import type { JiraClient } from "../../../src/core/jira-client.ts";
 import type { GitHubClient } from "../../../src/core/github-client.ts";
-import type { Config } from "../../../src/core/types.ts";
+import type { DevView } from "../../../src/core/types.ts";
+import { roleView } from "../../../src/core/config.ts";
+import { makeV2Config } from "../../fixtures/config.ts";
 
-const config: Config = {
-  jira: {
-    triggerLabel: "pipeline:dev",
-    handoffLabel: "pipeline:dev",
-    repoLabel: "repo:x",
-    claimStatus: { from: "Ready", to: "In Progress" },
-    pollJql: { refine: 'labels = "{label}"', dev: 'labels = "{label}"' },
-    statusNames: { bounced: "Blocked", prOpen: "Code Review" },
-    codeReviewFields: { piiField: "f1", piiNoImpactOptionId: "o1", qaNotesField: "f2" },
-  },
-  ceilings: { maxRunsPerDay: 100, maxCostPerRunUsd: 10, runTimeoutMin: 75 },
-  autoPromoteLabel: "auto-promote",
-  targetRepo: { url: "git@github.com:org/repo.git", defaultBranch: "main" },
-  github: { repo: "org/repo" },
-};
+const view: DevView = roleView(
+  makeV2Config((c) => {
+    c.roles.dev.ceilings = { maxCostPerRunUsd: 10, runTimeoutMin: 75 };
+  }),
+  "dev",
+);
 
 function spawnErrorRun(): SpawnClaudeResult {
   return {
@@ -83,7 +76,7 @@ describe("devEarlySkillResult", () => {
       const result = await runLoopIteration({
         jiraClient,
         githubClient,
-        config,
+        view,
         runSkill: async () => devEarlySkillResult(spawnErrorRun(), 75)!,
         loopKind: "dev",
         runsLogPath,

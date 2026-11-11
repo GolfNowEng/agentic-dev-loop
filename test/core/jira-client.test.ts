@@ -7,21 +7,12 @@ import {
   type JiraCredentials,
 } from "../../src/core/jira-client.ts";
 import type { Config } from "../../src/core/types.ts";
+import { makeV2Config } from "../fixtures/config.ts";
 
-function makeConfig(overrides: Partial<Config["jira"]> = {}): Config {
-  return {
-    jira: {
-      triggerLabel: "pipeline:research",
-      handoffLabel: "pipeline:dev",
-      claimStatus: { from: "Backlog", to: "In Progress" },
-      pollJql: { refine: 'labels = "{label}"', dev: 'labels = "{label}"' },
-      ...overrides,
-    },
-    ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
-    autoPromoteLabel: "auto-promote",
-    targetRepo: { url: "git@github.com:org/repo.git", defaultBranch: "main" },
-    github: { repo: "fandango/webtarsthree" },
-  };
+function makeConfig(): Config {
+  return makeV2Config((c) => {
+    c.github.repo = "fandango/webtarsthree";
+  });
 }
 
 const CREDENTIALS: JiraCredentials = {

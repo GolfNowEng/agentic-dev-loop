@@ -2,45 +2,26 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   loadConfig,
   loadLoopConfig,
-  findPlaceholders,
-  assertNoPlaceholders,
+  validateConfig,
+  requiredPlaceholderFree,
+  roleView,
+  labelVersion,
+  checkLabelVersion,
+  ConfigError,
   repoSlugFromUrl,
   targetRepoAddDir,
   listAvailableProjects,
   resolveProjectConfigPath,
-  requireCodeReviewFields,
 } from "../../src/core/config.ts";
-import type { Config } from "../../src/core/types.ts";
+import type { Config, Role } from "../../src/core/types.ts";
+import { makeV2Config } from "../fixtures/config.ts";
 import * as fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-function makeConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    jira: {
-      triggerLabel: "pipeline:research",
-      handoffLabel: "pipeline:dev",
-      repoLabel: "repo:webtarsthree",
-      claimStatus: { from: "To Do", to: "In Progress" },
-      pollJql: {
-        refine: 'labels = "{label}" AND labels = "{repoLabel}" ORDER BY created ASC',
-        dev: 'labels = "{label}" AND labels = "{repoLabel}" AND assignee = "{assignee}" ORDER BY created ASC',
-      },
-      statusNames: { bounced: "Blocked", prOpen: "Code Review" },
-      codeReviewFields: {
-        piiField: "customfield_13504",
-        piiNoImpactOptionId: "14310",
-        qaNotesField: "customfield_14226",
-      },
-      ...overrides.jira,
-    },
-    ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 45 },
-    autoPromoteLabel: "auto-promote",
-    targetRepo: { url: "git@github.com:fandango/webtarsthree.git", defaultBranch: "master" },
-    github: { repo: "fandango/webtarsthree" },
-    ...overrides,
-  };
-}
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
+const PROJECTS = ["webtarsthree", "catalog-ui-management", "catalog-ui-public"] as const;
 
 describe("repoSlugFromUrl", () => {
   it("derives a slug from an SSH URL with a .git suffix", () => {
@@ -66,20 +47,14 @@ describe("repoSlugFromUrl", () => {
 
 describe("targetRepoAddDir", () => {
   it("returns targetRepo.path when set, so the spawned claude session can be granted directory access to it", () => {
-    const config = makeConfig({
-      targetRepo: {
-        url: "git@github.com:fandango/webtarsthree.git",
-        defaultBranch: "master",
-        path: "/Users/me/Repos/webtarsthree",
-      },
+    const config = makeV2Config((c) => {
+      c.targetRepo.path = "/Users/me/Repos/webtarsthree";
     });
     expect(targetRepoAddDir(config)).toBe("/Users/me/Repos/webtarsthree");
   });
 
   it("returns null when targetRepo.path is unset (clone-based flow stays inside dev-loop's own cwd)", () => {
-    const config = makeConfig({
-      targetRepo: { url: "git@github.com:fandango/webtarsthree.git", defaultBranch: "master" },
-    });
+    const config = makeV2Config();
     expect(targetRepoAddDir(config)).toBeNull();
   });
 });
@@ -161,12 +136,24 @@ describe("loadConfig", () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  it("reads and parses a config file at the given path", async () => {
+  it("reads, parses and validates a v2 config file at the given path", async () => {
     const filePath = path.join(dir, "pipeline.webtarsthree.config.json");
-    await fs.writeFile(filePath, JSON.stringify(makeConfig()), "utf8");
+    await fs.writeFile(filePath, JSON.stringify(makeV2Config()), "utf8");
     const config = await loadConfig(filePath);
-    expect(config.targetRepo.url).toBe("git@github.com:fandango/webtarsthree.git");
-    expect(config.jira.handoffLabel).toBe("pipeline:dev");
+    expect(config.roles.dev.triggerLabel).toBe("pipeline:v2.0.0:dev");
+  });
+
+  it("throws a ConfigError naming the file when the content fails validation", async () => {
+    const filePath = path.join(dir, "pipeline.x.config.json");
+    await fs.writeFile(filePath, JSON.stringify({ ...makeV2Config(), roles: undefined }), "utf8");
+    await expect(loadConfig(filePath)).rejects.toThrow(ConfigError);
+    await expect(loadConfig(filePath)).rejects.toThrow(/pipeline\.x\.config\.json/);
+  });
+
+  it("throws a ConfigError on invalid JSON", async () => {
+    const filePath = path.join(dir, "pipeline.x.config.json");
+    await fs.writeFile(filePath, "{ not json", "utf8");
+    await expect(loadConfig(filePath)).rejects.toThrow(ConfigError);
   });
 
   it("throws if the file does not exist", async () => {
@@ -176,6 +163,365 @@ describe("loadConfig", () => {
   it("requires an explicit path -- there is no implicit default config file", async () => {
     // @ts-expect-error -- path is a required argument, not optional
     await expect(loadConfig()).rejects.toThrow();
+  });
+});
+
+describe("validateConfig", () => {
+  const valid = makeV2Config();
+
+  it("returns a valid config unchanged", () => {
+    expect(validateConfig(structuredClone(valid))).toEqual(valid);
+  });
+
+  it("rejects autoPromoteLabel", () => {
+    expect(() => validateConfig({ ...valid, autoPromoteLabel: "auto-promote" })).toThrow(
+      /autoPromoteLabel was removed in 2.0.0/,
+    );
+  });
+
+  it("rejects unknown top-level keys and missing roles", () => {
+    expect(() => validateConfig({ ...valid, surprise: 1 })).toThrow(/unknown key "surprise"/);
+    const { roles: _roles, ...noRoles } = valid;
+    expect(() => validateConfig(noRoles)).toThrow(/roles/);
+    expect(() => validateConfig({ ...valid, roles: { research: valid.roles.research } })).toThrow(
+      /roles\.dev/,
+    );
+  });
+
+  it("rejects a v1-shaped config (jira.triggerLabel / jira.pollJql / jira.codeReviewFields)", () => {
+    const v1 = JSON.parse(
+      readFileSync(path.join(REPO_ROOT, "docs/changelog/legacy-config/dev-loop/pipeline.webtarsthree.config.json"), "utf8"),
+    );
+    expect(() => validateConfig(v1)).toThrow(ConfigError);
+    expect(() =>
+      validateConfig({ ...valid, jira: { ...valid.jira, triggerLabel: "pipeline:dev" } }),
+    ).toThrow(/jira: unknown key "triggerLabel"/);
+  });
+
+  it("rejects unknown keys inside roles and ceilings", () => {
+    expect(() =>
+      validateConfig(makeV2Config((c) => Object.assign(c.roles.research, { codeReviewFields: {} }))),
+    ).toThrow(/roles\.research: unknown key "codeReviewFields"/);
+    expect(() =>
+      validateConfig(makeV2Config((c) => Object.assign(c.ceilings, { maxCostPerRunUsd: 5 }))),
+    ).toThrow(/ceilings: unknown key "maxCostPerRunUsd"/);
+  });
+
+  it("requires ceilings.maxAttemptsPerTicket and ceilings.maxCostPerTicketUsd", () => {
+    for (const key of ["maxRunsPerDay", "maxAttemptsPerTicket", "maxCostPerTicketUsd"] as const) {
+      const c = makeV2Config() as unknown as { ceilings: Record<string, unknown> };
+      delete c.ceilings[key];
+      expect(() => validateConfig(c)).toThrow(new RegExp(`ceilings\\.${key}`));
+    }
+  });
+
+  it("rejects a non-positive or non-numeric ceilings.maxCostPerTicketUsd", () => {
+    for (const bad of [0, -1, "50", Number.NaN, Number.POSITIVE_INFINITY, null]) {
+      const c = makeV2Config((x) => {
+        (x.ceilings as { maxCostPerTicketUsd: unknown }).maxCostPerTicketUsd = bad;
+      });
+      expect(() => validateConfig(c)).toThrow(/ceilings\.maxCostPerTicketUsd must be a number > 0/);
+    }
+    expect(validateConfig(makeV2Config((x) => (x.ceilings.maxCostPerTicketUsd = 0.5))).ceilings.maxCostPerTicketUsd).toBe(0.5);
+  });
+
+  it("rejects a non-positive per-role ceiling and a non-integer count ceiling", () => {
+    expect(() => validateConfig(makeV2Config((c) => (c.roles.dev.ceilings.runTimeoutMin = 0)))).toThrow(
+      /roles\.dev\.ceilings\.runTimeoutMin/,
+    );
+    expect(() => validateConfig(makeV2Config((c) => (c.ceilings.maxAttemptsPerTicket = 1.5)))).toThrow(
+      /ceilings\.maxAttemptsPerTicket/,
+    );
+  });
+
+  it.each([
+    ['"', 'pipeline:v2.0.0" OR project = X'],
+    ["\\", "pipeline:v2.0.0\\"],
+    ["newline", "pipeline:v2.0.0\nOR"],
+  ])("rejects a label or status value containing %s (they are interpolated into JQL)", (_name, bad) => {
+    const setters: Array<[string, (c: Config) => void]> = [
+      ["roles.research.triggerLabel", (c) => (c.roles.research.triggerLabel = bad)],
+      ["roles.research.handoffLabel", (c) => {
+        c.roles.research.handoffLabel = bad;
+        c.roles.dev.triggerLabel = bad;
+      }],
+      ["jira.repoLabel", (c) => (c.jira.repoLabel = bad)],
+      ["jira.statusNames.bounced", (c) => (c.jira.statusNames.bounced = bad)],
+      ["jira.statusNames.prOpen", (c) => (c.jira.statusNames.prOpen = bad)],
+      ["jira.claimStatus.from", (c) => (c.jira.claimStatus.from = bad)],
+      ["jira.claimStatus.to", (c) => (c.jira.claimStatus.to = bad)],
+    ];
+    for (const [field, set] of setters) {
+      expect(() => validateConfig(makeV2Config(set))).toThrow(new RegExp(field.replace(/\./g, "\\.")));
+    }
+  });
+
+  it("requires research's handoffLabel to be dev's triggerLabel, and the two triggers to differ", () => {
+    expect(() => validateConfig(makeV2Config((c) => (c.roles.dev.triggerLabel = "pipeline:other")))).toThrow(
+      /roles\.research\.handoffLabel .* must equal roles\.dev\.triggerLabel/,
+    );
+    expect(() =>
+      validateConfig(
+        makeV2Config((c) => {
+          c.roles.research.handoffLabel = c.roles.research.triggerLabel;
+          c.roles.dev.triggerLabel = c.roles.research.triggerLabel;
+        }),
+      ),
+    ).toThrow(/must differ/);
+  });
+
+  it("accepts \"___\" placeholders (requiredPlaceholderFree refuses them per phase)", () => {
+    expect(() =>
+      validateConfig(makeV2Config((c) => (c.roles.dev.codeReviewFields.piiField = "___"))),
+    ).not.toThrow();
+  });
+});
+
+describe("the three project config files", () => {
+  it.each(PROJECTS)("%s loads and its slug equals the --project name", async (project) => {
+    const config = await loadConfig(path.join(REPO_ROOT, `pipeline.${project}.config.json`));
+    expect(repoSlugFromUrl(config.targetRepo.url)).toBe(project);
+  });
+
+  it("webtarsthree uses the v2 labels and excludes eval tickets from both polls", async () => {
+    const c = await loadConfig(path.join(REPO_ROOT, "pipeline.webtarsthree.config.json"));
+    expect(c.roles.research.triggerLabel).toBe("pipeline:v2.0.0");
+    expect(c.roles.research.handoffLabel).toBe("pipeline:v2.0.0:dev");
+    expect(c.roles.dev.triggerLabel).toBe("pipeline:v2.0.0:dev");
+    expect(c.roles.research.pollJql).toContain('AND labels != "dev-loop-eval"');
+    expect(c.roles.dev.pollJql).toContain('AND labels != "dev-loop-eval"');
+    expect(c.roles.dev.pollJql).not.toContain("assignee");
+    expect(c.ceilings).toEqual({ maxRunsPerDay: 100, maxAttemptsPerTicket: 2, maxCostPerTicketUsd: 50 });
+  });
+
+  it("catalog-ui-* keep their v1 labels until cutover", async () => {
+    for (const project of ["catalog-ui-management", "catalog-ui-public"]) {
+      const c = await loadConfig(path.join(REPO_ROOT, `pipeline.${project}.config.json`));
+      expect(c.roles.research.triggerLabel).toBe("pipeline:research");
+      expect(c.roles.research.handoffLabel).toBe("pipeline:dev");
+      expect(c.roles.dev.triggerLabel).toBe("pipeline:dev");
+    }
+  });
+});
+
+/**
+ * Per-role equivalence: for each project and role, roleView(newConfig, role)
+ * equals the fields that role read from its own legacy (v1) file.
+ *   - research read research-loop's copy: jira.triggerLabel, handoffLabel,
+ *     pollJql.refine, ...; dev read dev-loop's copy: jira.handoffLabel as its
+ *     poll {label} (buildDevJql), pollJql.dev, codeReviewFields, ...
+ *   - Intended differences, and only these:
+ *       webtarsthree: triggerLabel/handoffLabel (v2 labels); dev pollJql
+ *         (assignee clause dropped); both pollJqls gain the dev-loop-eval
+ *         exclusion (asserted exactly below).
+ *       a legacy dev value that was "___" takes research's real value
+ *         (catalog-ui-public claim/status names, spec section 6.4).
+ */
+describe("per-role equivalence with the legacy config files", () => {
+  type Legacy = {
+    jira: {
+      triggerLabel: string;
+      handoffLabel: string;
+      repoLabel: string;
+      claimStatus: { from: string; to: string };
+      pollJql: { refine: string; dev: string };
+      statusNames: { bounced: string; prOpen: string };
+      codeReviewFields?: Record<string, string>;
+    };
+    ceilings: { maxRunsPerDay: number; maxCostPerRunUsd: number; runTimeoutMin: number };
+  };
+  const legacy = (repo: "dev-loop" | "research-loop", project: string): Legacy =>
+    JSON.parse(
+      readFileSync(path.join(REPO_ROOT, "docs/changelog/legacy-config", repo, `pipeline.${project}.config.json`), "utf8"),
+    );
+  const fillFrom = <T extends Record<string, string>>(devValue: T, researchValue: T): T =>
+    Object.fromEntries(
+      Object.entries(devValue).map(([k, v]) => [k, v === "___" ? researchValue[k] : v]),
+    ) as T;
+  const EVAL = ' AND labels != "dev-loop-eval"';
+  const beforeOrderBy = (jql: string, clause: string) => jql.replace(/ ORDER BY /, `${clause} ORDER BY `);
+
+  function expectedView(project: string, role: Role): Record<string, unknown> {
+    const r = legacy("research-loop", project);
+    const d = legacy("dev-loop", project);
+    if (role === "research") {
+      return {
+        triggerLabel: r.jira.triggerLabel,
+        handoffLabel: r.jira.handoffLabel,
+        pollJql: r.jira.pollJql.refine,
+        repoLabel: r.jira.repoLabel,
+        claimStatus: r.jira.claimStatus,
+        statusNames: r.jira.statusNames,
+        limits: r.ceilings,
+      };
+    }
+    return {
+      triggerLabel: d.jira.handoffLabel,
+      pollJql: d.jira.pollJql.dev,
+      repoLabel: d.jira.repoLabel,
+      claimStatus: fillFrom(d.jira.claimStatus, r.jira.claimStatus),
+      statusNames: fillFrom(d.jira.statusNames, r.jira.statusNames),
+      codeReviewFields: d.jira.codeReviewFields,
+      limits: d.ceilings,
+    };
+  }
+
+  const cases = PROJECTS.flatMap((p) => (["research", "dev"] as const).map((role) => [p, role] as const));
+
+  it.each(cases)("%s / %s", async (project, role) => {
+    const config = await loadConfig(path.join(REPO_ROOT, `pipeline.${project}.config.json`));
+    const actual = { ...roleView(config, role) } as Record<string, unknown>;
+    const expected = expectedView(project, role);
+    if (project === "webtarsthree") {
+      for (const k of ["triggerLabel", "handoffLabel"]) {
+        delete actual[k];
+        delete expected[k];
+      }
+      const legacyDevJql = legacy("dev-loop", project).jira.pollJql.dev;
+      expected.pollJql =
+        role === "research"
+          ? beforeOrderBy(expected.pollJql as string, EVAL)
+          : beforeOrderBy(legacyDevJql.replace(' AND assignee = "{assignee}"', ""), EVAL);
+    }
+    expect(actual).toEqual(expected);
+  });
+
+  it("the legacy files carry the ceilings the plan states (research 50/120, dev 20/75, 100 runs/day)", () => {
+    for (const p of PROJECTS) {
+      expect(legacy("research-loop", p).ceilings).toEqual({ maxRunsPerDay: 100, maxCostPerRunUsd: 50, runTimeoutMin: 120 });
+      expect(legacy("dev-loop", p).ceilings).toEqual({ maxRunsPerDay: 100, maxCostPerRunUsd: 20, runTimeoutMin: 75 });
+    }
+  });
+});
+
+describe("roleView", () => {
+  it("research: its own labels/JQL/ceilings plus the shared jira values and maxRunsPerDay; no codeReviewFields", () => {
+    const view = roleView(makeV2Config(), "research");
+    expect(view).toEqual({
+      triggerLabel: "pipeline:v2.0.0",
+      handoffLabel: "pipeline:v2.0.0:dev",
+      pollJql: makeV2Config().roles.research.pollJql,
+      repoLabel: "repo:org-repo",
+      claimStatus: { from: "To Do", to: "In Progress" },
+      statusNames: { bounced: "Blocked", prOpen: "Code Review" },
+      limits: { maxRunsPerDay: 100, maxCostPerRunUsd: 50, runTimeoutMin: 120 },
+    });
+  });
+
+  it("dev: its own label/JQL/codeReviewFields/ceilings; no handoffLabel", () => {
+    const view = roleView(makeV2Config(), "dev");
+    expect(view).not.toHaveProperty("handoffLabel");
+    expect(view.codeReviewFields.piiField).toBe("customfield_13504");
+    expect(view.limits).toEqual({ maxRunsPerDay: 100, maxCostPerRunUsd: 20, runTimeoutMin: 75 });
+  });
+});
+
+describe("requiredPlaceholderFree", () => {
+  it("placeholder refusal by phase (catalog-ui-public)", async () => {
+    const c = await loadConfig(path.join(REPO_ROOT, "pipeline.catalog-ui-public.config.json"));
+    expect(() => requiredPlaceholderFree(c, "research")).not.toThrow();
+    expect(() => requiredPlaceholderFree(c, "dev")).toThrow(/roles\.dev\.codeReviewFields\.piiField/);
+    expect(() => requiredPlaceholderFree(c, "worker")).toThrow(/roles\.dev\.codeReviewFields\.piiField/);
+  });
+
+  it("names every placeholder path the phase needs, and none it doesn't", () => {
+    const c = makeV2Config((x) => {
+      x.roles.research.triggerLabel = "___";
+      x.roles.dev.codeReviewFields.qaNotesField = "___";
+      x.github.repo = "___";
+    });
+    expect(() => requiredPlaceholderFree(c, "research")).toThrow(
+      /roles\.research\.triggerLabel.*github\.repo|github\.repo.*roles\.research\.triggerLabel/,
+    );
+    let message = "";
+    try {
+      requiredPlaceholderFree(c, "research");
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).not.toContain("codeReviewFields");
+    expect(() => requiredPlaceholderFree(c, "dev")).toThrow(/roles\.dev\.codeReviewFields\.qaNotesField/);
+  });
+
+  it("treats a pollJql that still contains ___ as a placeholder", () => {
+    const c = makeV2Config((x) => (x.roles.research.pollJql = 'labels = "{label}" AND status = "___"'));
+    expect(() => requiredPlaceholderFree(c, "research")).toThrow(/roles\.research\.pollJql/);
+    expect(() => requiredPlaceholderFree(c, "dev")).not.toThrow();
+  });
+
+  it("a fully bound config passes every phase", () => {
+    for (const phase of ["research", "dev", "worker"] as const) {
+      expect(() => requiredPlaceholderFree(makeV2Config(), phase)).not.toThrow();
+    }
+  });
+
+  it("an unknown phase from an untyped caller gets the strictest (worker) check", () => {
+    const c = makeV2Config((x) => (x.roles.dev.codeReviewFields.piiField = "___"));
+    const untyped = requiredPlaceholderFree as (c: Config, p?: string) => void;
+    expect(() => untyped(c)).toThrow(/piiField/);
+  });
+});
+
+describe("labelVersion", () => {
+  it("extracts the version from a versioned pipeline label", () => {
+    expect(labelVersion("pipeline:v2.0.0")).toBe("2.0.0");
+    expect(labelVersion("pipeline:v2.0.0:dev")).toBe("2.0.0");
+    expect(labelVersion("pipeline:v12.3.45")).toBe("12.3.45");
+  });
+
+  it("returns null for an unversioned label", () => {
+    expect(labelVersion("pipeline:research")).toBeNull();
+    expect(labelVersion("pipeline:dev")).toBeNull();
+    expect(labelVersion("pipeline:v2.0")).toBeNull();
+    expect(labelVersion("xpipeline:v2.0.0")).toBeNull();
+  });
+});
+
+describe("checkLabelVersion", () => {
+  /** A config whose research trigger is `label` and whose dev stage is `<label>:dev`. */
+  function withLabel(label: string): Config {
+    return makeV2Config((c) => {
+      c.roles.research.triggerLabel = label;
+      c.roles.research.handoffLabel = `${label}:dev`;
+      c.roles.dev.triggerLabel = `${label}:dev`;
+    });
+  }
+
+  it("same version: ok, no warning", () => {
+    expect(checkLabelVersion(withLabel("pipeline:v2.0.0"), "2.0.0")).toEqual({ ok: true });
+  });
+
+  it("same major, different minor/patch: ok with a warning naming both versions", () => {
+    const result = checkLabelVersion(withLabel("pipeline:v2.0.0"), "2.1.0");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.warning).toContain("2.0.0");
+      expect(result.warning).toContain("2.1.0");
+    }
+  });
+
+  it("unversioned trigger label: not ok", () => {
+    const result = checkLabelVersion(withLabel("pipeline:research"), "2.0.0");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("worker mode needs a versioned trigger label");
+  });
+
+  it("major mismatch: not ok", () => {
+    const result = checkLabelVersion(withLabel("pipeline:v1.0.0"), "2.0.0");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("1.0.0");
+      expect(result.error).toContain("2.0.0");
+    }
+  });
+
+  it("the catalog-ui-* configs are refused (v1 labels until cutover); webtarsthree passes", async () => {
+    for (const project of ["catalog-ui-management", "catalog-ui-public"]) {
+      const c = await loadConfig(path.join(REPO_ROOT, `pipeline.${project}.config.json`));
+      expect(checkLabelVersion(c, "2.0.0").ok).toBe(false);
+    }
+    const w = await loadConfig(path.join(REPO_ROOT, "pipeline.webtarsthree.config.json"));
+    expect(checkLabelVersion(w, "2.0.0")).toEqual({ ok: true });
   });
 });
 
@@ -223,104 +569,5 @@ describe("loadLoopConfig", () => {
 
   it("throws if the file does not exist", async () => {
     await expect(loadLoopConfig()).rejects.toThrow();
-  });
-});
-
-describe("findPlaceholders / assertNoPlaceholders", () => {
-  it("returns an empty array when no fields are placeholders", () => {
-    expect(findPlaceholders(makeConfig(), "dev")).toEqual([]);
-  });
-
-  it("lists every field still set to the placeholder value", () => {
-    const config = makeConfig({
-      jira: { ...makeConfig().jira, triggerLabel: "___", handoffLabel: "___" },
-    });
-    const missing = findPlaceholders(config, "dev");
-    expect(missing).toContain("jira.triggerLabel");
-    expect(missing).toContain("jira.handoffLabel");
-  });
-
-  it("lists jira.repoLabel when it's still set to the placeholder value", () => {
-    const config = makeConfig({
-      jira: { ...makeConfig().jira, repoLabel: "___" },
-    });
-    const missing = findPlaceholders(config, "dev");
-    expect(missing).toContain("jira.repoLabel");
-  });
-
-  it("lists codeReviewFields sub-fields still set to the placeholder value", () => {
-    const config = makeConfig({
-      jira: {
-        ...makeConfig().jira,
-        codeReviewFields: { piiField: "___", piiNoImpactOptionId: "___", qaNotesField: "___" },
-      },
-    });
-    const missing = findPlaceholders(config, "dev");
-    expect(missing).toContain("jira.codeReviewFields.piiField");
-    expect(missing).toContain("jira.codeReviewFields.piiNoImpactOptionId");
-    expect(missing).toContain("jira.codeReviewFields.qaNotesField");
-  });
-
-  it("assertNoPlaceholders does not throw on a fully-bound config", () => {
-    expect(() => assertNoPlaceholders(makeConfig(), "dev")).not.toThrow();
-  });
-
-  it("assertNoPlaceholders throws naming every missing field", () => {
-    const config = makeConfig({ autoPromoteLabel: "___" });
-    expect(() => assertNoPlaceholders(config, "dev")).toThrow(/autoPromoteLabel/);
-  });
-
-  it("lists github.repo when it's still set to the placeholder value", () => {
-    const config = makeConfig({ github: { repo: "___" } });
-    const missing = findPlaceholders(config, "dev");
-    expect(missing).toContain("github.repo");
-  });
-  // research-loop's config has no jira.codeReviewFields (dev-only key).
-  describe("a research config (no jira.codeReviewFields)", () => {
-    function researchConfig(): Config {
-      const config = makeConfig();
-      const { codeReviewFields: _crf, ...jira } = config.jira;
-      return { ...config, jira };
-    }
-
-    it("is fully bound for the research role", () => {
-      expect(findPlaceholders(researchConfig(), "research")).toEqual([]);
-      expect(() => assertNoPlaceholders(researchConfig(), "research")).not.toThrow();
-    });
-
-    it("is rejected for the dev role, naming every missing codeReviewFields key", () => {
-      const missing = findPlaceholders(researchConfig(), "dev");
-      expect(missing).toEqual([
-        "jira.codeReviewFields.piiField",
-        "jira.codeReviewFields.piiNoImpactOptionId",
-        "jira.codeReviewFields.qaNotesField",
-      ]);
-      expect(() => assertNoPlaceholders(researchConfig(), "dev")).toThrow(/codeReviewFields/);
-    });
-  });
-
-  // The role is a required argument (tsc enforces it in src/). A call that
-  // omits it anyway (an untyped caller) must fail closed: the dev check.
-  it("a missing role at runtime gets the strict dev check, never the lenient research one", () => {
-    const config = makeConfig();
-    const { codeReviewFields: _crf, ...jira } = config.jira;
-    const untyped = findPlaceholders as (c: Config) => string[];
-    expect(untyped({ ...config, jira })).toContain("jira.codeReviewFields.piiField");
-  });
-
-  it("a fully-bound dev config passes the dev-role check", () => {
-    expect(() => assertNoPlaceholders(makeConfig(), "dev")).not.toThrow();
-  });
-});
-
-describe("requireCodeReviewFields", () => {
-  it("returns jira.codeReviewFields when present", () => {
-    expect(requireCodeReviewFields(makeConfig()).piiField).toBe("customfield_13504");
-  });
-
-  it("throws when the dev-only block is absent", () => {
-    const config = makeConfig();
-    const { codeReviewFields: _crf, ...jira } = config.jira;
-    expect(() => requireCodeReviewFields({ ...config, jira })).toThrow(/codeReviewFields/);
   });
 });

@@ -6,23 +6,17 @@ import { researchEarlySkillResult } from "../../../src/roles/research/spawn-resu
 import { runLoopIteration } from "../../../src/roles/research/phase.ts";
 import type { SpawnClaudeResult } from "../../../src/core/spawn-claude.ts";
 import type { JiraClient } from "../../../src/core/jira-client.ts";
-import type { Config } from "../../../src/core/types.ts";
+import type { ResearchView } from "../../../src/core/types.ts";
+import { roleView } from "../../../src/core/config.ts";
+import { makeV2Config } from "../../fixtures/config.ts";
 import { readRunLog } from "../../../src/core/runs-log.ts";
 
-const config: Config = {
-  jira: {
-    triggerLabel: "pipeline:research",
-    handoffLabel: "pipeline:dev",
-    repoLabel: "repo:x",
-    claimStatus: { from: "Backlog", to: "In Progress" },
-    pollJql: { refine: 'labels = "{label}"', dev: 'labels = "{label}"' },
-    statusNames: { bounced: "Blocked", prOpen: "Code Review" },
-  },
-  ceilings: { maxRunsPerDay: 100, maxCostPerRunUsd: 10, runTimeoutMin: 120 },
-  autoPromoteLabel: "auto-promote",
-  targetRepo: { url: "git@github.com:org/repo.git", defaultBranch: "main" },
-  github: { repo: "org/repo" },
-};
+const view: ResearchView = roleView(
+  makeV2Config((c) => {
+    c.roles.research.ceilings = { maxCostPerRunUsd: 10, runTimeoutMin: 120 };
+  }),
+  "research",
+);
 
 const base = { skill: "ticket-refine", skillVersion: "abc", model: "sonnet" };
 
@@ -79,7 +73,7 @@ describe("researchEarlySkillResult", () => {
 
       const result = await runLoopIteration({
         jiraClient,
-        config,
+        view,
         jql: 'labels = "pipeline:research"',
         runSkill: async () => researchEarlySkillResult(spawnErrorRun(), base, 120)!,
         runsLogPath,

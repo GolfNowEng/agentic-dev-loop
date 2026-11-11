@@ -1,89 +1,52 @@
 import { describe, expect, it } from "vitest";
-import { buildDevJql, buildRefineJql, excludeKeysFromJql } from "../../src/core/jql.ts";
-import type { Config } from "../../src/core/types.ts";
+import { buildPollJql, excludeKeysFromJql } from "../../src/core/jql.ts";
+import { roleView } from "../../src/core/config.ts";
+import { makeV2Config } from "../fixtures/config.ts";
 
-const config: Config = {
-  jira: {
-    triggerLabel: "pipeline:research",
-    handoffLabel: "pipeline:dev",
-    repoLabel: "repo:webtarsthree",
-    claimStatus: { from: "Ready", to: "In Progress" },
-    pollJql: {
-      refine:
-        'labels = "{label}" AND labels = "{repoLabel}" AND status = "To Refine" ORDER BY created ASC',
-      dev: 'labels = "{label}" AND labels = "{repoLabel}" AND assignee = "{assignee}" AND status != "{bouncedStatus}" AND status != "{prOpenStatus}" ORDER BY created ASC',
+const ASSIGNEE = "712020:abc-DEF_123";
+
+describe("buildPollJql", () => {
+  it("fills every placeholder: {label} {repoLabel} {assignee} {bouncedStatus} {prOpenStatus}", () => {
+    const view = roleView(
+      makeV2Config((c) => {
+        c.roles.dev.pollJql =
+          'labels = "{label}" AND labels = "{repoLabel}" AND assignee = "{assignee}" AND status != "{bouncedStatus}" AND status != "{prOpenStatus}" ORDER BY created ASC';
+      }),
+      "dev",
+    );
+    expect(buildPollJql(view, { assigneeAccountId: ASSIGNEE })).toBe(
+      `labels = "pipeline:v2.0.0:dev" AND labels = "repo:org-repo" AND assignee = "${ASSIGNEE}" AND status != "Blocked" AND status != "Code Review" ORDER BY created ASC`,
+    );
+  });
+
+  it("fills the research role's {label} with its own trigger label", () => {
+    const jql = buildPollJql(roleView(makeV2Config(), "research"), { assigneeAccountId: ASSIGNEE });
+    expect(jql).toBe('labels = "pipeline:v2.0.0" AND labels = "repo:org-repo" AND status = "To Do" ORDER BY created ASC');
+  });
+
+  it("fills a placeholder that appears more than once", () => {
+    const view = roleView(makeV2Config((c) => (c.roles.research.pollJql = 'labels = "{label}" OR labels = "{label}"')), "research");
+    expect(buildPollJql(view, { assigneeAccountId: ASSIGNEE })).toBe(
+      'labels = "pipeline:v2.0.0" OR labels = "pipeline:v2.0.0"',
+    );
+  });
+
+  it("throws on a placeholder it doesn't fill", () => {
+    const view = roleView(makeV2Config((c) => (c.roles.research.pollJql = 'labels = "{label}" AND sprint = "{sprint}"')), "research");
+    expect(() => buildPollJql(view, { assigneeAccountId: ASSIGNEE })).toThrow(/\{sprint\}/);
+  });
+
+  it.each(['abc" OR project = X', "abc\\", "abc\nd", "", "a b"])(
+    "throws on an assignee account id outside [A-Za-z0-9:_-]+ (%j)",
+    (bad) => {
+      const view = roleView(makeV2Config(), "dev");
+      expect(() => buildPollJql(view, { assigneeAccountId: bad })).toThrow(/assignee/i);
     },
-    statusNames: { bounced: "Blocked", prOpen: "In Progress" },
-    codeReviewFields: {
-      piiField: "customfield_13504",
-      piiNoImpactOptionId: "14310",
-      qaNotesField: "customfield_14226",
-    },
-  },
-  ceilings: { maxRunsPerDay: 10, maxCostPerRunUsd: 5, runTimeoutMin: 30 },
-  autoPromoteLabel: "auto-promote",
-  targetRepo: { url: "git@github.com:org/repo.git", defaultBranch: "main" },
-};
+  );
 
-describe("buildRefineJql", () => {
-  it("interpolates triggerLabel into the refine template", () => {
-    const jql = buildRefineJql(config);
-    expect(jql).toContain("pipeline:research");
-    expect(jql).not.toContain("{label}");
-  });
-
-  it("interpolates repoLabel into the refine template, disambiguating repos that share one Jira project", () => {
-    const jql = buildRefineJql(config);
-    expect(jql).toContain("repo:webtarsthree");
-    expect(jql).not.toContain("{repoLabel}");
-  });
-
-  it("preserves the ORDER BY oldest-first clause from the template", () => {
-    expect(buildRefineJql(config)).toContain("ORDER BY created ASC");
-  });
-
-  it("returns a non-empty string", () => {
-    const jql = buildRefineJql(config);
-    expect(typeof jql).toBe("string");
-    expect(jql.length).toBeGreaterThan(0);
-  });
-});
-
-describe("buildDevJql", () => {
-  it("interpolates handoffLabel and the assignee accountId into the dev template", () => {
-    const jql = buildDevJql(config, "user-123");
-    expect(jql).toContain("pipeline:dev");
-    expect(jql).not.toContain("{label}");
-    expect(jql).toContain("user-123");
-    expect(jql).not.toContain("{assignee}");
-  });
-
-  it("interpolates repoLabel into the dev template", () => {
-    const jql = buildDevJql(config, "user-123");
-    expect(jql).toContain("repo:webtarsthree");
-    expect(jql).not.toContain("{repoLabel}");
-  });
-
-  it("excludes tickets already in the bounced status, so a bounced ticket does not immediately re-match its own poll", () => {
-    const jql = buildDevJql(config, "user-123");
-    expect(jql).toContain('status != "Blocked"');
-    expect(jql).not.toContain("{bouncedStatus}");
-  });
-
-  it("excludes tickets already in the prOpen status, so a landed ticket does not keep re-matching its own poll after PR creation", () => {
-    const jql = buildDevJql(config, "user-123");
-    expect(jql).toContain('status != "In Progress"');
-    expect(jql).not.toContain("{prOpenStatus}");
-  });
-
-  it("preserves the ORDER BY oldest-first clause from the template", () => {
-    expect(buildDevJql(config, "user-123")).toContain("ORDER BY created ASC");
-  });
-
-  it("returns a non-empty string", () => {
-    const jql = buildDevJql(config, "user-123");
-    expect(typeof jql).toBe("string");
-    expect(jql.length).toBeGreaterThan(0);
+  it("does not re-expand a placeholder that appears inside a substituted value", () => {
+    const view = roleView(makeV2Config((c) => (c.jira.repoLabel = "repo:{label}")), "research");
+    expect(buildPollJql(view, { assigneeAccountId: ASSIGNEE })).toContain('labels = "repo:{label}"');
   });
 });
 
@@ -93,20 +56,30 @@ describe("excludeKeysFromJql", () => {
   });
 
   it("appends a key-not-in clause", () => {
-    expect(excludeKeysFromJql('labels = "x"', ["A-1", "A-2"])).toBe(
-      'labels = "x" AND key not in ("A-1","A-2")',
+    expect(excludeKeysFromJql('labels = "x"', ["AB-1", "AB-2"])).toBe(
+      'labels = "x" AND key not in ("AB-1","AB-2")',
     );
   });
 
   it("inserts the clause before ORDER BY, case-insensitively", () => {
-    expect(excludeKeysFromJql('labels = "x" order by created ASC', ["A-1"])).toBe(
-      'labels = "x" AND key not in ("A-1") order by created ASC',
+    expect(excludeKeysFromJql('labels = "x" order by created ASC', ["AB-1"])).toBe(
+      'labels = "x" AND key not in ("AB-1") order by created ASC',
     );
   });
 
   it("inserts before an upper-case ORDER BY in a real dev poll", () => {
-    expect(excludeKeysFromJql(buildDevJql(config, "user-123"), ["PROJ-1"])).toMatch(
-      /AND key not in \("PROJ-1"\) ORDER BY created ASC$/,
-    );
+    const jql = buildPollJql(roleView(makeV2Config(), "dev"), { assigneeAccountId: ASSIGNEE });
+    expect(excludeKeysFromJql(jql, ["PROJ-1"])).toMatch(/AND key not in \("PROJ-1"\) ORDER BY created ASC$/);
+  });
+
+  it.each(['PROJ-1") OR key in ("X-1', "proj-1", "PROJ-", "P-1", "PROJ-1\n", "PROJ_1"])(
+    "throws on a key that is not a Jira issue key (%j), never interpolating it",
+    (bad) => {
+      expect(() => excludeKeysFromJql('labels = "x"', ["PROJ-2", bad])).toThrow(/ticket key/i);
+    },
+  );
+
+  it("accepts keys with digits and underscores in the project part", () => {
+    expect(excludeKeysFromJql('labels = "x"', ["MC2_X-10"])).toBe('labels = "x" AND key not in ("MC2_X-10")');
   });
 });
