@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { reconcileMergedTickets, findOpenPrUrl, findLandedPrUrl } from "../../../src/roles/dev/reconcile.ts";
+import { reconcileMergedTickets, findLandedPrUrl } from "../../../src/roles/dev/reconcile.ts";
 import type { JiraClient, JiraTicket } from "../../../src/core/jira-client.ts";
 import type { GitHubClient } from "../../../src/core/github-client.ts";
 import type { Config, RunLogLine } from "../../../src/core/types.ts";
@@ -68,79 +68,6 @@ async function withRunsLog(lines: RunLogLine[], fn: (path: string) => Promise<vo
     await rm(dir, { recursive: true, force: true });
   }
 }
-
-describe("findOpenPrUrl", () => {
-  it("returns the PR URL from a 'landed' line", async () => {
-    await withRunsLog(
-      [makeRunLogLine({ outcome: "landed", pr: "https://github.com/org/repo/pull/9" })],
-      async (runsLogPath) => {
-        const url = await findOpenPrUrl(runsLogPath, "PROJ-1");
-        expect(url).toBe("https://github.com/org/repo/pull/9");
-      },
-    );
-  });
-
-  it("returns the PR URL from a 'bounced' line too -- intake finding a pre-existing PR still counts as an open PR to close on reset", async () => {
-    await withRunsLog(
-      [
-        makeRunLogLine({
-          outcome: "bounced",
-          pr: "https://github.com/org/repo/pull/431",
-          failure_category: "blocked",
-        }),
-      ],
-      async (runsLogPath) => {
-        const url = await findOpenPrUrl(runsLogPath, "PROJ-1");
-        expect(url).toBe("https://github.com/org/repo/pull/431");
-      },
-    );
-  });
-
-  it("returns the most recent matching line's PR when several exist, landed and bounced mixed", async () => {
-    await withRunsLog(
-      [
-        makeRunLogLine({ outcome: "landed", pr: "https://github.com/org/repo/pull/1", started: "2026-01-01T00:00:00.000Z" }),
-        makeRunLogLine({ outcome: "bounced", pr: "https://github.com/org/repo/pull/1", failure_category: "blocked", started: "2026-01-01T00:05:00.000Z" }),
-        makeRunLogLine({ outcome: "bounced", pr: "https://github.com/org/repo/pull/1", failure_category: "blocked", started: "2026-01-01T00:10:00.000Z" }),
-      ],
-      async (runsLogPath) => {
-        const url = await findOpenPrUrl(runsLogPath, "PROJ-1");
-        expect(url).toBe("https://github.com/org/repo/pull/1");
-      },
-    );
-  });
-
-  it("ignores a bounced line with no PR (a genuine blocker, never opened a PR)", async () => {
-    await withRunsLog(
-      [
-        makeRunLogLine({
-          outcome: "bounced",
-          pr: null,
-          failure_category: "spec_ambiguous",
-        }),
-      ],
-      async (runsLogPath) => {
-        const url = await findOpenPrUrl(runsLogPath, "PROJ-1");
-        expect(url).toBeNull();
-      },
-    );
-  });
-
-  it("returns null when no line matches the ticket key", async () => {
-    await withRunsLog(
-      [makeRunLogLine({ ticket: "PROJ-OTHER" })],
-      async (runsLogPath) => {
-        const url = await findOpenPrUrl(runsLogPath, "PROJ-1");
-        expect(url).toBeNull();
-      },
-    );
-  });
-
-  it("returns null when the runs.jsonl file doesn't exist", async () => {
-    const url = await findOpenPrUrl("/nonexistent/runs.jsonl", "PROJ-1");
-    expect(url).toBeNull();
-  });
-});
 
 describe("findLandedPrUrl", () => {
   it("returns the PR of the latest landed line and ignores bounced lines", async () => {

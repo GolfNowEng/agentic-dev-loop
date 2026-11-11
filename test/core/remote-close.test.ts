@@ -28,7 +28,16 @@ function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
 
 function makeMockGitHubClient(overrides: Partial<GitHubClient> = {}): GitHubClient {
   return {
-    findIssueByJiraKey: vi.fn(async () => ({ number: 42, url: "https://github.com/org/repo/issues/42" })),
+    findIssueByJiraKey: vi.fn(async () => ({
+      number: 42,
+      url: "https://github.com/org/repo/issues/42",
+      state: "OPEN" as const,
+    })),
+    createIssue: vi.fn(async () => ({
+      number: 42,
+      url: "https://github.com/org/repo/issues/42",
+      state: "OPEN" as const,
+    })),
     addComment: vi.fn(async () => {}),
     closeIssue: vi.fn(async () => {}),
     closePr: vi.fn(async () => "already-closed" as const),
@@ -72,9 +81,28 @@ describe("planRemoteClose", () => {
     const plan = await planRemoteClose("TARS-1465", "/nonexistent/runs.jsonl");
     expect(plan.prUrl).toBeNull();
   });
+
+  it("research role: a research runs.jsonl (every line has pr: null) yields prUrl: null, so the PR step is skipped", async () => {
+    await withRunsLog(
+      [
+        { ticket: "TARS-1467", skill: "ticket-refine", outcome: "landed", pr: null },
+        { ticket: "TARS-1467", skill: "ticket-refine", outcome: "bounced", pr: null },
+      ],
+      async (runsLogPath) => {
+        const plan = await planRemoteClose("TARS-1467", runsLogPath);
+        expect(plan).toEqual({ ticketKey: "TARS-1467", prUrl: null });
+      },
+    );
+  });
 });
 
 describe("describeRemoteClosePlan", () => {
+  it("names both the Jira ticket and the GitHub Issue", () => {
+    const text = describeRemoteClosePlan({ ticketKey: "TARS-1467", prUrl: null });
+    expect(text).toContain("close Jira ticket TARS-1467");
+    expect(text).toContain("close mirror GitHub Issue for TARS-1467");
+  });
+
   it("names the PR when one was found", () => {
     const text = describeRemoteClosePlan({ ticketKey: "TARS-1465", prUrl: "https://github.com/org/repo/pull/431" });
     expect(text).toContain("close PR https://github.com/org/repo/pull/431");

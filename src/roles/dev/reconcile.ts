@@ -63,32 +63,6 @@ interface GhPrViewResult {
   mergedAt: string | null;
 }
 
-/**
- * Find the most recent run for this ticket key in runs.jsonl that has a
- * PR URL attached -- "landed" (fully succeeded) or "bounced" (intake
- * found a pre-existing PR already open, nothing new to do; see
- * loop-runner.ts's bounced-with-existing-PR branch). Widened beyond
- * "landed" so reset-project's --close-remote can find and close any open
- * PR for a ticket being torn down, not just one from a run that fully
- * landed -- per this session's decision that a reset should close
- * whatever PR exists, regardless of whether that specific run succeeded.
- * Exported for reset-project's remote-close module. Reconcile and the
- * landed-ticket guard use findLandedPrUrl / findLandedTickets instead.
- */
-export async function findOpenPrUrl(runsLogPath: string, ticketKey: string): Promise<string | null> {
-  let lines;
-  try {
-    lines = await readRunLog(runsLogPath);
-  } catch {
-    return null;
-  }
-  const openPrLines = lines.filter(
-    (l) => l.ticket === ticketKey && (l.outcome === "landed" || l.outcome === "bounced") && l.pr,
-  );
-  const last = openPrLines[openPrLines.length - 1];
-  return last?.pr ?? null;
-}
-
 /** A ticket's most recent "landed" run: its PR and when the run ended. */
 export interface LandedTicket {
   ticket: string;

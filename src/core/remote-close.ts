@@ -9,11 +9,17 @@
 //
 // Every remote item (Jira, Issue, PR) is closed independently, wrapped in
 // its own try/catch -- one failing must never stop the others, same
-// error-isolation stance reconcile.ts already takes per-ticket.
+// error-isolation stance roles/dev/reconcile.ts already takes per-ticket.
+//
+// Shared by both roles. The PR step is dev-only in practice, with no role
+// parameter: it runs only when planRemoteClose recovers a PR URL from
+// runs.jsonl (findOpenPrUrl, core/runs-log.ts), and the research role
+// never opens a PR, so every research runs.jsonl line has `pr: null` and
+// the step reports "no-pr" without calling GitHub.
 
 import type { JiraClient } from "./jira-client.ts";
 import type { GitHubClient } from "./github-client.ts";
-import { findOpenPrUrl } from "../roles/dev/reconcile.ts";
+import { findOpenPrUrl } from "./runs-log.ts";
 
 export interface RemoteClosePlan {
   ticketKey: string;

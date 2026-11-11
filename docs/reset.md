@@ -82,7 +82,8 @@ kept entirely separate from `reset-project.ts` on purpose: local reset's
 tests use a temp filesystem and zero network; remote-close's tests inject
 mock `JiraClient`/`GitHubClient` and touch no filesystem beyond a single
 `runs.jsonl` read (to recover the ticket's PR URL via `findOpenPrUrl` in
-`src/roles/dev/reconcile.ts`, exported and widened this session to also scan
+`src/core/runs-log.ts`, moved there from `src/roles/dev/reconcile.ts` in the
+2.0.0 core unification, and widened earlier to also scan
 `bounced` lines with a PR attached — a reset should close any open PR for
 the ticket, not only one from a run that fully landed).
 
