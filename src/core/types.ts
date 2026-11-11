@@ -177,72 +177,44 @@ export interface ExecutorVerdict extends Verdict {
   };
 }
 
-/** Claim-status transition pair, e.g. { from: "Ready", to: "In Progress" }. */
+/** Which phase a role-scoped value belongs to. */
+export type Role = "research" | "dev";
+
+/** Claim-status transition pair, e.g. { from: "To Do", to: "In Progress" }. */
 export interface ClaimStatusConfig {
   from: string;
   to: string;
 }
 
-/** JQL templates for the two polling loops. */
-export interface PollJqlConfig {
-  refine: string;
-  dev: string;
+/**
+ * Which existing Jira status names the terminal outcomes map onto -- this
+ * Jira instance has no literal "bounced" or "pr-open" status, so these are
+ * bound to statuses that exist in the ticket's workflow (e.g. "Blocked",
+ * "Code Review").
+ */
+export interface StatusNamesConfig {
+  bounced: string;
+  prOpen: string;
 }
 
+/** Jira values shared by both roles. */
 export interface JiraConfig {
   /**
-   * The label this repo's own poll matches on -- "pipeline:dev". Mutually
-   * exclusive with triggerLabel-as-research-loop-sees-it: a ticket carries
-   * exactly one pipeline-stage label at a time.
-   */
-  triggerLabel: string;
-  /**
-   * The label a passing research-loop verdict swaps a ticket to, handing
-   * it off to this repo -- "pipeline:dev". Carried here for config-shape
-   * symmetry with research-loop's own Config (mirroring how this repo's
-   * Config already carries pollJql.refine today even though this repo's
-   * runtime never polls with it), even though only research-loop's
-   * loop-runner.ts performs the swap in Phase 0.
-   */
-  handoffLabel: string;
-  /**
    * A second, always-paired label naming which repo a ticket belongs to --
-   * e.g. "repo:catalog-ui-management". Needed because more than one target
-   * repo can share the same Jira project (catalog-ui-management and
-   * catalog-ui-public both file into project MC): the stage label alone
-   * (triggerLabel/handoffLabel) can't tell those two apart, so pollJql ANDs
-   * this label in too. Unlike triggerLabel/handoffLabel, repoLabel never
-   * changes across a ticket's lifecycle -- it identifies the repo, not the
-   * pipeline stage.
+   * e.g. "repo:catalog-ui-management". Needed because catalog-ui-management
+   * and catalog-ui-public both file into Jira project MC, so the stage label
+   * alone can't tell them apart. Never changes across a ticket's lifecycle.
    */
   repoLabel: string;
+  statusNames: StatusNamesConfig;
   claimStatus: ClaimStatusConfig;
-  pollJql: PollJqlConfig;
-  /**
-   * Which existing Jira status names the loop runner's terminal outcomes
-   * map onto -- this Jira instance has no literal "bounced" or "pr-open"
-   * status, so these must be bound to whatever statuses actually exist in
-   * the ticket's workflow (e.g. "Blocked" for bounced, "In Progress" for
-   * pr-open).
-   */
-  statusNames: {
-    bounced: string;
-    prOpen: string;
-  };
-  /**
-   * Jira custom field IDs written when transitioning a landed PR to Code
-   * Review -- mirrors what the interactive `push-branch` skill sets by
-   * hand today (its "Transition ticket to Code Review" step), so an
-   * automated PR gets the same Code Review screen fields populated
-   * instead of the transition silently failing to happen at all.
-   *
-   * Dev role only: research-loop's config has no such key. Optional in the
-   * type so one Config serves both roles; `assertNoPlaceholders(config,
-   * "dev")` makes it required at dev startup.
-   */
-  codeReviewFields?: CodeReviewFieldsConfig;
 }
 
+/**
+ * Jira custom field IDs written when transitioning a landed PR to Code
+ * Review -- mirrors what the interactive `push-branch` skill sets by hand,
+ * so an automated PR fills the same required Code Review screen fields.
+ */
 export interface CodeReviewFieldsConfig {
   /** "Covered Information Data Inventory" multicheckboxes field. */
   piiField: string;
@@ -252,10 +224,35 @@ export interface CodeReviewFieldsConfig {
   qaNotesField: string;
 }
 
-export interface CeilingsConfig {
-  maxRunsPerDay: number;
+/** The brief's name for CodeReviewFieldsConfig. */
+export type CodeReviewFields = CodeReviewFieldsConfig;
+
+/** Per phase run (one `claude -p` spawn). */
+export interface RoleCeilingsConfig {
   maxCostPerRunUsd: number;
   runTimeoutMin: number;
+}
+
+/** Settings each role owns. */
+export interface RoleSettings {
+  /** The stage label this role's poll matches on (`{label}` in its pollJql). */
+  triggerLabel: string;
+  /**
+   * JQL template. Placeholders: {label} {repoLabel} {assignee}
+   * {bouncedStatus} {prOpenStatus}, filled by core/jql.ts buildPollJql.
+   */
+  pollJql: string;
+  ceilings: RoleCeilingsConfig;
+}
+
+/** Ceilings shared by both roles. */
+export interface CeilingsConfig {
+  /** Phase runs per day, counted per role (each role gets this many). */
+  maxRunsPerDay: number;
+  /** Failed (error/killed) attempts per role per ticket before it is moved to Blocked. */
+  maxAttemptsPerTicket: number;
+  /** Total cost across both phases for one ticket (consumed from Task 13). */
+  maxCostPerTicketUsd: number;
 }
 
 /**
@@ -312,12 +309,47 @@ export interface LoopConfig {
 }
 
 /**
- * Shape of pipeline.config.json.
+ * Shape of pipeline.<project>.config.json (2.0.0, spec section 6.4): one file
+ * per project, both roles. Validated by core/config.ts validateConfig; the
+ * v1 per-repo shape is archived under docs/changelog/legacy-config/.
  */
 export interface Config {
-  jira: JiraConfig;
-  ceilings: CeilingsConfig;
-  autoPromoteLabel: string;
   targetRepo: TargetRepoConfig;
   github: GitHubConfig;
+  jira: JiraConfig;
+  roles: {
+    research: RoleSettings & {
+      /** The label a green research verdict swaps the ticket to; equals roles.dev.triggerLabel. */
+      handoffLabel: string;
+    };
+    dev: RoleSettings & { codeReviewFields: CodeReviewFieldsConfig };
+  };
+  ceilings: CeilingsConfig;
 }
+
+/** Per-run limits a role enforces (shape of ceilings.ts CeilingLimits). */
+export interface RoleLimits {
+  maxRunsPerDay: number;
+  maxCostPerRunUsd: number;
+  runTimeoutMin: number;
+}
+
+/** Everything one role reads from the config; built by core/config.ts roleView. */
+interface RoleViewBase {
+  pollJql: string;
+  triggerLabel: string;
+  repoLabel: string;
+  claimStatus: ClaimStatusConfig;
+  statusNames: StatusNamesConfig;
+  limits: RoleLimits;
+}
+
+export interface ResearchView extends RoleViewBase {
+  handoffLabel: string;
+}
+
+export interface DevView extends RoleViewBase {
+  codeReviewFields: CodeReviewFieldsConfig;
+}
+
+export type RoleView = ResearchView | DevView;

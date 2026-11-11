@@ -1,0 +1,26 @@
+{
+  "jira": {
+    "triggerLabel": "pipeline:dev",
+    "handoffLabel": "pipeline:dev",
+    "repoLabel": "repo:catalog-ui-management",
+    "claimStatus": { "from": "To Do", "to": "In Progress" },
+    "pollJql": {
+      "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"To Do\" ORDER BY created ASC",
+      "dev": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND assignee = \"{assignee}\" AND status != \"{bouncedStatus}\" AND status != \"{prOpenStatus}\" ORDER BY created ASC"
+    },
+    "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" },
+    "codeReviewFields": {
+      "piiField": "customfield_13504",
+      "piiNoImpactOptionId": "14310",
+      "qaNotesField": "customfield_14226"
+    }
+  },
+  "ceilings": { "maxRunsPerDay": 100, "maxCostPerRunUsd": 20, "runTimeoutMin": 75 },
+  "autoPromoteLabel": "auto-promote",
+  "targetRepo": {
+    "url": "git@github.com:fandango/catalog-ui-management.git",
+    "defaultBranch": "main",
+    "path": "/Users/206618626@bwt3.com/Desktop/Repos/catalog-ui-management"
+  },
+  "github": { "repo": "fandango/catalog-ui-management" }
+}

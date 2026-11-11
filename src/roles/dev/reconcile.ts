@@ -17,7 +17,7 @@
 
 import type { JiraClient } from "../../core/jira-client.ts";
 import type { GitHubClient } from "../../core/github-client.ts";
-import type { Config } from "../../core/types.ts";
+import type { DevView } from "../../core/types.ts";
 import { readRunLog } from "../../core/runs-log.ts";
 
 /** Stand-in for `gh pr view <url> --json state,mergedAt`, returning its raw JSON stdout. Injected so tests never shell out for real. */
@@ -32,7 +32,8 @@ const LANDED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 export interface ReconcileDeps {
   jiraClient: JiraClient;
   githubClient: GitHubClient;
-  config: Config;
+  /** The dev role's settings; its triggerLabel is the stage label removed on merge. */
+  view: DevView;
   runsLogPath: string;
   execGhPrView: ExecGhPrViewFn;
   /**
@@ -128,7 +129,7 @@ async function postCloseComment(
 }
 
 export async function reconcileMergedTickets(deps: ReconcileDeps): Promise<ReconcileResult> {
-  const { jiraClient, githubClient, config, runsLogPath, execGhPrView } = deps;
+  const { jiraClient, githubClient, view, runsLogPath, execGhPrView } = deps;
   const now = deps.now ?? new Date();
   const reconciled = deps.reconciled;
 
@@ -172,7 +173,7 @@ export async function reconcileMergedTickets(deps: ReconcileDeps): Promise<Recon
       // runLoopIteration keeps a ticket that still carries the label from
       // being re-run.
       try {
-        await jiraClient.removeLabel(ticket, config.jira.handoffLabel);
+        await jiraClient.removeLabel(ticket, view.triggerLabel);
       } catch {
         // Swallowed deliberately -- see above.
       }

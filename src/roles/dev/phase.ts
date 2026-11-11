@@ -7,8 +7,8 @@
 
 import type { JiraClient } from "../../core/jira-client.ts";
 import type { GitHubClient } from "../../core/github-client.ts";
-import type { Config, ExecutorVerdict, FailureCategory, RunLogLine } from "../../core/types.ts";
-import { buildDevJql, buildRefineJql, excludeKeysFromJql } from "../../core/jql.ts";
+import type { DevView, ExecutorVerdict, FailureCategory, RunLogLine } from "../../core/types.ts";
+import { buildPollJql, excludeKeysFromJql } from "../../core/jql.ts";
 import { checkCeilings } from "../../core/ceilings.ts";
 import { appendRunLog } from "../../core/runs-log.ts";
 import { buildQaNotesAdf, buildBounceCommentAdf, buildCodeReviewFields } from "./code-review.ts";
@@ -68,7 +68,8 @@ export type LoopKind = "refine" | "dev";
 export interface LoopIterationDeps {
   jiraClient: JiraClient;
   githubClient: GitHubClient;
-  config: Config;
+  /** The dev role's settings: roleView(config, "dev"). */
+  view: DevView;
   runSkill: RunSkillFn;
   loopKind: LoopKind;
   /** Path to the runs.jsonl file this iteration should append to. */
@@ -160,7 +161,7 @@ async function landedSkipReason(
 export async function runLoopIteration(
   deps: LoopIterationDeps,
 ): Promise<LoopIterationResult> {
-  const { jiraClient, githubClient, config, runSkill, loopKind, runsLogPath, runsToday, assigneeAccountId, execGhPrView } =
+  const { jiraClient, githubClient, view, runSkill, loopKind, runsLogPath, runsToday, assigneeAccountId, execGhPrView } =
     deps;
 
   // Ceiling check before even starting a new run.
@@ -168,14 +169,17 @@ export async function runLoopIteration(
     runsToday,
     runCostUsd: null,
     runDurationMin: null,
-    limits: config.ceilings,
+    limits: view.limits,
   });
   if (preCheck.breached) {
     return { kind: "paused", reason: preCheck.detail, failureCategory: "killed_ceiling" };
   }
 
-  const baseJql =
-    loopKind === "refine" ? buildRefineJql(config) : buildDevJql(config, assigneeAccountId);
+  // v1's "refine" loopKind (a test-only path; the research role has its own
+  // runner) polled with the research template. The dev view carries only
+  // the dev template, so both kinds poll with it; loopKind still gates the
+  // dev-only landed guard and Code Review transition below.
+  const baseJql = buildPollJql(view, { assigneeAccountId });
 
   // Landed-ticket guard (dev loop only). A ticket whose latest "landed" run's
   // PR is merged or still open must never be re-run, whatever Jira status it
@@ -233,8 +237,8 @@ export async function runLoopIteration(
       // signal; nothing here moves an epic or label. That transition has
       // a required Jira screen (PII/QA-notes fields), so the fields must
       // be sent alongside it, not left empty.
-      const fields = buildCodeReviewFields(config, buildQaNotesAdf(verdict));
-      await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.prOpen, fields);
+      const fields = buildCodeReviewFields(view, buildQaNotesAdf(verdict));
+      await jiraClient.transitionStatus(ticket.key, view.statusNames.prOpen, fields);
 
       const githubError = await postGitHubDetail(
         githubClient,
@@ -261,9 +265,9 @@ export async function runLoopIteration(
       // a human had to intervene by hand. Self-heal here: if the ticket's
       // current status isn't already prOpen, transition it now, using
       // the same fields a normal landed verdict would send.
-      if (ticket.status !== config.jira.statusNames.prOpen) {
-        const fields = buildCodeReviewFields(config, buildQaNotesAdf(verdict));
-        await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.prOpen, fields);
+      if (ticket.status !== view.statusNames.prOpen) {
+        const fields = buildCodeReviewFields(view, buildQaNotesAdf(verdict));
+        await jiraClient.transitionStatus(ticket.key, view.statusNames.prOpen, fields);
       }
 
       const githubError = await postGitHubDetail(
@@ -308,7 +312,7 @@ export async function runLoopIteration(
         jiraSyncError = jiraSyncError ? `${jiraSyncError}; ${githubError}` : githubError;
       }
 
-      await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
+      await jiraClient.transitionStatus(ticket.key, view.statusNames.bounced);
     }
   } catch (err) {
     const jiraWriteError = err instanceof Error ? err.message : String(err);
@@ -324,7 +328,7 @@ export async function runLoopIteration(
     runsToday: runsToday + 1,
     runCostUsd: costUsd,
     runDurationMin,
-    limits: config.ceilings,
+    limits: view.limits,
   });
 
   if (ceilingResult.breached) {

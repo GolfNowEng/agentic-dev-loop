@@ -5,21 +5,23 @@
  * the naming convention; passing both --project and --config is an error.
  * `--phase` is required (Task 4 of the 2.0.0 migration).
  *
- * Each phase runs its role's **v1** runner exactly as its old main.ts did,
- * from its v1 root, against its own v1 config file, writing v1-shaped logs
- * to the v1 paths (`runs/<slug>.jsonl`, `.pipeline/<slug>/{runs,raw-usage}`
- * under that root):
+ * Both phases load the one v2 project config at the repo root
+ * (`pipeline.<project>.config.json`, validated by core/config.ts) and the
+ * repo-root `pipeline.loop.config.json`, before any chdir, and each runner
+ * reads its settings through `roleView(config, phase)`. Each phase then runs
+ * its role's **v1** runner from its v1 root, writing v1-shaped logs to the
+ * v1 paths (`runs/<slug>.jsonl`, `.pipeline/<slug>/{runs,raw-usage}` under
+ * that root):
  *   - research: research-loop's runner (src/roles/research/phase.ts), with
  *     its mirror-Issue creation. The process chdirs into `research-loop/`
- *     first, which is where v1 research-loop ran: its config files, its
- *     runs/ and .pipeline/, and its `.claude/` (the ticket-refine skill and
- *     its hooks, which `claude -p` finds from its cwd) all live there until
- *     Tasks 5/8/9 move them.
+ *     first, which is where v1 research-loop ran: its CLAUDE.md, runs/ and
+ *     .pipeline/ (and the `.claude/` symlink the spawned `claude -p` finds
+ *     ticket-refine through) live there until Task 9 moves them.
  *   - dev: dev-loop's runner (src/roles/dev/phase.ts) plus the merged-PR
  *     reconciliation pass, from the repo root.
  * Both spawn `claude -p` through core/spawn-claude.ts, with
- * `--max-budget-usd` = the role's v1 `maxCostPerRunUsd` and a hard kill at
- * its `runTimeoutMin`.
+ * `--max-budget-usd` = the role's `roles.<phase>.ceilings.maxCostPerRunUsd`
+ * and a hard kill at its `runTimeoutMin`.
  *
  * This file is deliberately the untested composition root -- every piece of
  * logic it uses already has vitest coverage against injected fakes; this is
@@ -32,12 +34,13 @@ import { join, resolve } from "node:path";
 import {
   loadConfig,
   loadLoopConfig,
-  assertNoPlaceholders,
+  requiredPlaceholderFree,
+  roleView,
   repoSlugFromUrl,
   targetRepoAddDir,
   resolveProjectConfigPath,
 } from "./core/config.ts";
-import type { Config, LoopConfig } from "./core/types.ts";
+import type { Config, DevView, LoopConfig, ResearchView, RoleLimits } from "./core/types.ts";
 import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./core/jira-client.ts";
 import type { JiraCredentials, JiraTicket } from "./core/jira-client.ts";
 import { RealGitHubClient, realExecGh } from "./core/github-client.ts";
@@ -46,7 +49,7 @@ import { snapshotRunDirs, findNewestRunDir } from "./core/run-dirs.ts";
 import { readVerdictFile, agentErrorVerdict } from "./core/verdict.ts";
 import { redactSensitive } from "./core/redact.ts";
 import { decideNextAction } from "./core/poll-loop.ts";
-import { buildRefineJql } from "./core/jql.ts";
+import { buildPollJql } from "./core/jql.ts";
 import { spawnClaudeRun, startProgressTail } from "./core/spawn-claude.ts";
 import { runLoopIteration as runDevIteration } from "./roles/dev/phase.ts";
 import type { RunSkillFn as DevRunSkillFn } from "./roles/dev/phase.ts";
@@ -169,7 +172,7 @@ function logNoVerdictDiagnostics(skill: string, ticketKey: string, stdout: strin
 }
 
 /** The env both phases spawn claude with (childEnv() in spawn-claude strips the JIRA_* creds). */
-function claudeEnvFor(config: Config): NodeJS.ProcessEnv {
+function claudeEnvFor(limits: RoleLimits): NodeJS.ProcessEnv {
   // Align the CLI's own internal background-task wait ceiling with this
   // project's own runTimeoutMin ceiling, computed from config so the two
   // can never drift out of sync -- without this, a subagent that
@@ -178,7 +181,7 @@ function claudeEnvFor(config: Config): NodeJS.ProcessEnv {
   // caught it.
   return {
     ...process.env,
-    CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(config.ceilings.runTimeoutMin * 60_000),
+    CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(limits.runTimeoutMin * 60_000),
   };
 }
 
@@ -209,9 +212,10 @@ function rawUsagePathFor(ctx: PhaseContext, ticketKey: string, started: string):
 
 async function runResearchPhase(ctx: PhaseContext): Promise<void> {
   const skill = SKILL_NAME.research;
-  const { config, loopConfig, once, stream, credentials, jiraClient, githubClient } = ctx;
+  const { loopConfig, once, stream, credentials, jiraClient, githubClient } = ctx;
+  const view: ResearchView = roleView(ctx.config, "research");
   const skillVersion = gitFileSha(REFINE_SKILL_MD_PATH);
-  const jql = buildRefineJql(config);
+  const jql = buildPollJql(view, { assigneeAccountId: ctx.assigneeAccountId });
 
   log(`[${skill}] loop started, polling every ${loopConfig.pollIntervalSec}s (project: ${ctx.slug})`);
 
@@ -252,12 +256,12 @@ async function runResearchPhase(ctx: PhaseContext): Promise<void> {
         allowedTools: RESEARCH_ALLOWED_TOOLS,
         addDir: null,
         excludeClaudeMd: ctx.excludeClaudeMd,
-        timeoutMin: config.ceilings.runTimeoutMin,
-        maxBudgetUsd: config.ceilings.maxCostPerRunUsd,
+        timeoutMin: view.limits.runTimeoutMin,
+        maxBudgetUsd: view.limits.maxCostPerRunUsd,
         stream,
         ticketKey: ticket.key,
         rawUsagePath: rawUsagePathFor(ctx, ticket.key, startedForPath),
-        env: claudeEnvFor(config),
+        env: claudeEnvFor(view.limits),
       },
       { logPrefix: skill, log, logError },
     );
@@ -279,7 +283,7 @@ async function runResearchPhase(ctx: PhaseContext): Promise<void> {
     const early = researchEarlySkillResult(
       run,
       { skill: base.skill, skillVersion: base.skillVersion, model: base.model },
-      config.ceilings.runTimeoutMin,
+      view.limits.runTimeoutMin,
     );
     if (early) return early;
 
@@ -309,7 +313,7 @@ async function runResearchPhase(ctx: PhaseContext): Promise<void> {
     const runsToday = await countRunsToday(ctx.runsLogPath, new Date());
     const result = await runResearchIteration({
       jiraClient,
-      config,
+      view,
       jql,
       runSkill,
       runsLogPath: ctx.runsLogPath,
@@ -362,6 +366,7 @@ async function runResearchPhase(ctx: PhaseContext): Promise<void> {
 async function runDevPhase(ctx: PhaseContext): Promise<void> {
   const skill = SKILL_NAME.dev;
   const { config, loopConfig, once, stream, jiraClient, githubClient } = ctx;
+  const view: DevView = roleView(config, "dev");
 
   log(`[${skill}] loop started, polling every ${loopConfig.pollIntervalSec}s (project: ${ctx.slug})`);
 
@@ -383,12 +388,12 @@ async function runDevPhase(ctx: PhaseContext): Promise<void> {
         model: MODEL,
         allowedTools: DEV_ALLOWED_TOOLS,
         addDir: targetRepoAddDir(config),
-        timeoutMin: config.ceilings.runTimeoutMin,
-        maxBudgetUsd: config.ceilings.maxCostPerRunUsd,
+        timeoutMin: view.limits.runTimeoutMin,
+        maxBudgetUsd: view.limits.maxCostPerRunUsd,
         stream,
         ticketKey,
         rawUsagePath: rawUsagePathFor(ctx, ticketKey, startedForPath),
-        env: claudeEnvFor(config),
+        env: claudeEnvFor(view.limits),
       },
       { logPrefix: skill, log, logError },
     );
@@ -397,7 +402,7 @@ async function runDevPhase(ctx: PhaseContext): Promise<void> {
     // Timeout kill or spawn failure: never throw out of runSkill. A spawn
     // failure records v1's agent_error verdict, but keeps the run's real
     // cost/tokens (fix round 2).
-    const early = devEarlySkillResult(run, config.ceilings.runTimeoutMin);
+    const early = devEarlySkillResult(run, view.limits.runTimeoutMin);
     if (early) return early;
 
     const runDirName = await findNewestRunDir(ctx.runsBaseDir, ticketKey, before);
@@ -429,7 +434,7 @@ async function runDevPhase(ctx: PhaseContext): Promise<void> {
       const reconcileResult = await reconcileMergedTickets({
         jiraClient,
         githubClient,
-        config,
+        view,
         runsLogPath: ctx.runsLogPath,
         execGhPrView,
         execGhFindMergedPr: realExecGhFindMergedPr(config.github.repo),
@@ -453,7 +458,7 @@ async function runDevPhase(ctx: PhaseContext): Promise<void> {
     const result = await runDevIteration({
       jiraClient,
       githubClient,
-      config,
+      view,
       runSkill,
       loopKind: "dev",
       runsLogPath: ctx.runsLogPath,
@@ -502,9 +507,14 @@ async function main(): Promise<void> {
   const { phase, project, configPath, once, stream } = parseArgs(process.argv.slice(2));
   activePhase = phase;
 
-  // --config is relative to the caller's cwd, so resolve it before chdir.
-  const absConfigPath = configPath !== undefined ? resolve(configPath) : undefined;
+  // Both phases read the one v2 project config and the loop config at the
+  // repo root (--config is relative to the caller's cwd), so resolve and
+  // load them before the research phase chdirs into its v1 root.
   const repoRoot = process.cwd();
+  const resolvedConfigPath = resolve(configPath ?? (await resolveProjectConfigPath(project)));
+  const config = await loadConfig(resolvedConfigPath);
+  requiredPlaceholderFree(config, phase);
+  const loopConfig = await loadLoopConfig(resolve("pipeline.loop.config.json"));
   // Fail loudly, before any Jira/GitHub I/O, if the research root no longer
   // has the skill claude -p needs (e.g. .claude/ moved but PHASE_ROOT didn't).
   if (phase === "research") assertResearchRoot(PHASE_ROOT.research);
@@ -513,11 +523,6 @@ async function main(): Promise<void> {
   const excludeClaudeMd =
     phase === "research" ? researchClaudeMdExcludes(repoRoot, PHASE_ROOT.research) : [];
   process.chdir(PHASE_ROOT[phase]);
-
-  const resolvedConfigPath = absConfigPath ?? (await resolveProjectConfigPath(project));
-  const config = await loadConfig(resolvedConfigPath);
-  assertNoPlaceholders(config, phase);
-  const loopConfig = await loadLoopConfig();
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();

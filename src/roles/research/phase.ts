@@ -21,7 +21,7 @@
  * module never touches a real process or a real Jira instance.
  */
 
-import type { Config, RunLogLine, Verdict } from "../../core/types.ts";
+import type { ResearchView, RunLogLine, Verdict } from "../../core/types.ts";
 import { CURRENT_LOG_VERSION } from "../../core/types.ts";
 import type { JiraClient, JiraTicket } from "../../core/jira-client.ts";
 import { checkCeilings } from "../../core/ceilings.ts";
@@ -98,10 +98,20 @@ export interface LoopIterationResult {
   skippedLanded?: string[];
 }
 
+/**
+ * v1's auto-promote gate for `--phase research`: only a ticket carrying this
+ * label has its trigger label swapped to the handoff label on a green
+ * verdict. The config key (`autoPromoteLabel`) was removed in 2.0.0 and the
+ * loader rejects it; the v1 runner keeps v1's behavior with v1's value until
+ * the worker cycle (Task 13), which hands off every green verdict.
+ */
+export const V1_AUTO_PROMOTE_LABEL = "auto-promote";
+
 export interface RunLoopIterationDeps {
   jiraClient: JiraClient;
-  config: Config;
-  /** Resolved JQL to poll with -- callers build this via jql.ts. */
+  /** The research role's settings: roleView(config, "research"). */
+  view: ResearchView;
+  /** Resolved JQL to poll with -- callers build this via jql.ts buildPollJql. */
   jql: string;
   /** Stand-in for spawning `claude -p` with the skill. */
   runSkill: RunSkillFn;
@@ -125,13 +135,13 @@ export interface RunLoopIterationDeps {
 export async function runLoopIteration(
   deps: RunLoopIterationDeps,
 ): Promise<LoopIterationResult> {
-  const { jiraClient, config, jql, runSkill, runsLogPath, runsToday, assigneeAccountId } = deps;
+  const { jiraClient, view, jql, runSkill, runsLogPath, runsToday, assigneeAccountId } = deps;
 
   const preCheck = checkCeilings({
     runsToday,
     runCostUsd: null,
     runDurationMin: null,
-    limits: config.ceilings,
+    limits: view.limits,
   });
   if (preCheck.breached) {
     return { action: "paused-ceiling", pauseReason: preCheck.detail };
@@ -163,8 +173,8 @@ export async function runLoopIteration(
   try {
     claimed = await jiraClient.claimTicket(
       ticket.key,
-      config.jira.claimStatus.from,
-      config.jira.claimStatus.to,
+      view.claimStatus.from,
+      view.claimStatus.to,
     );
   } catch (err) {
     const claimError = err instanceof Error ? err.message : String(err);
@@ -217,16 +227,16 @@ export async function runLoopIteration(
       // handoffLabel, skipping human approval). A non-auto-promoted
       // landed verdict leaves the ticket at triggerLabel -- the ticket
       // just sits there, refined, until a human manually swaps the label.
-      const autoPromote = ticket.labels.includes(config.autoPromoteLabel);
+      const autoPromote = ticket.labels.includes(V1_AUTO_PROMOTE_LABEL);
       if (autoPromote) {
         await jiraClient.swapLabel(
           ticket.key,
-          config.jira.triggerLabel,
-          config.jira.handoffLabel,
+          view.triggerLabel,
+          view.handoffLabel,
         );
       }
     } else if (outcome === "bounced") {
-      await jiraClient.transitionStatus(ticket.key, config.jira.statusNames.bounced);
+      await jiraClient.transitionStatus(ticket.key, view.statusNames.bounced);
     }
   } catch (err) {
     const jiraWriteError = err instanceof Error ? err.message : String(err);
@@ -270,7 +280,7 @@ export async function runLoopIteration(
     runsToday: runsToday + 1,
     runCostUsd: result.costUsd,
     runDurationMin: result.durationMin,
-    limits: config.ceilings,
+    limits: view.limits,
   });
   if (postCheck.breached) {
     return {

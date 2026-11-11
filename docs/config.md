@@ -7,6 +7,75 @@
 > paths like `src/types.ts` map to `src/core/` and `src/roles/<phase>/` now.
 > See `docs/migration-ledger.md`.
 
+## 2.0.0 shape (current)
+
+One `pipeline.<project>.config.json` per project, at the repo root, read by
+both phases. `src/core/types.ts`'s `Config` is the source of truth;
+`validateConfig` in `src/core/config.ts` enforces it (`loadConfig` calls it).
+The two v1 files per project are archived, unmodified, under
+`docs/changelog/legacy-config/{dev-loop,research-loop}/`. Where a section
+below names a v1 key, the mapping is: `jira.triggerLabel` (research) →
+`roles.research.triggerLabel`; `jira.handoffLabel` → `roles.research.handoffLabel`
+(= `roles.dev.triggerLabel`); `jira.pollJql.refine` → `roles.research.pollJql`;
+`jira.pollJql.dev` → `roles.dev.pollJql`; `jira.codeReviewFields` →
+`roles.dev.codeReviewFields`; `ceilings.{maxCostPerRunUsd,runTimeoutMin}` →
+`roles.<role>.ceilings`.
+
+```jsonc
+{
+  "targetRepo": { "url", "defaultBranch", "path"? },
+  "github": { "repo" },
+  "jira": { "repoLabel", "statusNames": { "bounced", "prOpen" }, "claimStatus": { "from", "to" } },
+  "roles": {
+    "research": { "triggerLabel", "handoffLabel", "pollJql", "ceilings": { "maxCostPerRunUsd", "runTimeoutMin" } },
+    "dev":      { "triggerLabel", "pollJql", "codeReviewFields", "ceilings": { "maxCostPerRunUsd", "runTimeoutMin" } }
+  },
+  "ceilings": { "maxRunsPerDay", "maxAttemptsPerTicket", "maxCostPerTicketUsd" }
+}
+```
+
+- **Validation.** Unknown keys and missing keys are errors. `autoPromoteLabel`
+  is rejected ("removed in 2.0.0"): a green research verdict always hands off.
+  Every label and status value is interpolated into JQL, so `"`, `\` and
+  newlines are rejected. `roles.research.handoffLabel` must equal
+  `roles.dev.triggerLabel`, and the two trigger labels must differ. Ceilings
+  are numbers > 0 (`maxRunsPerDay` and `maxAttemptsPerTicket` integers).
+  `"___"` is allowed by the validator.
+- **Placeholders.** `requiredPlaceholderFree(config, phase)` refuses, at
+  startup, every `"___"` the phase needs: the shared `targetRepo`/`github`/
+  `jira` values, plus `roles.research.*` (research), `roles.dev.*` including
+  `codeReviewFields` (dev), or both (`worker`). So `catalog-ui-public` runs
+  `--phase research` but not `--phase dev` until its `codeReviewFields` are
+  filled.
+- **Role views.** Runners never read the whole `Config`; they take
+  `roleView(config, role)`: that role's `triggerLabel`, `pollJql`,
+  `handoffLabel` (research) or `codeReviewFields` (dev), the shared
+  `repoLabel`/`claimStatus`/`statusNames`, and `limits` =
+  `{ maxRunsPerDay` (shared value, counted per role), `maxCostPerRunUsd`,
+  `runTimeoutMin }` (that role's).
+- **Poll JQL.** `buildPollJql(view, { assigneeAccountId })` (`src/core/jql.ts`)
+  fills `{label}` (the role's `triggerLabel`), `{repoLabel}`, `{assignee}`,
+  `{bouncedStatus}` and `{prOpenStatus}`, and throws on any other `{name}`. The
+  assignee (`JIRA_ASSIGNEE_ACCOUNT_ID`) must match `[A-Za-z0-9:_-]+`.
+  `excludeKeysFromJql` throws on anything that is not a Jira key.
+- **Ceilings.** `maxCostPerRunUsd` / `runTimeoutMin` are per phase run
+  (research $50 / 120 min, dev $20 / 75 min). `maxRunsPerDay` (100) applies
+  to each role separately. `maxAttemptsPerTicket` (2) is the failed
+  (error/killed) attempts per role per ticket before the worker moves it to
+  Blocked, and `maxCostPerTicketUsd` (50) is a per-ticket cost cap across both
+  phases. Both are read by the worker (Task 13); nothing uses them yet.
+- **Labels and the version guard.** `webtarsthree` uses the v2 labels:
+  research polls `pipeline:v2.0.0` and hands off to `pipeline:v2.0.0:dev`,
+  which dev polls. Its dev poll has no assignee clause (the v2-only label
+  already scopes it), and both polls exclude `dev-loop-eval` tickets. The
+  `catalog-ui-*` configs keep the v1 labels (`pipeline:research` /
+  `pipeline:dev`) until cutover. `checkLabelVersion(config, pkgVersion)`
+  refuses an unversioned or other-major trigger label, and warns on a
+  minor/patch difference. Worker mode enforces it (Task 15); `--phase
+  research|dev` does not.
+- `pipeline.loop.config.json` (poll interval, post-run delay) is unchanged and
+  is read from the repo root by both phases.
+
 ## Research phase
 
 ### Selecting a project (CLI)

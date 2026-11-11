@@ -39,6 +39,23 @@ detail and evidence: [docs/migration-ledger.md](docs/migration-ledger.md).
 - `[dev]` `alwaysThinkingEnabled` (project settings) now applies to dev runs too;
   previously only research-loop's settings carried it.
 - `[core]` `--phase research|dev` is required; there is no default phase.
+- `[core]` One `pipeline.<project>.config.json` per project, shared by both
+  phases (`roles.research` / `roles.dev`, docs/config.md). The loader validates
+  it and rejects unknown keys, `autoPromoteLabel`, and label/status values with
+  `"`, `\` or a newline. Startup refuses the `"___"` values the chosen phase
+  needs. research-loop's own config copies are gone; both v1 sets are archived
+  under `docs/changelog/legacy-config/`. New `ceilings.maxAttemptsPerTicket`
+  (2) and `ceilings.maxCostPerTicketUsd` (50), unused until the worker.
+- `[core]` Poll JQL is built by `buildPollJql`, which throws on an unfilled
+  placeholder or a malformed assignee account id. `excludeKeysFromJql` throws on
+  anything that is not a Jira ticket key, instead of interpolating it.
+- `[research]` webtarsthree's research poll is now `pipeline:v2.0.0`, and its
+  green-verdict handoff label is `pipeline:v2.0.0:dev` (was `pipeline:research`
+  → `pipeline:dev`). `--phase research` still swaps labels only for
+  `auto-promote` tickets, the v1 rule, now a constant in the runner.
+- `[dev]` webtarsthree's dev poll is now `pipeline:v2.0.0:dev`, without the
+  assignee clause. Both webtarsthree polls exclude `dev-loop-eval` tickets.
+  Merge reconciliation removes the dev trigger label.
 
 ### Fixes now shared by both phases (ledger class a)
 

@@ -299,7 +299,7 @@ describe("runLoopIteration", () => {
         runSkill,
         runsLogPath,
         // Already at the ceiling before this run even started.
-        runsToday: view.ceilings.maxRunsPerDay,
+        runsToday: view.limits.maxRunsPerDay,
       });
 
       const result = await runLoopIteration(deps);

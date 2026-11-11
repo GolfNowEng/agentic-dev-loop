@@ -68,7 +68,7 @@ Same discipline as `dev-loop`'s `ticket-to-pr`, for dashboard parity:
 
 1. `RUN_ID` = current UTC timestamp as `YYYYMMDDTHHMMSSZ`.
 2. `SLUG` = the project slug derived from `pipeline.<project>.config.json`'s
-   `targetRepo.url` (same derivation as `repoSlugFromUrl` in `src/config.ts`
+   `targetRepo.url` (same derivation as `repoSlugFromUrl` in `src/core/config.ts`
    — the last path segment, minus a trailing `.git`), e.g. `webtarsthree`.
 3. `RUN_DIR` = `.pipeline/<SLUG>/runs/<TICKET>-<RUN_ID>/` (relative to this
    repo's root). Create it. Namespacing by `SLUG` lets multiple projects'
@@ -82,7 +82,11 @@ Same discipline as `dev-loop`'s `ticket-to-pr`, for dashboard parity:
 
 ## Target repo (grounding)
 
-This repo's `pipeline.<project>.config.json`'s `targetRepo` names the
+The project config is `pipeline.<project>.config.json` at the dev-loop
+repo root, which is `../pipeline.<project>.config.json` from this skill's
+working directory (`research-loop/`); there is no copy under
+`research-loop/` (2.0.0). Its `targetRepo` and `github.repo` keys are the
+ones this skill reads. `targetRepo` names the
 codebase this skill grounds tickets against — currently
 `pipeline.webtarsthree.config.json` points at `webtarsthree`
 (`git@github.com:fandango/webtarsthree.git`, default branch `master`). This
