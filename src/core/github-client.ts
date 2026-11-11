@@ -276,7 +276,7 @@ export function realExecGh(): ExecGhFn {
   };
 }
 
-/** Stand-in for `gh pr view <url> --json state,mergedAt`, returning its raw JSON stdout. Injected so tests never shell out for real. */
+/** Stand-in for `gh pr view <url> --json state,mergedAt,baseRefName`, returning its raw JSON stdout. Injected so tests never shell out for real. */
 export type ExecGhPrViewFn = (prUrl: string) => Promise<string>;
 
 /** A merged PR found by ticket key. `baseRefName` is the branch it merged into. */
@@ -296,20 +296,27 @@ export type ExecGhFindMergedPrFn = (
   opts?: { baseRefName?: string },
 ) => Promise<MergedPr | null>;
 
+/** Escape `text` for literal use inside a RegExp. */
+export function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * True when `text` contains `ticketKey` as a whole token, so TARS-148 never
  * matches TARS-1487 and TARS-1 never matches TARS-12.
  */
 export function containsTicketToken(text: string, ticketKey: string): boolean {
-  return new RegExp(`(^|[^A-Za-z0-9])${ticketKey}($|[^0-9])`).test(text);
+  return new RegExp(`(^|[^A-Za-z0-9])${escapeRegExp(ticketKey)}($|[^0-9])`).test(text);
 }
 
 /**
  * Real ExecGhPrViewFn for production wiring: runs
- * `gh pr view <url> --json state,mergedAt`, returning stdout.
+ * `gh pr view <url> --json state,mergedAt,baseRefName`, returning stdout.
+ * Callers that only read state/mergedAt (reconcile, the landed-ticket guard)
+ * ignore baseRefName; the blocker gate requires it to equal the default branch.
  */
 export function realExecGhPrView(exec: ExecGhFn = realExecGh()): ExecGhPrViewFn {
-  return (prUrl: string) => exec(["pr", "view", prUrl, "--json", "state,mergedAt"]);
+  return (prUrl: string) => exec(["pr", "view", prUrl, "--json", "state,mergedAt,baseRefName"]);
 }
 
 /**

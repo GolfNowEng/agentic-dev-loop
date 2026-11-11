@@ -5,8 +5,11 @@
  *
  * A blocker is cleared iff its work merged into the default branch of this
  * project's own `github.repo`:
- *   - the PR recorded for it in the landed logs (findLandedPrUrl) has a
- *     `mergedAt`, or
+ *   - the PR recorded for it in the landed logs (findLandedPrUrl) is a PR
+ *     URL in this repo (`https://github.com/<repo>/pull/<n>`, owner/name
+ *     case-insensitive) and gh reports it merged (`mergedAt`) into
+ *     `defaultBranch` (`baseRefName`). A recorded URL for any other repo,
+ *     or anything that isn't a PR URL, is ignored (never passed to gh), or
  *   - a gh search finds a merged PR into `defaultBranch` whose head branch
  *     or title carries the blocker key as a whole token (so a recorded PR
  *     closed unmerged, with the real one merged, still counts).
@@ -18,8 +21,9 @@
  */
 
 import type { JiraClient } from "./jira-client.ts";
-import type { ExecGhFindMergedPrFn, ExecGhPrViewFn } from "./github-client.ts";
+import { escapeRegExp, type ExecGhFindMergedPrFn, type ExecGhPrViewFn } from "./github-client.ts";
 import { redactSensitive } from "./redact.ts";
+import { TICKET_KEY } from "./paths.ts";
 
 /** Cap on the gh/Jira error text kept in a reason (reasons end up in logs). */
 const MAX_ERROR_CHARS = 200;
@@ -32,14 +36,15 @@ export interface BlockerGateDeps {
   execGhPrView: ExecGhPrViewFn;
   execGhFindMergedPr: ExecGhFindMergedPrFn;
   defaultBranch: string;
-  /** blockerKey -> merged PR URL. Process-lifetime, caller-owned. Only cleared results go in (merged never reverts). */
+  /** `${repo}#${blockerKey}` -> merged PR URL. Process-lifetime, caller-owned. Only cleared results go in (merged never reverts). */
   mergedCache: Map<string, string>;
   /**
    * The gated ticket's Jira project key (the part before "-"). A blocker
-   * from any other project is not cleared without calling gh. gateTicket
-   * fills this in from the ticket key.
+   * from any other project is not cleared without calling gh. Required, so
+   * no caller can skip that short-circuit; gateTicket derives it from the
+   * ticket key.
    */
-  projectKey?: string;
+  projectKey: string;
 }
 
 export interface BlockerCheck {
@@ -58,28 +63,47 @@ function errorText(err: unknown): string {
   return redactSensitive(message).slice(0, MAX_ERROR_CHARS);
 }
 
+/** True iff `url` is exactly a PR URL in `repo` (owner/name case-insensitive). */
+function isOwnRepoPrUrl(url: string, repo: string): boolean {
+  return new RegExp(`^https://github\\.com/${escapeRegExp(repo)}/pull/\\d+$`, "i").test(url);
+}
+
+/** A key that failed TICKET_KEY, made safe to print: JSON-quoted (no raw newlines) and capped. */
+function safeKey(key: string): string {
+  return JSON.stringify(String(key).slice(0, 40));
+}
+
 const needsHuman = (key: string, repo: string): string =>
   `blocker ${key} has no merged PR in ${repo} — needs a human (Done without a PR, or another repo)`;
 
 export async function isBlockerCleared(blockerKey: string, deps: BlockerGateDeps): Promise<BlockerCheck> {
-  const cached = deps.mergedCache.get(blockerKey);
+  if (typeof blockerKey !== "string" || !TICKET_KEY.test(blockerKey)) {
+    return { cleared: false, reason: `blocker ${safeKey(blockerKey)} check failed: invalid key` };
+  }
+
+  const cacheKey = `${deps.repo}#${blockerKey}`;
+  const cached = deps.mergedCache.get(cacheKey);
   if (cached) return { cleared: true, reason: `blocker ${blockerKey} merged: ${cached}` };
 
-  if (deps.projectKey !== undefined && projectOf(blockerKey) !== deps.projectKey) {
+  if (projectOf(blockerKey) !== deps.projectKey) {
     return { cleared: false, reason: needsHuman(blockerKey, deps.repo) };
   }
 
   const cleared = (url: string): BlockerCheck => {
-    deps.mergedCache.set(blockerKey, url);
+    deps.mergedCache.set(cacheKey, url);
     return { cleared: true, reason: `blocker ${blockerKey} merged: ${url}` };
   };
 
   try {
     let openPr: string | null = null;
     const recorded = await deps.findLandedPrUrl(blockerKey);
-    if (recorded) {
-      const status = JSON.parse(await deps.execGhPrView(recorded)) as { state?: string; mergedAt?: string | null };
-      if (status.mergedAt) return cleared(recorded);
+    if (recorded && isOwnRepoPrUrl(recorded, deps.repo)) {
+      const status = JSON.parse(await deps.execGhPrView(recorded)) as {
+        state?: string;
+        mergedAt?: string | null;
+        baseRefName?: string;
+      };
+      if (status.mergedAt && status.baseRefName === deps.defaultBranch) return cleared(recorded);
       if (status.state === "OPEN") openPr = recorded;
     }
 
@@ -100,7 +124,7 @@ export async function isBlockerCleared(blockerKey: string, deps: BlockerGateDeps
  */
 export async function gateTicket(
   ticketKey: string,
-  deps: BlockerGateDeps & { jira: JiraClient },
+  deps: Omit<BlockerGateDeps, "projectKey"> & { jira: JiraClient },
 ): Promise<GateResult> {
   let blockers: string[];
   try {

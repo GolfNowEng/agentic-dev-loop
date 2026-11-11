@@ -281,7 +281,7 @@ describe("containsTicketToken", () => {
 
   it("treats regex metacharacters in the key literally", () => {
     expect(containsTicketToken("feature/TARSX1", "TARS.1")).toBe(false);
-    expect(containsTicketToken("a(b", "(")).toBe(true);
+    expect(containsTicketToken("x (y", "(")).toBe(true);
   });
 });
 

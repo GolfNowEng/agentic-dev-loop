@@ -533,7 +533,7 @@ neither decision below looks at Jira status.
 `main.ts` runs `reconcileMergedTickets` (`src/roles/dev/reconcile.ts`). It takes every
 ticket whose latest `"landed"` line in `runs/<slug>.jsonl` ended within the
 last 30 days (no Jira query), checks the real merge state via `gh pr view
-<url> --json state,mergedAt`, and for each merged PR:
+<url> --json state,mergedAt,baseRefName` (reconcile ignores the base), and for each merged PR:
 
 1. comments on the mirror GitHub Issue ("Closed automatically by dev-loop":
    PR URL, merge time, ticket key, reason) and closes it
@@ -563,13 +563,16 @@ closed without merging does not block a re-run.
 blocked by" links (`JiraClient.getBlockedBy`) is worked only when every
 blocker is **cleared**. A blocker is cleared when its PR has merged into the
 default branch of this project's own `github.repo`. Either the blocker's
-recorded landed PR has `mergedAt`, or `gh pr list --state merged` finds a PR
+recorded landed PR is a `https://github.com/<repo>/pull/<n>` URL for this
+repo and gh reports it merged with `baseRefName` equal to the default branch
+(a recorded PR for any other repo is ignored), or `gh pr list --state merged` finds a PR
 into the default branch whose head branch or title contains the blocker key
 as a whole token (`TARS-1` never matches `TARS-12`). Anything else is not
 cleared: an open PR, a merge into another base, a blocker from another Jira
 project (gh is not called for it), or any error. A `gh` or Jira error is
-reported as `check failed`, so the gate fails closed. Cleared results are
-cached for the process lifetime, because a merge never reverts. Failures are
+reported as `check failed`, so the gate fails closed. A blocker key that fails the
+ticket-key regex is not cleared (`check failed: invalid key`). Cleared results
+are cached per `repo#key` for the process lifetime, because a merge never reverts. Failures are
 never cached.
 
 A blocker that is Done with no PR, or that lives in another repo or project,
