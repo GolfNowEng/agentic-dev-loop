@@ -74,7 +74,9 @@ concurrent loop instances" below, which this change does not solve.
 - `jira.codeReviewFields.{piiField,piiNoImpactOptionId,qaNotesField}` — see
   "Code Review transition screen fields" below. dev-loop-only; this Jira
   instance's Code Review transition (`prOpen`) has a required screen that
-  rejects an empty payload.
+  rejects an empty payload. Optional in the shared `Config` type (a
+  research-role config has no such key); the dev role's startup check,
+  `assertNoPlaceholders(config, "dev")`, fails if it is missing.
 - `ceilings.{maxRunsPerDay,maxCostPerRunUsd,runTimeoutMin}` — enforced by
   `src/core/ceilings.ts`; a breach pauses the loop, it never silently continues.
 - `autoPromoteLabel` — the field research-loop's own config reads to decide

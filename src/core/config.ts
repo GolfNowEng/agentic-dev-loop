@@ -7,7 +7,7 @@
 
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { Config, LoopConfig } from "./types.ts";
+import type { CodeReviewFieldsConfig, Config, LoopConfig } from "./types.ts";
 
 /**
  * Read and parse a pipeline config file at the given path. There is no
@@ -113,6 +113,9 @@ export function targetRepoAddDir(config: Config): string | null {
   return config.targetRepo.path ?? null;
 }
 
+/** Which role's required keys to check. */
+export type ConfigRole = "research" | "dev";
+
 /** Field paths (dot-notation) worth checking for leftover "___" placeholders. */
 const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
   ["jira.triggerLabel", (c) => c.jira.triggerLabel],
@@ -124,36 +127,62 @@ const PLACEHOLDER_PATHS: Array<[string, (c: Config) => unknown]> = [
   ["jira.pollJql.dev", (c) => c.jira.pollJql.dev],
   ["jira.statusNames.bounced", (c) => c.jira.statusNames.bounced],
   ["jira.statusNames.prOpen", (c) => c.jira.statusNames.prOpen],
-  ["jira.codeReviewFields.piiField", (c) => c.jira.codeReviewFields.piiField],
-  [
-    "jira.codeReviewFields.piiNoImpactOptionId",
-    (c) => c.jira.codeReviewFields.piiNoImpactOptionId,
-  ],
-  ["jira.codeReviewFields.qaNotesField", (c) => c.jira.codeReviewFields.qaNotesField],
   ["autoPromoteLabel", (c) => c.autoPromoteLabel],
   ["targetRepo.url", (c) => c.targetRepo.url],
   ["targetRepo.defaultBranch", (c) => c.targetRepo.defaultBranch],
   ["github.repo", (c) => c.github.repo],
 ];
 
+/** Dev-role-only paths: checked for "___" whenever present, required when role is "dev". */
+const CODE_REVIEW_FIELD_PATHS: Array<[string, keyof CodeReviewFieldsConfig]> = [
+  ["jira.codeReviewFields.piiField", "piiField"],
+  ["jira.codeReviewFields.piiNoImpactOptionId", "piiNoImpactOptionId"],
+  ["jira.codeReviewFields.qaNotesField", "qaNotesField"],
+];
+
 /**
  * List which known config fields still hold the literal placeholder value
  * "___" (Appendix A of the pipeline spec not yet filled in). Empty array
- * means the config is fully bound.
+ * means the config is fully bound. `jira.codeReviewFields` is dev-only: it
+ * is checked whenever present, and with `role: "dev"` a missing block (or a
+ * missing sub-field) is listed too, since the dev role cannot transition a
+ * landed PR to Code Review without it.
  */
-export function findPlaceholders(config: Config): string[] {
-  return PLACEHOLDER_PATHS.filter(([, get]) => get(config) === "___").map(
+export function findPlaceholders(config: Config, role: ConfigRole = "research"): string[] {
+  const missing = PLACEHOLDER_PATHS.filter(([, get]) => get(config) === "___").map(
     ([path]) => path,
   );
+  const crf = config.jira.codeReviewFields;
+  for (const [path, key] of CODE_REVIEW_FIELD_PATHS) {
+    const value = crf?.[key];
+    if (value === "___" || (role === "dev" && value === undefined)) missing.push(path);
+  }
+  return missing;
 }
 
-/** Throws a clear error naming every field still set to "___", if any. */
-export function assertNoPlaceholders(config: Config): void {
-  const missing = findPlaceholders(config);
+/**
+ * Throws a clear error naming every field still set to "___" (or, for
+ * `role: "dev"`, missing a required dev-only key), if any.
+ */
+export function assertNoPlaceholders(config: Config, role: ConfigRole = "research"): void {
+  const missing = findPlaceholders(config, role);
   if (missing.length > 0) {
     throw new Error(
-      `pipeline.config.json still has placeholder "___" values for: ${missing.join(", ")}. ` +
+      `pipeline.config.json still has placeholder "___" (or missing) values for: ${missing.join(", ")}. ` +
         `Fill in Appendix A of the pipeline spec before using RealJiraClient.`,
     );
   }
+}
+
+/**
+ * The dev role's Code Review field IDs. Throws if absent -- unreachable
+ * after `assertNoPlaceholders(config, "dev")` at startup, so this only
+ * narrows the optional type.
+ */
+export function requireCodeReviewFields(config: Config): CodeReviewFieldsConfig {
+  const crf = config.jira.codeReviewFields;
+  if (!crf) {
+    throw new Error("pipeline.config.json is missing jira.codeReviewFields (required by the dev role).");
+  }
+  return crf;
 }

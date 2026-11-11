@@ -8,6 +8,7 @@ import {
   targetRepoAddDir,
   listAvailableProjects,
   resolveProjectConfigPath,
+  requireCodeReviewFields,
 } from "../../src/core/config.ts";
 import type { Config } from "../../src/core/types.ts";
 import * as fs from "node:fs/promises";
@@ -210,6 +211,16 @@ describe("loadLoopConfig", () => {
     expect(loopConfig.pollIntervalSec).toBe(30);
   });
 
+  it("carries postRunDelaySec through when present", async () => {
+    await fs.writeFile(
+      path.join(dir, "pipeline.loop.config.json"),
+      JSON.stringify({ pollIntervalSec: 60, postRunDelaySec: 5 }),
+      "utf8",
+    );
+    const loopConfig = await loadLoopConfig();
+    expect(loopConfig.postRunDelaySec).toBe(5);
+  });
+
   it("throws if the file does not exist", async () => {
     await expect(loadLoopConfig()).rejects.toThrow();
   });
@@ -263,5 +274,45 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
     const config = makeConfig({ github: { repo: "___" } });
     const missing = findPlaceholders(config);
     expect(missing).toContain("github.repo");
+  });
+  // research-loop's config has no jira.codeReviewFields (dev-only key).
+  describe("a research config (no jira.codeReviewFields)", () => {
+    function researchConfig(): Config {
+      const config = makeConfig();
+      const { codeReviewFields: _crf, ...jira } = config.jira;
+      return { ...config, jira };
+    }
+
+    it("is fully bound for the research role (the default)", () => {
+      expect(findPlaceholders(researchConfig())).toEqual([]);
+      expect(() => assertNoPlaceholders(researchConfig())).not.toThrow();
+      expect(() => assertNoPlaceholders(researchConfig(), "research")).not.toThrow();
+    });
+
+    it("is rejected for the dev role, naming every missing codeReviewFields key", () => {
+      const missing = findPlaceholders(researchConfig(), "dev");
+      expect(missing).toEqual([
+        "jira.codeReviewFields.piiField",
+        "jira.codeReviewFields.piiNoImpactOptionId",
+        "jira.codeReviewFields.qaNotesField",
+      ]);
+      expect(() => assertNoPlaceholders(researchConfig(), "dev")).toThrow(/codeReviewFields/);
+    });
+  });
+
+  it("a fully-bound dev config passes the dev-role check", () => {
+    expect(() => assertNoPlaceholders(makeConfig(), "dev")).not.toThrow();
+  });
+});
+
+describe("requireCodeReviewFields", () => {
+  it("returns jira.codeReviewFields when present", () => {
+    expect(requireCodeReviewFields(makeConfig()).piiField).toBe("customfield_13504");
+  });
+
+  it("throws when the dev-only block is absent", () => {
+    const config = makeConfig();
+    const { codeReviewFields: _crf, ...jira } = config.jira;
+    expect(() => requireCodeReviewFields({ ...config, jira })).toThrow(/codeReviewFields/);
   });
 });

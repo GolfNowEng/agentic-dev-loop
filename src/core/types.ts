@@ -235,15 +235,21 @@ export interface JiraConfig {
    * hand today (its "Transition ticket to Code Review" step), so an
    * automated PR gets the same Code Review screen fields populated
    * instead of the transition silently failing to happen at all.
+   *
+   * Dev role only: research-loop's config has no such key. Optional in the
+   * type so one Config serves both roles; `assertNoPlaceholders(config,
+   * "dev")` makes it required at dev startup.
    */
-  codeReviewFields: {
-    /** "Covered Information Data Inventory" multicheckboxes field. */
-    piiField: string;
-    /** Option id for its "No Impact" value. */
-    piiNoImpactOptionId: string;
-    /** "QA Notes" textarea field. */
-    qaNotesField: string;
-  };
+  codeReviewFields?: CodeReviewFieldsConfig;
+}
+
+export interface CodeReviewFieldsConfig {
+  /** "Covered Information Data Inventory" multicheckboxes field. */
+  piiField: string;
+  /** Option id for its "No Impact" value. */
+  piiNoImpactOptionId: string;
+  /** "QA Notes" textarea field. */
+  qaNotesField: string;
 }
 
 export interface CeilingsConfig {

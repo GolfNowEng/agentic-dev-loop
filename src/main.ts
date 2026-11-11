@@ -317,7 +317,7 @@ async function main(): Promise<void> {
 
   const resolvedConfigPath = configPath ?? (await resolveProjectConfigPath(project));
   const config = await loadConfig(resolvedConfigPath);
-  assertNoPlaceholders(config);
+  assertNoPlaceholders(config, "dev");
   const loopConfig = await loadLoopConfig();
 
   const credentials = credentialsFromEnv();

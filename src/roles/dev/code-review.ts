@@ -1,4 +1,5 @@
 import type { Config, Verdict } from "../../core/types.ts";
+import { requireCodeReviewFields } from "../../core/config.ts";
 
 /**
  * Build the QA-notes Atlassian Document (ADF) for Jira's QA Notes field
@@ -116,7 +117,7 @@ export function buildCodeReviewFields(
   config: Config,
   qaNotesAdf: Record<string, unknown>,
 ): Record<string, unknown> {
-  const { piiField, piiNoImpactOptionId, qaNotesField } = config.jira.codeReviewFields;
+  const { piiField, piiNoImpactOptionId, qaNotesField } = requireCodeReviewFields(config);
   return {
     [piiField]: [{ id: piiNoImpactOptionId }],
     [qaNotesField]: qaNotesAdf,
