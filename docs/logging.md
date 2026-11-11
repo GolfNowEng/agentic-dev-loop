@@ -169,9 +169,12 @@ All paths come from `src/core/paths.ts` (validated segments, contained under
 the repo root). v2: `runs/v2/<project>.jsonl`; run dirs
 `.pipeline/v2/<project>/<session>/<ticket>/<phase>-<runId>/` (raw usage is
 `usage.json` inside); clone `.pipeline/v2/<project>/repo`; `.../sessions`.
-v1 archive: `runs/v1/<role>/<project>.jsonl`. The `--phase` runners still use
-the legacy `runs/<slug>.jsonl` and `.pipeline/<slug>/` via `legacy*` functions
-until they are removed.
+v1 archive: `runs/v1/<role>/<project>.jsonl`. `--phase research|dev` write
+v2 records to `runs/v2/<project>.jsonl` (2.0.0 Task 13). Until Task 15 the
+skills still create their own run dir under the cwd-relative legacy
+`.pipeline/<slug>/runs/`, where main.ts finds `verdict.json` (`legacy*`
+functions); raw claude usage goes to `usage.json` in the v2 run dir. Reset
+still reads the legacy layout until Task 14.
 
 ### v2 iteration record (`runs/v2/<project>.jsonl`)
 
@@ -183,3 +186,57 @@ Readers skip blank, truncated and malformed lines.
 ```json
 {"ticket":"TARS-1465","session":"s1","loop_version":"2.0.0","started":"2026-11-10T10:00:00.000Z","ended":"2026-11-10T10:41:00.000Z","outcome":"landed","phases":[{"role":"dev","skill":"ticket-to-pr","skill_version":"2.0.0","model":"opus","started":"2026-11-10T10:00:00.000Z","ended":"2026-11-10T10:41:00.000Z","outcome":"landed","phase_reached":"pr","cost_usd":4.2,"tokens":{"in":120000,"out":30000},"failure_category":null,"detail":"PR opened","pr":"https://github.com/org/repo/pull/12","run_dir":".pipeline/v2/webtarsthree/s1/TARS-1465/dev-20261110T100000Z"}]}
 ```
+
+### The worker cycle (`src/worker/`)
+
+`runWorkerIteration(deps)` (`src/worker/cycle.ts`) is one iteration. It works
+at most one ticket and writes one record per ticket iteration; an idle
+iteration writes nothing. The steps run in this order:
+
+0. **Recover** (first iteration of a process). The session lock's `inFlight`
+   comes first, then each `orphanedInFlight`, one per iteration (each orphan
+   is logged at startup). The lost run is always recorded as an `error` phase
+   (`agent_error`, "in-flight ... lost"), so it counts toward
+   `maxAttemptsPerTicket`. Research is re-run without a claim. For dev, an
+   open PR (`findOpenPrUrl`) means self-heal: Code Review with the PR-link QA
+   stub, outcome `skipped-pr-exists`, no rebuild. Otherwise dev is re-run.
+1. **Pending handoffs** (`handoff.ts`). For every ticket whose latest research
+   entry landed without `handoff: "done"` and that has no later dev entry,
+   the label swap is retried. A failure writes one phase-less
+   `handoff-pending` record, and only when the ticket's previous record isn't
+   already one. It never pauses.
+2. **Exclude**. Every poll excludes `recentlyEnded` (10 min, read from the
+   log, so the exclusion survives restarts) and tickets at
+   `maxAttemptsPerTicket` failed attempts of a role (`attempts.ts`). A ticket
+   that has just reached the cap gets a comment, the bounced status and one
+   `blocked-attempts` record.
+3. **Dev first** (no claim). The candidates are step 1's handoffs, then the
+   dev poll. The landed guard (recorded PR merged/open/unreadable) and the
+   blocker gate apply.
+4. **Research**. Research polls, skips anything with a landed research entry
+   (v2, or the v1 research log), gates, then claims. A ticket that loses the
+   claim race is re-polled; a claim that throws gets a `claim-error` record
+   and is re-polled. At most 20 candidates are skipped per iteration. Once
+   the research phase is green, the post-phase ceiling check runs, then the
+   label handoff, then dev on the same ticket in one record. A breach means
+   `handoff: "skipped-ceiling"` and paused. A failed swap means
+   `handoff: "failed"`. If dev is capped or less than $1 of the ticket budget
+   remains, the record is `[research]` with `handoff: "done"` and dev picks
+   it up later.
+5. The post-phase ceiling (cost/duration of the last phase) pauses after the
+   record is appended.
+
+Budgets (`--max-budget-usd`): research gets
+`min(research.maxCostPerRunUsd, maxCostPerTicketUsd)`. Dev in the same
+iteration gets `min(dev.maxCostPerRunUsd, maxCostPerTicketUsd − research
+cost)`. A dev-only iteration gets `min(dev.maxCostPerRunUsd,
+maxCostPerTicketUsd)`. `maxRunsPerDay` is counted per role. `paused` means a
+ceiling breach, a Jira 401/403 on the poll, a lost session lock, or every
+enabled role at its daily cap. A per-ticket failure never pauses or throws.
+Jira comments built by `src/` end with a `— <session>` paragraph, and GitHub
+comments end with a `— <session>` line.
+
+`--phase research` runs the cycle with only research enabled: no handoff and
+no dev, so a green ticket stays pending for a dev-enabled worker.
+`--phase dev` runs it with only dev enabled: steps 1 and 3, plus the v1
+reconcile pass.

@@ -1,24 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { researchEarlySkillResult } from "../../../src/roles/research/spawn-result.ts";
-import { runLoopIteration } from "../../../src/roles/research/phase.ts";
+import { runWorkerIteration } from "../../../src/worker/cycle.ts";
+import { readIterations } from "../../../src/core/iteration-log.ts";
 import type { SpawnClaudeResult } from "../../../src/core/spawn-claude.ts";
-import type { JiraClient } from "../../../src/core/jira-client.ts";
-import type { ResearchView } from "../../../src/core/types.ts";
-import { roleView } from "../../../src/core/config.ts";
-import { makeV2Config } from "../../fixtures/config.ts";
-import { readRunLog } from "../../../src/core/runs-log.ts";
+import { harness, ticket, type Harness } from "../../worker/helpers.ts";
 
-const view: ResearchView = roleView(
-  makeV2Config((c) => {
-    c.roles.research.ceilings = { maxCostPerRunUsd: 10, runTimeoutMin: 120 };
-  }),
-  "research",
-);
-
-const base = { skill: "ticket-refine", skillVersion: "abc", model: "sonnet" };
+const base = { skillVersion: "abc", model: "sonnet" };
 
 function spawnErrorRun(): SpawnClaudeResult {
   return {
@@ -31,6 +18,12 @@ function spawnErrorRun(): SpawnClaudeResult {
   };
 }
 
+let h: Harness | undefined;
+afterEach(async () => {
+  await h?.cleanup();
+  h = undefined;
+});
+
 describe("researchEarlySkillResult", () => {
   it("returns null for a clean run (the caller reads verdict.json)", () => {
     expect(researchEarlySkillResult({ ...spawnErrorRun(), spawnError: undefined }, base, 120)).toBeNull();
@@ -41,56 +34,30 @@ describe("researchEarlySkillResult", () => {
     expect(result.verdictRaw).toBeUndefined();
     expect(result.costUsd).toBe(12.3);
     expect(result.tokens).toEqual({ in: 4000, out: 300 });
-    expect(result.durationMin).toBe(20);
-    expect(result.startedAt).toBe("2026-11-10T10:00:00.000Z");
+    expect(result.started).toBe("2026-11-10T10:00:00.000Z");
+    expect(result.skillVersion).toBe("abc");
   });
 
   it("killedTimeout: a killed / killed_ceiling verdict with the real cost", () => {
-    const result = researchEarlySkillResult(
-      { ...spawnErrorRun(), spawnError: undefined, killedTimeout: true },
-      base,
-      120,
-    )!;
+    const result = researchEarlySkillResult({ ...spawnErrorRun(), spawnError: undefined, killedTimeout: true }, base, 120)!;
     expect(JSON.parse(result.verdictRaw!).outcome).toBe("killed");
     expect(result.costUsd).toBe(12.3);
   });
 
-  it("end to end: runs.jsonl records cost_usd 12.3 and the post-run ceiling (maxCostPerRunUsd 10) pauses", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "research-spawn-result-"));
-    try {
-      const runsLogPath = join(dir, "runs.jsonl");
-      const jiraClient = {
-        pollOldestMatching: vi.fn(async () => ({ key: "PROJ-1", status: "Backlog", assignee: "u", labels: [] })),
-        pollAllMatching: vi.fn(async () => []),
-        claimTicket: vi.fn(async () => true),
-        transitionStatus: vi.fn(async () => {}),
-        swapLabel: vi.fn(async () => {}),
-        removeLabel: vi.fn(async () => {}),
-        assignTicket: vi.fn(async () => {}),
-        addComment: vi.fn(async () => {}),
-        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
-      } as JiraClient;
+  it("end to end through the cycle: the record has cost_usd 12.3, agent_error, and the post-run ceiling (maxCostPerRunUsd 10) pauses", async () => {
+    h = await harness({
+      config: (c) => {
+        c.roles.research.ceilings = { maxCostPerRunUsd: 10, runTimeoutMin: 120 };
+      },
+      deps: { runSkill: async () => researchEarlySkillResult(spawnErrorRun(), base, 120)! },
+    });
+    h.jira.research = [ticket("PROJ-1")];
 
-      const result = await runLoopIteration({
-        jiraClient,
-        view,
-        jql: 'labels = "pipeline:research"',
-        runSkill: async () => researchEarlySkillResult(spawnErrorRun(), base, 120)!,
-        runsLogPath,
-        runsToday: 0,
-        assigneeAccountId: "u",
-      });
+    const result = await runWorkerIteration(h.deps);
 
-      const lines = await readRunLog(runsLogPath);
-      expect(lines).toHaveLength(1);
-      expect(lines[0].cost_usd).toBe(12.3);
-      expect(lines[0].tokens).toEqual({ in: 4000, out: 300 });
-      expect(lines[0].outcome).toBe("error");
-      expect(lines[0].failure_category).toBe("agent_error");
-      expect(result.action).toBe("paused-ceiling");
-      expect(result.pauseReason).toMatch(/maxCostPerRunUsd/);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const [r] = await readIterations(h.logPath);
+    expect(r.phases[0]).toMatchObject({ cost_usd: 12.3, tokens: { in: 4000, out: 300 }, outcome: "error", failure_category: "agent_error" });
+    expect(result.kind).toBe("paused");
+    if (result.kind === "paused") expect(result.reason).toMatch(/maxCostPerRunUsd/);
   });
 });

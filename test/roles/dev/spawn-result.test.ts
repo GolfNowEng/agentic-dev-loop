@@ -1,22 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { devEarlySkillResult } from "../../../src/roles/dev/spawn-result.ts";
-import { runLoopIteration } from "../../../src/roles/dev/phase.ts";
+import { runWorkerIteration } from "../../../src/worker/cycle.ts";
+import { readIterations } from "../../../src/core/iteration-log.ts";
+import { parseVerdict } from "../../../src/core/verdict.ts";
 import type { SpawnClaudeResult } from "../../../src/core/spawn-claude.ts";
-import type { JiraClient } from "../../../src/core/jira-client.ts";
-import type { GitHubClient } from "../../../src/core/github-client.ts";
-import type { DevView } from "../../../src/core/types.ts";
-import { roleView } from "../../../src/core/config.ts";
-import { makeV2Config } from "../../fixtures/config.ts";
+import { devTicket, harness, type Harness } from "../../worker/helpers.ts";
 
-const view: DevView = roleView(
-  makeV2Config((c) => {
-    c.roles.dev.ceilings = { maxCostPerRunUsd: 10, runTimeoutMin: 75 };
-  }),
-  "dev",
-);
+const base = { skillVersion: "abc", model: "sonnet" };
 
 function spawnErrorRun(): SpawnClaudeResult {
   return {
@@ -29,73 +19,48 @@ function spawnErrorRun(): SpawnClaudeResult {
   };
 }
 
+let h: Harness | undefined;
+afterEach(async () => {
+  await h?.cleanup();
+  h = undefined;
+});
+
 describe("devEarlySkillResult", () => {
   it("returns null for a clean run (the caller reads verdict.json)", () => {
-    const run = { ...spawnErrorRun(), spawnError: undefined };
-    expect(devEarlySkillResult(run, 75)).toBeNull();
+    expect(devEarlySkillResult({ ...spawnErrorRun(), spawnError: undefined }, base, 75)).toBeNull();
   });
 
   it("spawnError with parsed usage: v1's agent_error verdict, but the real cost and tokens", () => {
-    const result = devEarlySkillResult(spawnErrorRun(), 75)!;
-    expect(result.verdict.outcome).toBe("error");
-    expect(result.verdict.failure_category).toBe("agent_error");
+    const result = devEarlySkillResult(spawnErrorRun(), base, 75)!;
+    const v = parseVerdict(result.verdictRaw, "executor");
+    expect(v.outcome).toBe("error");
+    expect(v.failure_category).toBe("agent_error");
     expect(result.costUsd).toBe(12.3);
     expect(result.tokens).toEqual({ in: 4000, out: 300 });
   });
 
   it("killedTimeout: outcome killed / killed_ceiling with the real cost", () => {
-    const result = devEarlySkillResult({ ...spawnErrorRun(), spawnError: undefined, killedTimeout: true }, 75)!;
-    expect(result.verdict.outcome).toBe("killed");
-    expect(result.verdict.failure_category).toBe("killed_ceiling");
+    const result = devEarlySkillResult({ ...spawnErrorRun(), spawnError: undefined, killedTimeout: true }, base, 75)!;
+    const v = parseVerdict(result.verdictRaw, "executor");
+    expect(v.outcome).toBe("killed");
+    expect(v.failure_category).toBe("killed_ceiling");
     expect(result.costUsd).toBe(12.3);
   });
 
-  it("end to end: runs.jsonl records cost_usd 12.3 and the post-run ceiling (maxCostPerRunUsd 10) pauses", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "dev-spawn-result-"));
-    try {
-      const runsLogPath = join(dir, "runs.jsonl");
-      const jiraClient = {
-        pollOldestMatching: vi.fn(async () => ({ key: "PROJ-1", status: "In Progress", assignee: "u", labels: [] })),
-        pollAllMatching: vi.fn(async () => []),
-        claimTicket: vi.fn(async () => true),
-        transitionStatus: vi.fn(async () => {}),
-        swapLabel: vi.fn(async () => {}),
-        removeLabel: vi.fn(async () => {}),
-        assignTicket: vi.fn(async () => {}),
-        addComment: vi.fn(async () => {}),
-        closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
-      } as JiraClient;
-      const githubClient = {
-        findIssueByJiraKey: vi.fn(async () => null),
-        createIssue: vi.fn(),
-        addComment: vi.fn(async () => {}),
-        closeIssue: vi.fn(async () => {}),
-        closePr: vi.fn(async () => "already-closed" as const),
-      } as unknown as GitHubClient;
+  it("end to end through the cycle: the record has cost_usd 12.3 and the post-run ceiling (maxCostPerRunUsd 10) pauses", async () => {
+    h = await harness({
+      config: (c) => {
+        c.roles.dev.ceilings = { maxCostPerRunUsd: 10, runTimeoutMin: 75 };
+      },
+      deps: { runSkill: async () => devEarlySkillResult(spawnErrorRun(), base, 75)! },
+    });
+    h.jira.dev = [devTicket("PROJ-1")];
 
-      const result = await runLoopIteration({
-        jiraClient,
-        githubClient,
-        view,
-        runSkill: async () => devEarlySkillResult(spawnErrorRun(), 75)!,
-        loopKind: "dev",
-        runsLogPath,
-        runsToday: 0,
-        assigneeAccountId: "u",
-        execGhPrView: vi.fn(async () => {
-          throw new Error("unused");
-        }),
-      });
+    const result = await runWorkerIteration(h.deps);
 
-      const line = JSON.parse((await readFile(runsLogPath, "utf8")).trim());
-      expect(line.cost_usd).toBe(12.3);
-      expect(line.tokens).toEqual({ in: 4000, out: 300 });
-      expect(line.outcome).toBe("error");
-      expect(line.failure_category).toBe("agent_error");
-      expect(result.kind).toBe("paused");
-      if (result.kind === "paused") expect(result.reason).toMatch(/maxCostPerRunUsd/);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const [r] = await readIterations(h.logPath);
+    expect(r.phases[0]).toMatchObject({ cost_usd: 12.3, tokens: { in: 4000, out: 300 }, outcome: "error", failure_category: "agent_error" });
+    expect(result.kind).toBe("paused");
+    if (result.kind === "paused") expect(result.reason).toMatch(/maxCostPerRunUsd/);
   });
 });

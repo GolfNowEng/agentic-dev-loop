@@ -124,8 +124,10 @@ that still applies.
   label for "awaiting approval" (that distinction is a comment on the
   ticket itself — presence of `Refined Spec — ready for ticket-to-pr` —
   not a label). `handoffLabel` (`"pipeline:dev"`) is dev-loop's poll
-  target; this loop only ever *writes* it (on an auto-promoted verdict, by
-  swapping it in for `triggerLabel`), never polls for it.
+  target. Since 2.0.0 the worker cycle (`src/worker/`) writes it on every
+  green research verdict, by swapping it in for `triggerLabel` after the
+  post-research ceiling check. There is no human gate, and the research
+  role never polls for it.
 - `jira.repoLabel` — a second, always-paired label naming which repo a
   ticket belongs to (e.g. `"repo:catalog-ui-management"`), ANDed into both
   `pollJql` templates alongside the stage label. Needed because more than
@@ -488,10 +490,9 @@ epic-or-label-shaped on a landed dev-loop verdict at all. A landed ticket
 stays at whatever label it already carries (`handoffLabel`,
 `"pipeline:dev"`); **status alone** — `In Progress` → `Code Review` — is
 the "needs code review" signal now. research-loop's own landed/ready
-verdicts still swap the label normally (`triggerLabel` → `handoffLabel`,
-on `autoPromoteLabel` — the real human-approval gate, unrelated to this
-fix; a non-auto-promoted verdict leaves the ticket in place, carrying
-`triggerLabel`).
+verdicts still swap the label (`triggerLabel` → `handoffLabel`). Since
+2.0.0 the worker cycle does this on every green verdict, and
+`autoPromoteLabel` no longer exists.
 
 ### Code Review transition screen fields
 

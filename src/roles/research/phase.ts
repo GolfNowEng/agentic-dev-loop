@@ -1,297 +1,73 @@
-/**
- * Single-pass loop iteration for the research-loop.
- *
- * Implements, as one pass, the 8 steps described in the pipeline spec:
- *   1. poll Jira via JQL for the oldest matching ticket
- *      -> if none, report an empty-queue result (caller sleeps & repeats)
- *   2. claim it via an atomic status transition
- *      -> if the claim loses a race, skip this ticket, do not throw
- *   3. spawn "claude -p" headless with the skill (injected as `runSkill`,
- *      never a real process from this module)
- *   4. read the verdict.json it wrote (missing/malformed -> outcome
- *      "error", failure_category "agent_error", via verdict.ts)
- *   5. transition the ticket and swap its pipeline-stage label per the
- *      verdict
- *   6. append exactly one line to runs.jsonl (via runs-log.ts)
- *   7. enforce ceilings (via ceilings.ts); on breach, PAUSE -- never
- *      silently continue
- *   8. (caller's responsibility) sleep and repeat
- *
- * All I/O boundaries -- Jira and "spawn claude -p" -- are injected so this
- * module never touches a real process or a real Jira instance.
- */
+// The research phase: one ticket-refine run on a ticket the worker cycle
+// already claimed (src/worker/cycle.ts owns polling, the blocker gate, the
+// claim, assignment, the log, the ceilings and the research -> dev label
+// handoff, so the ceiling check can sit before the handoff). Runs the skill,
+// normalizes "ready" to "landed", moves a bounce to the bounced status and
+// returns the PhaseEntry. Never throws.
 
-import type { ResearchView, RunLogLine, Verdict } from "../../core/types.ts";
-import { CURRENT_LOG_VERSION } from "../../core/types.ts";
 import type { JiraClient, JiraTicket } from "../../core/jira-client.ts";
-import { checkCeilings } from "../../core/ceilings.ts";
-import { parseVerdict } from "../../core/verdict.ts";
-import { appendRunLog, hasLandedRun } from "../../core/runs-log.ts";
-import { excludeKeysFromJql } from "../../core/jql.ts";
+import type { ResearchView, Verdict } from "../../core/types.ts";
+import type { PhaseEntry } from "../../core/iteration-log.ts";
+import type { RunSkillFn, RunSkillResult } from "../../core/run-skill.ts";
+import { errorMessage } from "../../core/run-skill.ts";
+import { agentErrorVerdict, parseVerdict } from "../../core/verdict.ts";
 
-/**
- * What running the skill against a ticket produced. Stands in for the
- * real "spawn claude -p, then read verdict.json off disk" sequence --
- * `verdictRaw` is exactly what would have been read from verdict.json:
- * the JSON text, or undefined if the file was missing.
- */
-export interface RunSkillResult {
-  skill: string;
-  skillVersion: string;
-  model: string;
-  /** ISO-8601 UTC timestamp. */
-  startedAt: string;
-  /** ISO-8601 UTC timestamp. */
-  endedAt: string;
-  /** Raw verdict.json content, or undefined if the skill never wrote one. */
-  verdictRaw: string | undefined;
-  /** Wall-clock run duration in minutes, for ceiling checks. */
-  durationMin: number;
-  costUsd: number;
-  /**
-   * Measured token usage from claude -p's own usage report (extractUsage()
-   * in main.ts) -- not the skill's self-report. verdict.tokens is never
-   * populated by either skill (their own schemas document cost_usd/tokens
-   * as left at 0, deriving the real value from claude -p's usage report),
-   * so buildRunLogLine must read this field, not verdict.tokens, or every
-   * logged run silently records {in:0,out:0}.
-   */
-  tokens: { in: number; out: number };
-}
-
-/** Injected in place of a real `claude -p` spawn. */
-export type RunSkillFn = (ticket: JiraTicket) => Promise<RunSkillResult>;
-
-/** How this iteration concluded. */
-export type LoopIterationAction =
-  | "empty-queue"
-  | "claim-raced"
-  | "claim-error"
-  | "processed"
-  | "paused-ceiling";
-
-export interface LoopIterationResult {
-  action: LoopIterationAction;
-  ticket?: string;
-  logLine?: RunLogLine;
-  /** Present when action is "paused-ceiling". */
-  pauseReason?: string;
-  /**
-   * A Jira write failure message, surfaced so a caller can alert a human,
-   * but never thrown. Two distinct cases share this field:
-   *   - action "processed": the post-verdict write (swapLabel/
-   *     transitionStatus) threw. The run itself still completed and is
-   *     still logged; this only means Jira's state may be out of sync
-   *     with runs.jsonl (the ticket may still sit at its old label/status).
-   *   - action "claim-error": claimTicket() itself threw, before any run
-   *     happened -- nothing was logged for this ticket at all; see
-   *     "claim-error" above.
-   * Either way, one Jira write failing must never kill the loop or discard
-   * an otherwise-real, already-completed run.
-   */
-  jiraSyncError?: string;
-  /**
-   * Polled tickets skipped before claiming because runs.jsonl already has a
-   * "landed" line for them (a failed pipeline:research -> pipeline:dev label
-   * swap left them matching the poll). Absent when none were skipped.
-   */
-  skippedLanded?: string[];
-}
-
-/**
- * v1's auto-promote gate for `--phase research`: only a ticket carrying this
- * label has its trigger label swapped to the handoff label on a green
- * verdict. The config key (`autoPromoteLabel`) was removed in 2.0.0 and the
- * loader rejects it; the v1 runner keeps v1's behavior with v1's value until
- * the worker cycle (Task 13), which hands off every green verdict.
- */
-export const V1_AUTO_PROMOTE_LABEL = "auto-promote";
-
-export interface RunLoopIterationDeps {
-  jiraClient: JiraClient;
-  /** The research role's settings: roleView(config, "research"). */
+export interface ResearchPhaseDeps {
+  jira: JiraClient;
+  /** roleView(config, "research"). */
   view: ResearchView;
-  /** Resolved JQL to poll with -- callers build this via jql.ts buildPollJql. */
-  jql: string;
-  /** Stand-in for spawning `claude -p` with the skill. */
   runSkill: RunSkillFn;
-  /** Path to the runs.jsonl file to append to. */
-  runsLogPath: string;
-  /** Number of runs already recorded today, for the maxRunsPerDay ceiling. */
-  runsToday: number;
-  /**
-   * Jira accountId of the human who owns this pipeline's tickets. Used to
-   * assign-if-unassigned a ticket right after it's claimed.
-   */
-  assigneeAccountId: string;
+  /** v2RunDir(...) for this run, recorded as run_dir. */
+  runDir: string;
+  maxBudgetUsd: number;
+  now: () => Date;
 }
 
-/**
- * Run exactly one iteration of the loop: poll, claim, run the skill, read
- * its verdict, transition status + swap label, log the run, and check
- * ceilings.
- * Does not sleep and does not loop -- callers own the poll/sleep cadence.
- */
-export async function runLoopIteration(
-  deps: RunLoopIterationDeps,
-): Promise<LoopIterationResult> {
-  const { jiraClient, view, jql, runSkill, runsLogPath, runsToday, assigneeAccountId } = deps;
-
-  const preCheck = checkCeilings({
-    runsToday,
-    runCostUsd: null,
-    runDurationMin: null,
-    limits: view.limits,
-  });
-  if (preCheck.breached) {
-    return { action: "paused-ceiling", pauseReason: preCheck.detail };
-  }
-
-  // Never re-refine a ticket that already landed: skip it before claiming
-  // (no status change, no run, no cost) and re-poll with it excluded so it
-  // cannot block the queue.
-  const skippedLanded: string[] = [];
-  let ticket = await jiraClient.pollOldestMatching(jql);
-  while (ticket && (await hasLandedRun(runsLogPath, ticket.key))) {
-    skippedLanded.push(ticket.key);
-    ticket = await jiraClient.pollOldestMatching(excludeKeysFromJql(jql, skippedLanded));
-  }
-  const skipped = skippedLanded.length > 0 ? { skippedLanded } : {};
-  if (!ticket) {
-    return { action: "empty-queue", ...skipped };
-  }
-
-  // A claimTicket() throw (as opposed to its clean `false` lost-race return) is a
-  // real Jira-side error -- e.g. a transition's screen has a required field
-  // claim() doesn't send (see docs/future-enhancements.md's claim()-doesn't-
-  // send-required-screen-fields entry). Left uncaught, this would propagate
-  // out of runLoopIteration and kill the entire unattended poll loop over
-  // one bad ticket. Caught here and reported as a distinct "claim-error"
-  // action instead -- this does not fix the underlying Jira metadata gap
-  // (still deferred), it only stops that gap from taking down the process.
-  let claimed: boolean;
+export async function runResearchPhase(ticket: JiraTicket, deps: ResearchPhaseDeps): Promise<PhaseEntry> {
+  let result: RunSkillResult;
+  let verdict: Verdict;
   try {
-    claimed = await jiraClient.claimTicket(
-      ticket.key,
-      view.claimStatus.from,
-      view.claimStatus.to,
-    );
+    result = await deps.runSkill({ role: "research", ticketKey: ticket.key, runDir: deps.runDir, maxBudgetUsd: deps.maxBudgetUsd });
+    verdict = parseVerdict(result.verdictRaw, "refine");
   } catch (err) {
-    const claimError = err instanceof Error ? err.message : String(err);
-    return {
-      action: "claim-error",
-      ticket: ticket.key,
-      jiraSyncError: claimError,
-      ...skipped,
-    };
-  }
-  if (!claimed) {
-    return { action: "claim-raced", ticket: ticket.key, ...skipped };
+    const at = deps.now().toISOString();
+    result = { verdictRaw: undefined, started: at, ended: at, costUsd: 0, tokens: { in: 0, out: 0 }, skillVersion: "", model: "" };
+    verdict = agentErrorVerdict(`runSkill threw: ${errorMessage(err)}`);
   }
 
-  let assignSyncError: string | undefined;
-  if (ticket.assignee === null) {
-    try {
-      await jiraClient.assignTicket(ticket.key, assigneeAccountId);
-    } catch (err) {
-      assignSyncError = err instanceof Error ? err.message : String(err);
-    }
-  }
-
-  const result = await runSkill(ticket);
-  const verdict: Verdict = parseVerdict(result.verdictRaw, "refine");
-
-  // ticket-refine reports its own passing verdict as "ready" (a refined
-  // ticket, not a PR) -- normalize to "landed" for the shared RunOutcome
-  // schema before anything downstream (the label swap, runs.jsonl) sees it.
+  // ticket-refine's passing word is "ready" (a refined ticket, not a PR).
   const outcome = verdict.outcome === "ready" ? "landed" : verdict.outcome;
 
-  // Record this run's real consequences BEFORE checking the post-run
-  // ceiling. A completed run already produced a real verdict -- a
-  // ceiling breach must pause the loop from starting the NEXT run, but
-  // must never discard work that already happened (the label swap, audit
-  // log). Checking the ceiling first would silently drop a genuine
-  // "landed" verdict just because it happened to cost/take more than
-  // expected, which defeats the purpose of the audit trail.
-  //
-  // The Jira write itself is wrapped in try/catch: a malformed request or
-  // a transient API error here must never throw out of this function --
-  // that would propagate out of the caller's poll loop and kill the
-  // entire unattended process over what is otherwise a real, completed
-  // run. The run still gets logged either way; only the label/status may
-  // be out of sync with what runs.jsonl says happened.
-  let jiraSyncError: string | undefined = assignSyncError;
-  try {
-    if (outcome === "landed") {
-      // Only an auto-promoted verdict swaps the label (straight to
-      // handoffLabel, skipping human approval). A non-auto-promoted
-      // landed verdict leaves the ticket at triggerLabel -- the ticket
-      // just sits there, refined, until a human manually swaps the label.
-      const autoPromote = ticket.labels.includes(V1_AUTO_PROMOTE_LABEL);
-      if (autoPromote) {
-        await jiraClient.swapLabel(
-          ticket.key,
-          view.triggerLabel,
-          view.handoffLabel,
-        );
-      }
-    } else if (outcome === "bounced") {
-      await jiraClient.transitionStatus(ticket.key, view.statusNames.bounced);
+  let jiraSyncError: string | undefined;
+  if (outcome === "bounced") {
+    try {
+      await deps.jira.transitionStatus(ticket.key, deps.view.statusNames.bounced);
+    } catch (err) {
+      jiraSyncError = errorMessage(err);
     }
-  } catch (err) {
-    const jiraWriteError = err instanceof Error ? err.message : String(err);
-    jiraSyncError = jiraSyncError
-      ? `${jiraSyncError}; ${jiraWriteError}`
-      : jiraWriteError;
   }
 
-  const logLine: RunLogLine = {
-    ticket: ticket.key,
-    skill: result.skill,
+  return {
+    role: "research",
+    skill: "ticket-refine",
     skill_version: result.skillVersion,
     model: result.model,
-    started: result.startedAt,
-    ended: result.endedAt,
+    started: result.started,
+    ended: result.ended,
     outcome,
     phase_reached: verdict.phase_reached,
-    red_confirmed: verdict.red_confirmed ?? false,
-    verify_loops: verdict.verify_loops ?? 0,
-    retries: verdict.retries ?? 0,
-    failure_category: verdict.failure_category,
-    detail: verdict.detail,
-    // Always null: the research role never opens a PR. core/remote-close.ts
-    // and reset-cli close a PR only for a runs.jsonl line with a non-null
-    // `pr`, so this must be enforced here, not left to ticket-refine's
-    // verdict schema happening to omit the field.
-    pr: null,
     cost_usd: result.costUsd,
     tokens: result.tokens,
-    log_version: CURRENT_LOG_VERSION,
-    // verdict.size_trajectory was already sanitized by parseVerdict (via
-    // parseSizeTrajectory) above -- a malformed value never reaches here.
-    ...(verdict.size_trajectory !== undefined
-      ? { size_trajectory: verdict.size_trajectory }
-      : {}),
+    failure_category: verdict.failure_category,
+    detail: verdict.detail,
+    // Always null: research never opens a PR (remote-close and reset rely on it).
+    pr: null,
+    run_dir: deps.runDir,
+    ...(verdict.red_confirmed !== undefined ? { red_confirmed: verdict.red_confirmed } : {}),
+    ...(verdict.verify_loops !== undefined ? { verify_loops: verdict.verify_loops } : {}),
+    ...(verdict.retries !== undefined ? { retries: verdict.retries } : {}),
+    // Already sanitized by parseVerdict: a malformed value never reaches here.
+    ...(verdict.size_trajectory !== undefined ? { size_trajectory: verdict.size_trajectory } : {}),
+    ...(jiraSyncError !== undefined ? { jira_sync_error: jiraSyncError } : {}),
   };
-
-  await appendRunLog(runsLogPath, logLine);
-
-  const postCheck = checkCeilings({
-    runsToday: runsToday + 1,
-    runCostUsd: result.costUsd,
-    runDurationMin: result.durationMin,
-    limits: view.limits,
-  });
-  if (postCheck.breached) {
-    return {
-      action: "paused-ceiling",
-      pauseReason: postCheck.detail,
-      ticket: ticket.key,
-      logLine,
-      jiraSyncError,
-      ...skipped,
-    };
-  }
-
-  return { action: "processed", ticket: ticket.key, logLine, jiraSyncError, ...skipped };
 }

@@ -1,0 +1,177 @@
+// WorkerDeps and the per-iteration context shared by the worker-cycle steps
+// (cycle.ts, recover.ts, handoff.ts, attempts.ts).
+
+import type { JiraClient, JiraTicket } from "../core/jira-client.ts";
+import type { ExecGhFindMergedPrFn, ExecGhPrViewFn, GitHubClient } from "../core/github-client.ts";
+import type { Config, DevView, ResearchView, Role } from "../core/types.ts";
+import type { InFlight, Session } from "../core/session.ts";
+import type { IterationOutcome, IterationRecord, PhaseEntry } from "../core/iteration-log.ts";
+import { appendIteration } from "../core/iteration-log.ts";
+import type { RunSkillFn } from "../core/run-skill.ts";
+import { roleView } from "../core/config.ts";
+import { redactSensitive } from "../core/redact.ts";
+
+export interface WorkerGateDeps {
+  /** Latest landed dev PR URL for a key (findLandedPrUrlAcross with the slug bound). Also feeds the dev landed guard. */
+  findLandedPrUrl: (key: string) => Promise<string | null>;
+  execGhPrView: ExecGhPrViewFn;
+  execGhFindMergedPr: ExecGhFindMergedPrFn;
+  /** Process-lifetime cache of cleared blockers (see blocker-gate.ts). */
+  mergedCache: Map<string, string>;
+}
+
+export interface WorkerDeps {
+  jira: JiraClient;
+  github: GitHubClient;
+  config: Config;
+  /** Project slug (PROJECT_SLUG): names v2RunDir paths. */
+  slug: string;
+  /** The acquireSession handle. */
+  session: Pick<Session, "name" | "inFlight" | "orphanedInFlight" | "setInFlight">;
+  loopVersion: string;
+  runSkill: RunSkillFn;
+  /** Absolute path of the v2 iteration log (resolveRepoPath(v2RunsLog(slug)) in production). */
+  logPath: string;
+  now: () => Date;
+  assigneeAccountId: string;
+  /** Blocker-gate deps; repo and default branch come from config. */
+  gate: WorkerGateDeps;
+  /** Open PR for a ticket, for crash recovery (realFindOpenPrUrl in production). */
+  findOpenPrUrl: (key: string) => Promise<string | null>;
+  /** Tickets with a record that ended this recently are not polled (Jira index lag). Default 600 000. */
+  recentWindowMs?: number;
+  /** Which roles this process runs. Default both (worker mode); `--phase research|dev` passes one. */
+  roles?: Role[];
+  /** v1 research "landed" lookup (the research log the v1 runner wrote), so a v1-refined ticket is never re-refined. */
+  hasLandedResearchV1?: (key: string) => Promise<boolean>;
+  log?: (message: string) => void;
+}
+
+export type WorkerIterationResult =
+  | { kind: "idle" }
+  | { kind: "did"; record: IterationRecord }
+  | { kind: "paused"; reason: string; record?: IterationRecord };
+
+/** Process-lifetime state, keyed by the session handle (one per process). */
+export interface WorkerState {
+  /** In-flight runs still to recover: the adopted one first, then orphans. */
+  recover: InFlight[];
+  /** Untrusted poll keys already logged as invalid. */
+  badKeys: Set<string>;
+}
+
+const STATES = new WeakMap<object, WorkerState>();
+
+export function workerState(deps: WorkerDeps): { state: WorkerState; first: boolean } {
+  let state = STATES.get(deps.session);
+  if (state) return { state, first: false };
+  const recover = [...(deps.session.inFlight ? [deps.session.inFlight] : []), ...deps.session.orphanedInFlight];
+  state = { recover, badKeys: new Set() };
+  STATES.set(deps.session, state);
+  return { state, first: true };
+}
+
+/** Max candidates skipped (blocked, landed, raced, claim-error, invalid) in one iteration before returning idle. */
+export const MAX_SKIPS = 20;
+
+export interface Ctx {
+  deps: WorkerDeps;
+  state: WorkerState;
+  /** The log, read once at the start of the iteration; append() keeps it current. */
+  records: IterationRecord[];
+  research: ResearchView;
+  dev: DevView;
+  roles: Set<Role>;
+  log: (message: string) => void;
+  /** Keys excluded from every poll this iteration (recentlyEnded ∪ attempt-capped ∪ skipped). */
+  exclude: Set<string>;
+  skips: number;
+  /** Tickets whose handoff step 1 just completed: dev candidates ahead of the poll. */
+  handedOff: string[];
+}
+
+export function makeCtx(deps: WorkerDeps, state: WorkerState, records: IterationRecord[]): Ctx {
+  return {
+    deps,
+    state,
+    records,
+    research: roleView(deps.config, "research"),
+    dev: roleView(deps.config, "dev"),
+    roles: new Set(deps.roles ?? ["research", "dev"]),
+    log: deps.log ?? ((m) => console.log(redactSensitive(m))),
+    exclude: new Set(),
+    skips: 0,
+    handedOff: [],
+  };
+}
+
+export const nowIso = (ctx: Ctx): string => ctx.deps.now().toISOString();
+
+/** Build, append (one line) and remember a record. */
+export async function append(
+  ctx: Ctx,
+  ticket: string,
+  started: string,
+  outcome: IterationOutcome,
+  phases: PhaseEntry[],
+  extra: Partial<Pick<IterationRecord, "blocked_by" | "detail" | "jira_sync_error">> = {},
+): Promise<IterationRecord> {
+  const rec: IterationRecord = {
+    ticket,
+    session: ctx.deps.session.name,
+    loop_version: ctx.deps.loopVersion,
+    started,
+    ended: nowIso(ctx),
+    outcome,
+    phases,
+    ...extra,
+  };
+  await appendIteration(ctx.deps.logPath, rec);
+  ctx.records.push(rec);
+  return rec;
+}
+
+/** Phase runs of `role` started on now's UTC day, from the in-memory log. */
+export function runsToday(ctx: Ctx, role: Role): number {
+  const day = nowIso(ctx).slice(0, 10);
+  let n = 0;
+  for (const r of ctx.records) for (const p of r.phases) if (p.role === role && p.started.slice(0, 10) === day) n++;
+  return n;
+}
+
+export function roleCapped(ctx: Ctx, role: Role): boolean {
+  const view = role === "research" ? ctx.research : ctx.dev;
+  return runsToday(ctx, role) >= view.limits.maxRunsPerDay;
+}
+
+/** Latest record for a ticket by `ended` (file order breaks ties). */
+export function latestRecord(records: IterationRecord[], ticket: string): IterationRecord | null {
+  let latest: IterationRecord | null = null;
+  for (const r of records) if (r.ticket === ticket && (latest === null || r.ended >= latest.ended)) latest = r;
+  return latest;
+}
+
+/** A ticket the worker didn't poll (recovery, step-1 handoff): status is where the claim left it. */
+export function knownTicket(ctx: Ctx, key: string, labels: string[]): JiraTicket {
+  return { key, status: ctx.research.claimStatus.to, assignee: null, labels };
+}
+
+/** The PhaseEntry for a run lost to a crash (counted as a failed attempt). */
+export function crashEntry(ctx: Ctx, f: InFlight, why: string): PhaseEntry {
+  return {
+    role: f.role,
+    skill: f.role === "research" ? "ticket-refine" : "ticket-to-pr",
+    skill_version: "",
+    model: "",
+    started: f.since,
+    ended: nowIso(ctx),
+    outcome: "error",
+    phase_reached: "intake",
+    cost_usd: 0,
+    tokens: { in: 0, out: 0 },
+    failure_category: "agent_error",
+    detail: why,
+    pr: null,
+    run_dir: f.runDir,
+  };
+}

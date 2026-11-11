@@ -89,19 +89,51 @@ function qaNoteStepContent(step: string): Array<Record<string, unknown>> {
  * convention has always used the bare category name and this change
  * doesn't alter that, only the leading icon+repo-name prefix).
  */
-export function buildBounceCommentAdf(verdict: Verdict): Record<string, unknown> {
+export function buildBounceCommentAdf(verdict: Verdict, session?: string): Record<string, unknown> {
+  return withSessionSuffix(
+    {
+      type: "doc",
+      version: 1,
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: `❌ dev-loop - ${verdict.failure_category}: `, marks: [{ type: "strong" }] },
+            { type: "text", text: verdict.detail },
+          ],
+        },
+      ],
+    },
+    session,
+  );
+}
+
+/**
+ * Append the `— <session>` paragraph every src-built Jira comment ends with
+ * (2.0.0), so a human can tell which worker wrote it. Skill-posted text is
+ * never touched. No session: the doc is returned unchanged.
+ */
+export function withSessionSuffix(doc: Record<string, unknown>, session?: string): Record<string, unknown> {
+  if (session === undefined) return doc;
+  const content = [...((doc.content as unknown[]) ?? [])];
+  content.push({ type: "paragraph", content: [{ type: "text", text: `— ${session}` }] });
+  return { ...doc, content };
+}
+
+/** The same suffix for a plain-text (GitHub markdown) comment. */
+export function withSessionSuffixText(body: string, session: string): string {
+  return `${body}\n\n— ${session}`;
+}
+
+/**
+ * QA-notes ADF for a Code Review transition the worker makes on its own
+ * (crash recovery found the PR already open): the PR-link stub only.
+ */
+export function buildPrLinkQaNotesAdf(prUrl: string): Record<string, unknown> {
   return {
     type: "doc",
     version: 1,
-    content: [
-      {
-        type: "paragraph",
-        content: [
-          { type: "text", text: `❌ dev-loop - ${verdict.failure_category}: `, marks: [{ type: "strong" }] },
-          { type: "text", text: verdict.detail },
-        ],
-      },
-    ],
+    content: [{ type: "paragraph", content: [{ type: "text", text: `PR: ${prUrl}` }] }],
   };
 }
 

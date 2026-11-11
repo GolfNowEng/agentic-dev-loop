@@ -14,6 +14,8 @@
  * RealGitHubClient; which ones a role calls is the role's business.
  */
 
+import { TICKET_KEY } from "./paths.ts";
+
 /** Minimal shape of a GitHub Issue as this pipeline needs it. */
 export interface GitHubIssue {
   number: number;
@@ -338,6 +340,28 @@ export function realExecGhFindMergedPr(repo: string, exec: ExecGhFn = realExecGh
       .sort((a, b) => b.mergedAt.localeCompare(a.mergedAt));
     const top = prs[0];
     return top ? { url: top.url, mergedAt: top.mergedAt, baseRefName: top.baseRefName } : null;
+  };
+}
+
+/**
+ * Real `findOpenPrUrl` for the worker's crash recovery: the newest open PR in
+ * `repo` whose head branch or title carries the ticket key as a whole token
+ * (`gh pr list --state open --search <key>`, filtered with
+ * containsTicketToken, the same match reconcile and the blocker gate use), or
+ * null. The key is validated before gh runs.
+ */
+export function realFindOpenPrUrl(repo: string, exec: ExecGhFn = realExecGh()): (ticketKey: string) => Promise<string | null> {
+  return async (ticketKey) => {
+    if (typeof ticketKey !== "string" || !TICKET_KEY.test(ticketKey)) {
+      throw new Error(`realFindOpenPrUrl: invalid ticket key ${JSON.stringify(ticketKey)}`);
+    }
+    const stdout = await exec([
+      "pr", "list", "-R", repo, "--state", "open", "--search", ticketKey,
+      "--json", "url,title,headRefName", "--limit", "20",
+    ]);
+    const prs = JSON.parse(stdout) as Array<{ url: string; title: string; headRefName: string }>;
+    const hit = prs.find((p) => containsTicketToken(p.headRefName, ticketKey) || containsTicketToken(p.title, ticketKey));
+    return hit?.url ?? null;
   };
 }
 

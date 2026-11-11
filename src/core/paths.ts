@@ -104,7 +104,7 @@ function legacy(rel: string): string {
 
 /**
  * runs/<slug>.jsonl, relative to cwd.
- * @deprecated — removed with the v1 runners (Task 13/14)
+ * @deprecated — v1 layout; still read by reset (Task 14) and the --phase research/dev v1 verdict discovery and v1 log reads until Task 15
  */
 export function legacyRunsLog(slug: string): string {
   check("slug", slug, LEGACY_SLUG);
@@ -113,7 +113,7 @@ export function legacyRunsLog(slug: string): string {
 
 /**
  * runs/<slug>.reset-archive.jsonl, relative.
- * @deprecated — removed with the v1 runners (Task 13/14)
+ * @deprecated — v1 layout; still read by reset (Task 14) and the --phase research/dev v1 verdict discovery and v1 log reads until Task 15
  */
 export function legacyRunsArchive(slug: string): string {
   check("slug", slug, LEGACY_SLUG);
@@ -121,16 +121,8 @@ export function legacyRunsArchive(slug: string): string {
 }
 
 /**
- * The runs/ directory itself, relative.
- * @deprecated — removed with the v1 runners (Task 13/14)
- */
-export function legacyRunsRoot(): string {
-  return "runs";
-}
-
-/**
  * .pipeline/<slug>, relative to cwd.
- * @deprecated — removed with the v1 runners (Task 13/14)
+ * @deprecated — v1 layout; still read by reset (Task 14) and the --phase research/dev v1 verdict discovery and v1 log reads until Task 15
  */
 export function legacyPipelineDir(slug: string): string {
   check("slug", slug, LEGACY_SLUG);
@@ -139,7 +131,7 @@ export function legacyPipelineDir(slug: string): string {
 
 /**
  * .pipeline/<slug>/runs, relative.
- * @deprecated — removed with the v1 runners (Task 13/14)
+ * @deprecated — v1 layout; still read by reset (Task 14) and the --phase research/dev v1 verdict discovery and v1 log reads until Task 15
  */
 export function legacyRunDirs(slug: string): string {
   return join(legacyPipelineDir(slug), "runs");
@@ -147,7 +139,7 @@ export function legacyRunDirs(slug: string): string {
 
 /**
  * .pipeline/<slug>/raw-usage, relative.
- * @deprecated — removed with the v1 runners (Task 13/14)
+ * @deprecated — v1 layout; still read by reset (Task 14) and the --phase research/dev v1 verdict discovery and v1 log reads until Task 15
  */
 export function legacyRawUsageDir(slug: string): string {
   return join(legacyPipelineDir(slug), "raw-usage");

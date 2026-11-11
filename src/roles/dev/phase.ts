@@ -1,380 +1,116 @@
-// The dev-loop iteration itself: poll -> claim -> spawn skill -> read
-// verdict -> transition -> log -> check ceilings.
-//
-// Every side-effecting dependency (Jira access, spawning "claude -p") is
-// injected so this module and its tests never touch a real process or a
-// real Jira instance.
+// The dev phase: one ticket-to-pr run on a ticket the worker cycle already
+// picked (src/worker/cycle.ts owns polling, gating, the landed guard,
+// in-flight bookkeeping, the log and the ceilings). Runs the skill, then
+// applies v1's dev outcome handling to Jira/GitHub and returns the
+// PhaseEntry for the iteration record. Never throws: a runSkill throw is an
+// error entry with agent_error, and every Jira/GitHub write failure lands in
+// jira_sync_error.
 
-import type { JiraClient } from "../../core/jira-client.ts";
+import type { JiraClient, JiraTicket } from "../../core/jira-client.ts";
 import type { GitHubClient } from "../../core/github-client.ts";
-import type { DevView, ExecutorVerdict, FailureCategory, RunLogLine } from "../../core/types.ts";
-import { buildPollJql, excludeKeysFromJql } from "../../core/jql.ts";
-import { checkCeilings } from "../../core/ceilings.ts";
-import { appendRunLog } from "../../core/runs-log.ts";
-import { buildQaNotesAdf, buildBounceCommentAdf, buildCodeReviewFields } from "./code-review.ts";
-import { findLandedPrUrl } from "./reconcile.ts";
-import type { ExecGhPrViewFn } from "../../core/github-client.ts";
+import type { DevView, ExecutorVerdict } from "../../core/types.ts";
+import type { PhaseEntry } from "../../core/iteration-log.ts";
+import type { RunSkillFn, RunSkillResult } from "../../core/run-skill.ts";
+import { errorMessage } from "../../core/run-skill.ts";
+import { agentErrorVerdict, parseVerdict } from "../../core/verdict.ts";
+import {
+  buildBounceCommentAdf,
+  buildCodeReviewFields,
+  buildQaNotesAdf,
+  withSessionSuffixText,
+} from "./code-review.ts";
 
-/**
- * Injected stand-in for spawning "claude -p" headless with the skill.
- * Given the ticket key being worked, returns the Verdict the skill wrote
- * to verdict.json (already parsed - callers that need raw-file semantics
- * should use verdict.ts themselves before handing a Verdict here) along
- * with the wall-clock start/end timestamps of the run and the *measured*
- * cost from claude -p's own usage report -- ceilings must never trust
- * verdict.cost_usd, the skill's own self-report, since a misbehaving or
- * runaway agent could under-report it and defeat the ceiling entirely.
- */
-export type RunSkillFn = (ticketKey: string) => Promise<{
-  verdict: ExecutorVerdict;
-  started: string;
-  ended: string;
-  costUsd: number;
-  /**
-   * Measured token usage from claude -p's own usage report (extractUsage()
-   * in main.ts) -- not the skill's self-report. verdict.tokens is never
-   * populated by ticket-to-pr (its own schema documents cost_usd/tokens as
-   * left at 0, deriving the real value from claude -p's usage report), so
-   * buildRunLogLine must read this field, not verdict.tokens, or every
-   * logged run silently records {in:0,out:0}.
-   */
-  tokens: { in: number; out: number };
-}>;
-
-/**
- * Outcome of a single loop iteration, returned so callers (a real
- * long-running process, or a test) can decide what to do next.
- */
-export type LoopIterationResult =
-  | { kind: "idle"; skipped?: Array<{ ticket: string; reason: string }> }
-  | { kind: "skipped-race"; ticket: string }
-  | { kind: "ran"; ticket: string; logLine: RunLogLine; jiraSyncError?: string }
-  | {
-      kind: "paused";
-      reason: string;
-      /** Always "killed_ceiling": the only pause this iteration produces is a ceiling breach. */
-      failureCategory: Extract<FailureCategory, "killed_ceiling">;
-      ticket?: string;
-      logLine?: RunLogLine;
-      jiraSyncError?: string;
-    };
-
-/**
- * Which polling loop this invocation is for - determines which JQL
- * template applies.
- */
-export type LoopKind = "refine" | "dev";
-
-export interface LoopIterationDeps {
-  jiraClient: JiraClient;
-  githubClient: GitHubClient;
-  /** The dev role's settings: roleView(config, "dev"). */
+export interface DevPhaseDeps {
+  jira: JiraClient;
+  github: GitHubClient;
+  /** roleView(config, "dev"). */
   view: DevView;
   runSkill: RunSkillFn;
-  loopKind: LoopKind;
-  /** Path to the runs.jsonl file this iteration should append to. */
-  runsLogPath: string;
-  /** Number of runs already recorded today, for ceiling checks. */
-  runsToday: number;
-  /**
-   * Jira accountId of the human who owns this pipeline's tickets. Used
-   * both to fill dev-loop's `{assignee}` JQL placeholder and to
-   * assign-if-unassigned a ticket right after it's picked up.
-   */
-  assigneeAccountId: string;
-  /** Used by the landed-ticket guard to read the state of a ticket's earlier PR. */
-  execGhPrView: ExecGhPrViewFn;
+  /** v2RunDir(...) for this run, recorded as run_dir. */
+  runDir: string;
+  maxBudgetUsd: number;
+  /** The worker session name; src-built comments end with "— <session>". */
+  session: string;
+  now: () => Date;
 }
 
-/**
- * Post detail to the mirror GitHub Issue for this ticket, if one exists.
- * Non-fatal: a lookup/post failure or a missing Issue never throws --
- * folded into jiraSyncError (lookup/post failure) or silently skipped
- * (no Issue found), since a ticket predating research-loop's Phase 1
- * mirror-Issue rollout is an expected case, not an error.
- */
-async function postGitHubDetail(
-  githubClient: GitHubClient,
-  ticketKey: string,
-  body: string,
-): Promise<string | undefined> {
+/** Post to the ticket's mirror GitHub Issue if one exists; a missing Issue is silently skipped. Returns an error message or undefined. */
+async function postGitHubDetail(github: GitHubClient, ticketKey: string, body: string): Promise<string | undefined> {
   try {
-    const issue = await githubClient.findIssueByJiraKey(ticketKey);
+    const issue = await github.findIssueByJiraKey(ticketKey);
     if (!issue) return undefined;
-    await githubClient.addComment(issue.number, body);
+    await github.addComment(issue.number, body);
     return undefined;
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    return errorMessage(err);
   }
 }
 
-/**
- * Why this ticket must not be re-run, or null if it may run: its latest
- * "landed" PR is merged or still open, or that PR's state can't be read.
- */
-async function landedSkipReason(
-  runsLogPath: string,
-  ticketKey: string,
-  execGhPrView: ExecGhPrViewFn,
-): Promise<string | null> {
-  const prUrl = await findLandedPrUrl(runsLogPath, ticketKey);
-  if (!prUrl) return null;
+export async function runDevPhase(ticket: JiraTicket, deps: DevPhaseDeps): Promise<PhaseEntry> {
+  const { jira, github, view, session } = deps;
+
+  let result: RunSkillResult;
+  let verdict: ExecutorVerdict;
   try {
-    const status = JSON.parse(await execGhPrView(prUrl)) as { state: string; mergedAt: string | null };
-    if (status.mergedAt) return `already landed, PR merged (${prUrl})`;
-    if (status.state === "OPEN") return `already landed, PR still open (${prUrl})`;
-    return null;
+    result = await deps.runSkill({ role: "dev", ticketKey: ticket.key, runDir: deps.runDir, maxBudgetUsd: deps.maxBudgetUsd });
+    verdict = parseVerdict(result.verdictRaw, "executor");
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return `already landed (${prUrl}) but its PR state could not be read: ${message}`;
-  }
-}
-
-/**
- * Run exactly one iteration of the dev-loop:
- *   1. poll Jira via JQL for the oldest matching ticket (idle if none)
- *   2. assign it to the configured human if it's currently unassigned
- *      (non-fatal -- a failure here surfaces as jiraSyncError, never
- *      throws or blocks the run)
- *   3. spawn "claude -p" headless with the skill (via the injected
- *      runSkill callback)
- *   4. read the verdict it wrote (missing/malformed -> "error" /
- *      "agent_error", handled by verdict.ts before this is called or
- *      within runSkill itself)
- *   5. transition the ticket per the verdict
- *   6. append exactly one line to runs.jsonl
- *   7. enforce ceilings (max runs/day, max cost/run, run timeout); on
- *      breach, PAUSE (return a "paused" result), never silently continue
- *
- * No atomic claim step: this MVP assumes exactly one dev-loop instance is
- * ever running against a given project at a time (confirmed with the
- * user), so there's no race to guard against. dev-loop's poll JQL itself
- * (labels = "pipeline:dev" + assignee match) is what scopes which tickets
- * are eligible, no epic involved -- see docs/config.md's "Future:
- * multiple concurrent loop instances" note for what real coordination
- * (e.g. a per-instance label) would need to look like if this is ever
- * relaxed.
- *
- * Sleeping/repeating is the caller's responsibility - this function does
- * exactly one pass and returns.
- */
-export async function runLoopIteration(
-  deps: LoopIterationDeps,
-): Promise<LoopIterationResult> {
-  const { jiraClient, githubClient, view, runSkill, loopKind, runsLogPath, runsToday, assigneeAccountId, execGhPrView } =
-    deps;
-
-  // Ceiling check before even starting a new run.
-  const preCheck = checkCeilings({
-    runsToday,
-    runCostUsd: null,
-    runDurationMin: null,
-    limits: view.limits,
-  });
-  if (preCheck.breached) {
-    return { kind: "paused", reason: preCheck.detail, failureCategory: "killed_ceiling" };
+    const at = deps.now().toISOString();
+    result = { verdictRaw: undefined, started: at, ended: at, costUsd: 0, tokens: { in: 0, out: 0 }, skillVersion: "", model: "" };
+    verdict = agentErrorVerdict(`runSkill threw: ${errorMessage(err)}`);
   }
 
-  // v1's "refine" loopKind (a test-only path; the research role has its own
-  // runner) polled with the research template. The dev view carries only
-  // the dev template, so both kinds poll with it; loopKind still gates the
-  // dev-only landed guard and Code Review transition below.
-  const baseJql = buildPollJql(view, { assigneeAccountId });
+  const errors: string[] = [];
+  const github_ = async (body: string) => {
+    const e = await postGitHubDetail(github, ticket.key, withSessionSuffixText(body, session));
+    if (e) errors.push(e);
+  };
 
-  // Landed-ticket guard (dev loop only). A ticket whose latest "landed" run's
-  // PR is merged or still open must never be re-run, whatever Jira status it
-  // now has (merge automation and hand moves put it in statuses the poll JQL
-  // can't exclude). Each such ticket is excluded from the poll by key and
-  // the poll repeated, so a stuck one never blocks the queue behind it.
-  // Fails closed: an unreadable PR state also skips.
-  const skipped: Array<{ ticket: string; reason: string }> = [];
-  let ticket = null;
-  for (;;) {
-    const jql = excludeKeysFromJql(baseJql, skipped.map((s) => s.ticket));
-    ticket = await jiraClient.pollOldestMatching(jql);
-    if (!ticket) {
-      return skipped.length > 0 ? { kind: "idle", skipped } : { kind: "idle" };
-    }
-    if (loopKind !== "dev") break;
-    const reason = await landedSkipReason(runsLogPath, ticket.key, execGhPrView);
-    if (!reason) break;
-    skipped.push({ ticket: ticket.key, reason });
-  }
-
-  let assignSyncError: string | undefined;
-  if (ticket.assignee === null) {
-    try {
-      await jiraClient.assignTicket(ticket.key, assigneeAccountId);
-    } catch (err) {
-      assignSyncError = err instanceof Error ? err.message : String(err);
-    }
-  }
-
-  const { verdict, started, ended, costUsd, tokens } = await runSkill(ticket.key);
-
-  const runDurationMin =
-    (new Date(ended).getTime() - new Date(started).getTime()) / 60000;
-
-  // Record this run's real consequences BEFORE checking the post-run
-  // ceiling. A completed run already produced a real verdict -- a
-  // ceiling breach must pause the loop from starting the NEXT run, but
-  // must never discard work that already happened (status transition,
-  // audit log). Checking the ceiling first would silently drop a genuine
-  // "landed" verdict just because it happened to cost/take more than
-  // expected, which defeats the purpose of the audit trail.
-  //
-  // The Jira write itself is wrapped in try/catch: a malformed request or
-  // a transient API error here must never throw out of this function --
-  // that would propagate out of the caller's poll loop and kill the
-  // entire unattended process over what is otherwise a real, completed
-  // run. The run still gets logged either way; only the status may be
-  // out of sync with what runs.jsonl says happened.
-  let jiraSyncError: string | undefined = assignSyncError;
   try {
-    if (loopKind === "dev" && verdict.outcome === "landed") {
-      // A landed PR gets its status transitioned to Code Review. Status
-      // alone -- In Progress -> Code Review -- is the "needs code review"
-      // signal; nothing here moves an epic or label. That transition has
-      // a required Jira screen (PII/QA-notes fields), so the fields must
-      // be sent alongside it, not left empty.
-      const fields = buildCodeReviewFields(view, buildQaNotesAdf(verdict));
-      await jiraClient.transitionStatus(ticket.key, view.statusNames.prOpen, fields);
-
-      const githubError = await postGitHubDetail(
-        githubClient,
-        ticket.key,
-        `Landed — PR: ${verdict.pr ?? "(none)"}, verify loops: ${verdict.verify_loops}.`,
-      );
-      if (githubError) {
-        jiraSyncError = jiraSyncError ? `${jiraSyncError}; ${githubError}` : githubError;
-      }
+    if (verdict.outcome === "landed") {
+      // In Progress -> Code Review, with the transition screen's required PII/QA-notes fields.
+      await jira.transitionStatus(ticket.key, view.statusNames.prOpen, buildCodeReviewFields(view, buildQaNotesAdf(verdict)));
+      await github_(`Landed — PR: ${verdict.pr ?? "(none)"}, verify loops: ${verdict.verify_loops}.`);
     } else if (verdict.outcome === "bounced" && verdict.pr !== null) {
-      // Intake found this ticket's work already landed (nothing to do,
-      // not a blocker) -- normally because an earlier run's landed-PR
-      // transition to Code Review already succeeded, in which case
-      // re-transitioning here is skipped as a no-op (see the status check
-      // below). But if that earlier transition silently failed (a
-      // transient API error caught by this same try/catch, or a race --
-      // see poll-loop.ts's TARS-1389 writeup) the ticket's real status
-      // never left "In Progress", so it still matches pollJql.dev's
-      // prOpen exclusion (which only excludes tickets ALREADY at Code
-      // Review) and every future poll cycle re-runs and re-bounces this
-      // same ticket forever. Confirmed live on TARS-1465: PR #431 landed
-      // but the status transition never took, so it re-ran and re-bounced
-      // 7+ times over 45 minutes with no self-correction, at which point
-      // a human had to intervene by hand. Self-heal here: if the ticket's
-      // current status isn't already prOpen, transition it now, using
-      // the same fields a normal landed verdict would send.
+      // Intake found the work already landed. Self-heal a status transition an
+      // earlier run lost (TARS-1465: re-bounced 7+ times while stuck In Progress).
       if (ticket.status !== view.statusNames.prOpen) {
-        const fields = buildCodeReviewFields(view, buildQaNotesAdf(verdict));
-        await jiraClient.transitionStatus(ticket.key, view.statusNames.prOpen, fields);
+        await jira.transitionStatus(ticket.key, view.statusNames.prOpen, buildCodeReviewFields(view, buildQaNotesAdf(verdict)));
       }
-
-      const githubError = await postGitHubDetail(
-        githubClient,
-        ticket.key,
-        `Bounced (${verdict.failure_category}): ${verdict.detail}`,
-      );
-      if (githubError) {
-        jiraSyncError = jiraSyncError ? `${jiraSyncError}; ${githubError}` : githubError;
-      }
-    } else if (verdict.outcome === "bounced" && verdict.pr === null) {
-      // A genuine blocker (spec_ambiguous, too_large, env_setup, etc.)
-      // always happens before Phase 5 (PR) and therefore never has
-      // verdict.pr set -- that's the only case Blocked should signal.
-      //
-      // Post the verdict's own evidence as a comment BEFORE the status
-      // transition -- a bounce used to leave the ticket in Blocked with no
-      // trace of why anywhere in Jira (the evidence only ever existed in
-      // this repo's local runs.jsonl); posting first means a human reading
-      // the ticket sees the reason even if the transition itself then
-      // fails. Its own try/catch, independent of the transition below: a
-      // failed comment must never block the Blocked transition itself --
-      // that would leave the ticket silently stuck In Progress over a
-      // comment-post failure alone, a worse outcome than "Blocked with no
-      // comment." Both failures still merge into jiraSyncError.
+      await github_(`Bounced (${verdict.failure_category}): ${verdict.detail}`);
+    } else if (verdict.outcome === "bounced") {
+      // A genuine blocker. Evidence comment first, in its own try, so a failed
+      // comment never leaves the ticket stuck In Progress.
       try {
-        await jiraClient.addComment(ticket.key, buildBounceCommentAdf(verdict));
-      } catch (commentErr) {
-        const commentErrorMessage =
-          commentErr instanceof Error ? commentErr.message : String(commentErr);
-        jiraSyncError = jiraSyncError
-          ? `${jiraSyncError}; ${commentErrorMessage}`
-          : commentErrorMessage;
+        await jira.addComment(ticket.key, buildBounceCommentAdf(verdict, session));
+      } catch (err) {
+        errors.push(errorMessage(err));
       }
-
-      const githubError = await postGitHubDetail(
-        githubClient,
-        ticket.key,
-        `Bounced (${verdict.failure_category}): ${verdict.detail}`,
-      );
-      if (githubError) {
-        jiraSyncError = jiraSyncError ? `${jiraSyncError}; ${githubError}` : githubError;
-      }
-
-      await jiraClient.transitionStatus(ticket.key, view.statusNames.bounced);
+      await github_(`Bounced (${verdict.failure_category}): ${verdict.detail}`);
+      await jira.transitionStatus(ticket.key, view.statusNames.bounced);
     }
   } catch (err) {
-    const jiraWriteError = err instanceof Error ? err.message : String(err);
-    jiraSyncError = jiraSyncError
-      ? `${jiraSyncError}; ${jiraWriteError}`
-      : jiraWriteError;
+    errors.push(errorMessage(err));
   }
 
-  const logLine = buildRunLogLine(ticket.key, verdict, started, ended, costUsd, tokens);
-  await appendRunLog(runsLogPath, logLine);
-
-  const ceilingResult = checkCeilings({
-    runsToday: runsToday + 1,
-    runCostUsd: costUsd,
-    runDurationMin,
-    limits: view.limits,
-  });
-
-  if (ceilingResult.breached) {
-    return {
-      kind: "paused",
-      reason: ceilingResult.detail,
-      failureCategory: "killed_ceiling",
-      ticket: ticket.key,
-      logLine,
-      jiraSyncError,
-    };
-  }
-
-  return { kind: "ran", ticket: ticket.key, logLine, jiraSyncError };
-}
-
-/**
- * Derive the RunLogLine to append for this run from its Verdict and the
- * ticket/timing/skill metadata gathered around it. `costUsd` is the
- * measured cost from claude -p's own usage report, not verdict.cost_usd
- * (the skill's self-report) -- see RunSkillFn's doc comment.
- */
-export function buildRunLogLine(
-  ticket: string,
-  verdict: ExecutorVerdict,
-  started: string,
-  ended: string,
-  costUsd: number,
-  tokens: { in: number; out: number },
-): RunLogLine {
   return {
-    ticket,
+    role: "dev",
     skill: "ticket-to-pr",
-    skill_version: verdict.skill_version,
-    model: verdict.model,
-    started,
-    ended,
+    skill_version: result.skillVersion || verdict.skill_version,
+    model: result.model || verdict.model,
+    started: result.started,
+    ended: result.ended,
     outcome: verdict.outcome,
     phase_reached: verdict.phase_reached,
-    red_confirmed: verdict.red_confirmed,
-    verify_loops: verdict.verify_loops,
-    retries: verdict.retries,
+    cost_usd: result.costUsd,
+    tokens: result.tokens,
     failure_category: verdict.failure_category,
     detail: verdict.detail,
     pr: verdict.pr,
-    cost_usd: costUsd,
-    tokens,
+    run_dir: deps.runDir,
+    red_confirmed: verdict.red_confirmed,
+    verify_loops: verdict.verify_loops,
+    retries: verdict.retries,
+    ...(errors.length > 0 ? { jira_sync_error: errors.join("; ") } : {}),
   };
 }

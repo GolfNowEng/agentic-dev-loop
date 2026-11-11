@@ -465,7 +465,8 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
     await runWorkerIteration(h.deps);
 
     expect(h.jira.calls("swapLabel")[0]).toEqual(["swapLabel", "TARS-9", RESEARCH_LABEL, DEV_LABEL]);
-    expect(idx(h, (e) => e[0] === "swapLabel")).toBeLessThan(idx(h, (e) => e[0] === "poll"));
+    // Step 1 runs first; the handed-off ticket is step 3's candidate ahead of the dev poll.
+    expect(idx(h, (e) => e[0] === "swapLabel")).toBeLessThan(idx(h, (e) => e[0] === "runSkill"));
     expect(runSkillCalls(h).map((e) => [e[1], e[2]])).toEqual([["dev", "TARS-9"]]);
     expect(findPendingHandoffs(await records(h))).toEqual([]);
   });

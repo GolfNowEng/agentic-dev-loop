@@ -1,27 +1,30 @@
 /**
  * CLI entrypoint:
- *   `node --env-file=.env src/main.ts --phase research|dev --project <name> [--once] [--stream]`
+ *   `node --env-file=.env src/main.ts --phase research|dev --project <name> [--session <name>] [--once] [--stream]`
  * `--config <path>` also works as a fallback for an arbitrary path outside
  * the naming convention; passing both --project and --config is an error.
- * `--phase` is required (Task 4 of the 2.0.0 migration).
+ * `--phase` is required until Task 15 adds worker mode (both roles).
  *
- * Both phases load the one v2 project config at the repo root
- * (`pipeline.<project>.config.json`, validated by core/config.ts) and the
- * repo-root `pipeline.loop.config.json`, before any chdir, and each runner
- * reads its settings through `roleView(config, phase)`. Each phase then runs
- * its role's **v1** runner from its v1 root, writing v1-shaped logs to the
- * v1 paths (`runs/<slug>.jsonl`, `.pipeline/<slug>/{runs,raw-usage}` under
- * that root):
- *   - research: research-loop's runner (src/roles/research/phase.ts), with
- *     its mirror-Issue creation. The process chdirs into `research-loop/`
- *     first, which is where v1 research-loop ran: its CLAUDE.md, runs/ and
- *     .pipeline/ (and the `.claude/` symlink the spawned `claude -p` finds
- *     ticket-refine through) live there until Task 9 moves them.
- *   - dev: dev-loop's runner (src/roles/dev/phase.ts) plus the merged-PR
- *     reconciliation pass, from the repo root.
- * Both spawn `claude -p` through core/spawn-claude.ts, with
- * `--max-budget-usd` = the role's `roles.<phase>.ceilings.maxCostPerRunUsd`
- * and a hard kill at its `runTimeoutMin`.
+ * Both phases load the one v2 project config and the repo-root
+ * `pipeline.loop.config.json`, acquire a worker session
+ * (`.pipeline/v2/<slug>/sessions`, one live worker per project), and loop on
+ * `runWorkerIteration` (src/worker/cycle.ts) restricted to one role:
+ *   - research: claim + ticket-refine; a green ticket is left with a pending
+ *     handoff for a dev-enabled worker (no label swap, no dev).
+ *   - dev: completes pending handoffs, then polls the dev JQL and runs
+ *     ticket-to-pr; plus the v1 merged-PR reconciliation pass (Task 14
+ *     moves it onto the v2 log).
+ * Each writes one v2 iteration record per ticket iteration to
+ * `runs/v2/<slug>.jsonl`; an idle iteration writes nothing.
+ *
+ * Until Task 15 the skills still derive their own RUN_DIR as
+ * `.pipeline/<SLUG>/runs/<KEY>-<RUN_ID>` relative to their cwd, so runSkill
+ * reads the verdict the v1 way (snapshot/newest run dir), and the research
+ * process still chdirs into `research-loop/` (its CLAUDE.md and the
+ * `.claude` symlink live there). The cycle's v2 run dir is used for the
+ * in-flight record, PhaseEntry.run_dir and `usage.json` (raw claude usage).
+ * Every spawn gets `--max-budget-usd` from the cycle (Ruling 16) and a hard
+ * kill at the role's `runTimeoutMin`.
  *
  * This file is deliberately the untested composition root -- every piece of
  * logic it uses already has vitest coverage against injected fakes; this is
@@ -29,7 +32,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   loadConfig,
@@ -40,25 +43,29 @@ import {
   targetRepoAddDir,
   resolveProjectConfigPath,
 } from "./core/config.ts";
-import type { Config, DevView, LoopConfig, ResearchView, RoleLimits } from "./core/types.ts";
+import type { Config, LoopConfig, RoleLimits } from "./core/types.ts";
 import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./core/jira-client.ts";
-import type { JiraCredentials, JiraTicket } from "./core/jira-client.ts";
-import { RealGitHubClient, realExecGh, realExecGhPrView, realExecGhFindMergedPr } from "./core/github-client.ts";
-import { countRunsToday } from "./core/runs-log.ts";
+import type { JiraCredentials } from "./core/jira-client.ts";
+import {
+  RealGitHubClient,
+  realExecGh,
+  realExecGhPrView,
+  realExecGhFindMergedPr,
+  realFindOpenPrUrl,
+} from "./core/github-client.ts";
+import { hasLandedRun } from "./core/runs-log.ts";
 import { snapshotRunDirs, findNewestRunDir } from "./core/run-dirs.ts";
-import { readVerdictFile, agentErrorVerdict } from "./core/verdict.ts";
 import { redactSensitive } from "./core/redact.ts";
-import { decideNextAction } from "./core/poll-loop.ts";
-import { buildPollJql } from "./core/jql.ts";
-import { legacyRunsRoot, legacyRawUsageDir, legacyRunsLog, legacyRunDirs } from "./core/paths.ts";
+import { decideNextAction, type PollResultKind } from "./core/poll-loop.ts";
+import { PROJECT_SLUG, legacyRunsLog, legacyRunDirs, resolveRepoPath, v2RunsLog, v2SessionsDir } from "./core/paths.ts";
+import { acquireSession, isProcessAlive, type InFlight, type Session } from "./core/session.ts";
+import { findLandedPrUrlAcross } from "./core/iteration-log.ts";
+import type { RunSkillFn, RunSkillResult } from "./core/run-skill.ts";
 import { spawnClaudeRun, startProgressTail } from "./core/spawn-claude.ts";
-import { runLoopIteration as runDevIteration } from "./roles/dev/phase.ts";
-import type { RunSkillFn as DevRunSkillFn } from "./roles/dev/phase.ts";
+import { runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
 import { reconcileMergedTickets } from "./roles/dev/reconcile.ts";
 import { ALLOWED_TOOLS as DEV_ALLOWED_TOOLS } from "./roles/dev/tools.ts";
 import { devEarlySkillResult } from "./roles/dev/spawn-result.ts";
-import { runLoopIteration as runResearchIteration } from "./roles/research/phase.ts";
-import type { RunSkillFn as ResearchRunSkillFn, RunSkillResult } from "./roles/research/phase.ts";
 import { ALLOWED_TOOLS as RESEARCH_ALLOWED_TOOLS } from "./roles/research/tools.ts";
 import { researchEarlySkillResult } from "./roles/research/spawn-result.ts";
 import {
@@ -66,11 +73,14 @@ import {
   researchClaudeMdExcludes,
   REFINE_SKILL_MD_PATH,
 } from "./roles/research/startup.ts";
+import pkg from "../package.json" with { type: "json" };
 
 type Phase = "research" | "dev";
 
 const MODEL = "sonnet";
 const SKILL_NAME: Record<Phase, string> = { research: "ticket-refine", dev: "ticket-to-pr" };
+const DEV_SKILL_MD_PATH = ".claude/skills/ticket-to-pr/SKILL.md";
+const LOOP_VERSION: string = pkg.version;
 
 /**
  * Each phase's v1 root, relative to the repo root: the process chdirs here
@@ -99,6 +109,7 @@ function parseArgs(argv: string[]): {
   phase: Phase;
   project?: string;
   configPath?: string;
+  session?: string;
   once: boolean;
   stream: boolean;
 } {
@@ -122,6 +133,7 @@ function parseArgs(argv: string[]): {
     phase,
     project,
     configPath,
+    session: getArgValue(argv, "--session"),
     once: argv.includes("--once"),
     stream: argv.includes("--stream"),
   };
@@ -186,318 +198,185 @@ function claudeEnvFor(limits: RoleLimits): NodeJS.ProcessEnv {
   };
 }
 
+// ---------------------------------------------------------------------------
+
 interface PhaseContext {
+  phase: Phase;
   config: Config;
   loopConfig: LoopConfig;
   once: boolean;
   stream: boolean;
   credentials: JiraCredentials;
-  assigneeAccountId: string;
   jiraClient: RealJiraClient;
   githubClient: RealGitHubClient;
   slug: string;
-  runsLogPath: string;
+  /** v1 run-dir root the skill still writes to (cwd-relative), for verdict discovery. */
   runsBaseDir: string;
-  rawUsageDir: string;
   /** CLAUDE.md files the spawned claude must not load (research: dev's root CLAUDE.md). */
   excludeClaudeMd: string[];
 }
 
-function rawUsagePathFor(ctx: PhaseContext, ticketKey: string, started: string): string {
-  return join(ctx.rawUsageDir, `${ticketKey}-${started.replace(/[:.]/g, "")}.json`);
-}
-
-// ---------------------------------------------------------------------------
-// --phase research: research-loop's v1 main loop.
-// ---------------------------------------------------------------------------
-
-async function runResearchPhase(ctx: PhaseContext): Promise<void> {
+/** Research only: find or create the ticket's mirror GitHub Issue before the run. Never throws. */
+async function ensureMirrorIssue(ctx: PhaseContext, ticketKey: string): Promise<void> {
   const skill = SKILL_NAME.research;
-  const { loopConfig, once, stream, credentials, jiraClient, githubClient } = ctx;
-  const view: ResearchView = roleView(ctx.config, "research");
-  const skillVersion = gitFileSha(REFINE_SKILL_MD_PATH);
-  const jql = buildPollJql(view, { assigneeAccountId: ctx.assigneeAccountId });
-
-  log(`[${skill}] loop started, polling every ${loopConfig.pollIntervalSec}s (project: ${ctx.slug})`);
-
-  const runSkill: ResearchRunSkillFn = async (ticket: JiraTicket): Promise<RunSkillResult> => {
-    const before = await snapshotRunDirs(ctx.runsBaseDir, ticket.key);
-
-    log(`[${skill}] claimed ${ticket.key}, running...`);
-
-    try {
-      const existingIssue = await githubClient.findIssueByJiraKey(ticket.key);
-      if (existingIssue) {
-        log(`[${skill}] ${ticket.key}: GitHub Issue already exists (${existingIssue.url}), skipping creation`);
-      } else {
-        const issue = await githubClient.createIssue({
-          title: `${ticket.key}: (refinement in progress)`,
-          body: `Mirror of [${ticket.key}](${credentials.baseUrl}/browse/${ticket.key}). ticket-refine is running -- this Issue will be updated with recon/attack/verify findings per the routing rule as the run progresses.`,
-          jiraKey: ticket.key,
-        });
-        log(`[${skill}] ${ticket.key}: created GitHub Issue ${issue.url}`);
-      }
-    } catch (err) {
-      // A GitHub Issue creation failure must never block the actual
-      // ticket-refine run -- same "never throw out of runSkill" contract
-      // every other I/O boundary in this function already follows. Log it
-      // and let ticket-refine run without a mirror Issue this time; a
-      // future run will retry (findIssueByJiraKey will find nothing and
-      // try again).
-      const message = err instanceof Error ? err.message : String(err);
-      logError(`[${skill}] ${ticket.key}: GitHub Issue creation/lookup failed: ${message}`);
+  try {
+    const existing = await ctx.githubClient.findIssueByJiraKey(ticketKey);
+    if (existing) {
+      log(`[${skill}] ${ticketKey}: GitHub Issue already exists (${existing.url}), skipping creation`);
+      return;
     }
-
-    const tail = startProgressTail(ctx.runsBaseDir, ticket.key, before, skill, log);
-    const startedForPath = new Date().toISOString();
-    const run = await spawnClaudeRun(
-      {
-        prompt: `/${skill} ${ticket.key}`,
-        model: MODEL,
-        allowedTools: RESEARCH_ALLOWED_TOOLS,
-        addDir: null,
-        excludeClaudeMd: ctx.excludeClaudeMd,
-        timeoutMin: view.limits.runTimeoutMin,
-        maxBudgetUsd: view.limits.maxCostPerRunUsd,
-        stream,
-        ticketKey: ticket.key,
-        rawUsagePath: rawUsagePathFor(ctx, ticket.key, startedForPath),
-        env: claudeEnvFor(view.limits),
-      },
-      { logPrefix: skill, log, logError },
-    );
-    await tail.stop();
-
-    const durationMin = (new Date(run.ended).getTime() - new Date(run.started).getTime()) / 60000;
-    const base = {
-      skill,
-      skillVersion,
-      model: MODEL,
-      startedAt: run.started,
-      endedAt: run.ended,
-      durationMin,
-    };
-
-    // Timeout kill or spawn failure: never throw out of runSkill. A spawn
-    // failure is treated as a missing verdict.json (agent_error), as in v1,
-    // but keeps the run's real cost/tokens (fix round 2).
-    const early = researchEarlySkillResult(
-      run,
-      { skill: base.skill, skillVersion: base.skillVersion, model: base.model },
-      view.limits.runTimeoutMin,
-    );
-    if (early) return early;
-
-    const runDirName = await findNewestRunDir(ctx.runsBaseDir, ticket.key, before);
-    let verdictRaw: string | undefined;
-    if (runDirName) {
-      try {
-        // Redacted before it ever leaves this function -- verdict.json is
-        // the skill's own self-report and could echo back a secret-shaped
-        // value it encountered during Ground; this is what lands in
-        // runs.jsonl's `detail` field.
-        verdictRaw = redactSensitive(
-          await readFile(join(ctx.runsBaseDir, runDirName, "verdict.json"), "utf8"),
-        );
-      } catch {
-        verdictRaw = undefined;
-      }
-    }
-    if (verdictRaw === undefined) {
-      logNoVerdictDiagnostics(skill, ticket.key, run.stdout);
-    }
-
-    return { ...base, verdictRaw, costUsd: run.usage.costUsd, tokens: run.usage.tokens };
-  };
-
-  for (;;) {
-    const runsToday = await countRunsToday(ctx.runsLogPath, new Date());
-    const result = await runResearchIteration({
-      jiraClient,
-      view,
-      jql,
-      runSkill,
-      runsLogPath: ctx.runsLogPath,
-      runsToday,
-      assigneeAccountId: ctx.assigneeAccountId,
+    const issue = await ctx.githubClient.createIssue({
+      title: `${ticketKey}: (refinement in progress)`,
+      body: `Mirror of [${ticketKey}](${ctx.credentials.baseUrl}/browse/${ticketKey}). ticket-refine is running -- this Issue will be updated with recon/attack/verify findings per the routing rule as the run progresses.`,
+      jiraKey: ticketKey,
     });
-
-    for (const key of result.skippedLanded ?? []) {
-      log(`[${skill}] ${key}: skipped, already landed (runs.jsonl has a landed run); not re-refining`);
-    }
-
-    switch (result.action) {
-      case "empty-queue":
-        log(`[${skill}] queue empty, sleeping ${loopConfig.pollIntervalSec}s`);
-        break;
-      case "claim-raced":
-        log(`[${skill}] claim raced on ${result.ticket}, retrying`);
-        break;
-      case "claim-error":
-        logError(
-          `[${skill}] ${result.ticket}: claim() failed (${result.jiraSyncError}) -- skipping this ticket rather than crashing the loop. This is likely a Jira transition screen requiring a field claim() doesn't send (see docs/future-enhancements.md); fix the ticket/transition manually, then it will be retried on the next poll.`,
-        );
-        break;
-      case "processed":
-        log(`[${skill}] ${result.ticket}: ${result.logLine?.detail}`);
-        if (result.jiraSyncError) {
-          logError(
-            `[${skill}] ${result.ticket}: WARNING -- Jira label/status update failed (${result.jiraSyncError}). The run is logged in runs.jsonl, but Jira's label/status may not reflect it -- check and fix manually.`,
-          );
-        }
-        log(
-          `[${skill}] waiting ${loopConfig.postRunDelaySec}s before re-polling, so Jira's search index catches up with the just-written status transition`,
-        );
-        break;
-      case "paused-ceiling":
-        logError(`[${skill}] PAUSED: ${result.pauseReason}`);
-        process.exit(1);
-    }
-
-    const nextAction = decideNextAction(result.action, loopConfig, once);
-    if (nextAction.kind === "exit") return;
-    if (nextAction.kind === "sleep") await sleep(nextAction.ms);
+    log(`[${skill}] ${ticketKey}: created GitHub Issue ${issue.url}`);
+  } catch (err) {
+    // Never blocks the ticket-refine run; a later run retries.
+    logError(`[${skill}] ${ticketKey}: GitHub Issue creation/lookup failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
-// ---------------------------------------------------------------------------
-// --phase dev: dev-loop's v1 main loop.
-// ---------------------------------------------------------------------------
+/** The real RunSkillFn: one `claude -p` spawn, verdict read the v1 way (Ruling 17). Never throws for a run failure. */
+function makeRunSkill(ctx: PhaseContext): RunSkillFn {
+  const skillVersion: Record<Phase, string> = {
+    research: ctx.phase === "research" ? gitFileSha(REFINE_SKILL_MD_PATH) : "",
+    dev: ctx.phase === "dev" ? gitFileSha(DEV_SKILL_MD_PATH) : "",
+  };
+  return async ({ role, ticketKey, runDir, maxBudgetUsd }): Promise<RunSkillResult> => {
+    const skill = SKILL_NAME[role];
+    const view = roleView(ctx.config, role);
+    if (role === "research") await ensureMirrorIssue(ctx, ticketKey);
 
-async function runDevPhase(ctx: PhaseContext): Promise<void> {
-  const skill = SKILL_NAME.dev;
-  const { config, loopConfig, once, stream, jiraClient, githubClient } = ctx;
-  const view: DevView = roleView(config, "dev");
-
-  log(`[${skill}] loop started, polling every ${loopConfig.pollIntervalSec}s (project: ${ctx.slug})`);
-
-  const runSkill: DevRunSkillFn = async (ticketKey: string) => {
     const before = await snapshotRunDirs(ctx.runsBaseDir, ticketKey);
-
-    log(`[${skill}] claimed ${ticketKey}, running...`);
+    log(`[${skill}] ${ticketKey}: running (run dir ${runDir}, budget $${maxBudgetUsd})...`);
     const tail = startProgressTail(ctx.runsBaseDir, ticketKey, before, skill, log);
-
-    // --permission-mode acceptEdits only auto-answers the Edit/Write
-    // permission *prompt* -- it does not grant tool access to a directory
-    // outside this process's cwd. ticket-to-pr's worktrees live inside
-    // targetRepo.path (when set), so without --add-dir every Edit/Write
-    // into the worktree is denied (confirmed live on TARS-1393).
-    const startedForPath = new Date().toISOString();
     const run = await spawnClaudeRun(
       {
         prompt: `/${skill} ${ticketKey}`,
         model: MODEL,
-        allowedTools: DEV_ALLOWED_TOOLS,
-        addDir: targetRepoAddDir(config),
+        allowedTools: role === "research" ? RESEARCH_ALLOWED_TOOLS : DEV_ALLOWED_TOOLS,
+        // ticket-to-pr's worktrees live inside targetRepo.path: without
+        // --add-dir every Edit/Write there is denied (TARS-1393).
+        addDir: role === "dev" ? targetRepoAddDir(ctx.config) : null,
+        excludeClaudeMd: role === "research" ? ctx.excludeClaudeMd : [],
         timeoutMin: view.limits.runTimeoutMin,
-        maxBudgetUsd: view.limits.maxCostPerRunUsd,
-        stream,
+        maxBudgetUsd,
+        stream: ctx.stream,
         ticketKey,
-        rawUsagePath: rawUsagePathFor(ctx, ticketKey, startedForPath),
+        rawUsagePath: join(resolveRepoPath(runDir), "usage.json"),
         env: claudeEnvFor(view.limits),
       },
       { logPrefix: skill, log, logError },
     );
     await tail.stop();
 
-    // Timeout kill or spawn failure: never throw out of runSkill. A spawn
-    // failure records v1's agent_error verdict, but keeps the run's real
-    // cost/tokens (fix round 2).
-    const early = devEarlySkillResult(run, view.limits.runTimeoutMin);
+    const base = { skillVersion: skillVersion[role], model: MODEL };
+    const early =
+      role === "research"
+        ? researchEarlySkillResult(run, base, view.limits.runTimeoutMin)
+        : devEarlySkillResult(run, base, view.limits.runTimeoutMin);
     if (early) return early;
 
     const runDirName = await findNewestRunDir(ctx.runsBaseDir, ticketKey, before);
-    let verdict = runDirName
-      ? await readVerdictFile(join(ctx.runsBaseDir, runDirName, "verdict.json"), "executor")
-      : agentErrorVerdict("no run directory appeared for this ticket");
-    // verdict.detail is the skill's own self-report and could echo back a
-    // secret-shaped value; it lands in runs.jsonl's `detail` field.
-    verdict = { ...verdict, detail: redactSensitive(verdict.detail) };
-
-    if (!runDirName || verdict.failure_category === "agent_error") {
-      logNoVerdictDiagnostics(skill, ticketKey, run.stdout);
+    let verdictRaw: string | undefined;
+    if (runDirName) {
+      try {
+        // Redacted before it leaves here: the skill's self-report lands in the record's detail.
+        verdictRaw = redactSensitive(await readFile(join(ctx.runsBaseDir, runDirName, "verdict.json"), "utf8"));
+      } catch {
+        verdictRaw = undefined;
+      }
     }
+    if (verdictRaw === undefined) logNoVerdictDiagnostics(skill, ticketKey, run.stdout);
+    return { ...base, verdictRaw, started: run.started, ended: run.ended, costUsd: run.usage.costUsd, tokens: run.usage.tokens };
+  };
+}
 
-    return {
-      verdict,
-      started: run.started,
-      ended: run.ended,
-      costUsd: run.usage.costUsd,
-      tokens: run.usage.tokens,
-    };
+/** Dev only: the v1 merged-PR reconciliation pass (reads the v1 dev log until Task 14). Never throws. */
+async function reconcile(ctx: PhaseContext, execGhPrView: ReturnType<typeof realExecGhPrView>, reconciled: Set<string>): Promise<void> {
+  const skill = SKILL_NAME.dev;
+  try {
+    const r = await reconcileMergedTickets({
+      jiraClient: ctx.jiraClient,
+      githubClient: ctx.githubClient,
+      view: roleView(ctx.config, "dev"),
+      runsLogPath: legacyRunsLog(ctx.slug),
+      execGhPrView,
+      execGhFindMergedPr: realExecGhFindMergedPr(ctx.config.github.repo),
+      reconciled,
+    });
+    if (r.closed.length > 0) log(`[${skill}] reconciliation: merged PR(s) reconciled for ${r.closed.join(", ")}`);
+    for (const err of r.errors) logError(`[${skill}] reconciliation: ${err.ticket}: ${err.message}`);
+  } catch (err) {
+    logError(`[${skill}] reconciliation pass failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function runPhaseLoop(ctx: PhaseContext, session: Session, assigneeAccountId: string): Promise<void> {
+  const prefix = SKILL_NAME[ctx.phase];
+  const { config, loopConfig, once } = ctx;
+  const projectSlug = v2Slug(ctx.slug);
+  const execGhPrView = realExecGhPrView();
+  const deps: WorkerDeps = {
+    jira: ctx.jiraClient,
+    github: ctx.githubClient,
+    config,
+    slug: projectSlug,
+    session,
+    loopVersion: LOOP_VERSION,
+    runSkill: makeRunSkill(ctx),
+    logPath: resolveRepoPath(v2RunsLog(projectSlug)),
+    now: () => new Date(),
+    assigneeAccountId,
+    gate: {
+      findLandedPrUrl: (key) => findLandedPrUrlAcross(projectSlug, key),
+      execGhPrView,
+      execGhFindMergedPr: realExecGhFindMergedPr(config.github.repo),
+      mergedCache: new Map(),
+    },
+    findOpenPrUrl: realFindOpenPrUrl(config.github.repo),
+    roles: [ctx.phase],
+    // Never re-refine a ticket the v1 research runner already refined.
+    hasLandedResearchV1: ctx.phase === "research" ? (key) => hasLandedRun(legacyRunsLog(ctx.slug), key) : undefined,
+    log,
   };
 
-  const execGhPrView = realExecGhPrView();
+  log(`[${prefix}] session ${session.name}: loop started, polling every ${loopConfig.pollIntervalSec}s (project: ${ctx.slug})`);
   const reconciled = new Set<string>();
-
   for (;;) {
-    try {
-      const reconcileResult = await reconcileMergedTickets({
-        jiraClient,
-        githubClient,
-        view,
-        runsLogPath: ctx.runsLogPath,
-        execGhPrView,
-        execGhFindMergedPr: realExecGhFindMergedPr(config.github.repo),
-        reconciled,
-      });
-      if (reconcileResult.closed.length > 0) {
-        log(`[${skill}] reconciliation: merged PR(s) reconciled (mirror Issue closed, pipeline label removed) for ${reconcileResult.closed.join(", ")}`);
-      }
-      for (const err of reconcileResult.errors) {
-        logError(`[${skill}] reconciliation: ${err.ticket}: ${err.message}`);
-      }
-    } catch (err) {
-      // The reconciliation pass itself must never throw out of the poll
-      // loop. A failure here just means this cycle's reconciliation didn't
-      // run; the next cycle tries again.
-      const message = err instanceof Error ? err.message : String(err);
-      logError(`[${skill}] reconciliation pass failed: ${message}`);
-    }
-
-    const runsToday = await countRunsToday(ctx.runsLogPath, new Date());
-    const result = await runDevIteration({
-      jiraClient,
-      githubClient,
-      view,
-      runSkill,
-      loopKind: "dev",
-      runsLogPath: ctx.runsLogPath,
-      runsToday,
-      assigneeAccountId: ctx.assigneeAccountId,
-      execGhPrView,
-    });
-
+    if (ctx.phase === "dev") await reconcile(ctx, execGhPrView, reconciled);
+    const result = await runWorkerIteration(deps);
+    let kind: PollResultKind;
     switch (result.kind) {
       case "idle":
-        for (const s of result.skipped ?? []) {
-          log(`[${skill}] ${s.ticket}: skipped, ${s.reason}`);
-        }
-        log(`[${skill}] queue empty, sleeping ${loopConfig.pollIntervalSec}s`);
+        log(`[${prefix}] nothing to do, sleeping ${loopConfig.pollIntervalSec}s`);
+        kind = "idle";
         break;
-      case "skipped-race":
-        log(`[${skill}] claim raced on ${result.ticket}, retrying`);
-        break;
-      case "ran":
-        log(`[${skill}] ${result.ticket}: ${result.logLine.detail}`);
-        if (result.jiraSyncError) {
-          logError(
-            `[${skill}] ${result.ticket}: WARNING -- Jira label/status update failed (${result.jiraSyncError}). The run is logged in runs.jsonl, but Jira's label/status may not reflect it -- check and fix manually.`,
-          );
+      case "did":
+        log(`[${prefix}] ${result.record.ticket}: ${result.record.outcome}${result.record.detail ? ` (${result.record.detail})` : ""}`);
+        if (result.record.jira_sync_error) {
+          logError(`[${prefix}] ${result.record.ticket}: WARNING -- a Jira/GitHub write failed (${result.record.jira_sync_error}); the record is logged, check the ticket by hand.`);
         }
-        log(
-          `[${skill}] waiting ${loopConfig.postRunDelaySec}s before polling again (lets Jira's search index catch up with the just-written status)`,
-        );
+        kind = "ran";
         break;
       case "paused":
-        logError(`[${skill}] PAUSED: ${result.reason}`);
+        logError(`[${prefix}] PAUSED: ${result.reason}`);
+        await session.release();
         process.exit(1);
     }
-
-    const action = decideNextAction(result.kind, loopConfig, once);
+    const action = decideNextAction(kind, loopConfig, once);
     if (action.kind === "exit") return;
     if (action.kind === "sleep") await sleep(action.ms);
   }
+}
+
+/** v1 slugs (repoSlugFromUrl) may have characters v2 paths reject; v2 paths need PROJECT_SLUG. */
+function v2Slug(slug: string): string {
+  if (!PROJECT_SLUG.test(slug)) {
+    throw new Error(`project slug ${JSON.stringify(slug)} (from targetRepo.url) must match ${PROJECT_SLUG} for the v2 log and run dirs`);
+  }
+  return slug;
 }
 
 // ---------------------------------------------------------------------------
@@ -505,12 +384,11 @@ async function runDevPhase(ctx: PhaseContext): Promise<void> {
 let activePhase: Phase | null = null;
 
 async function main(): Promise<void> {
-  const { phase, project, configPath, once, stream } = parseArgs(process.argv.slice(2));
+  const { phase, project, configPath, session: requestedSession, once, stream } = parseArgs(process.argv.slice(2));
   activePhase = phase;
 
-  // Both phases read the one v2 project config and the loop config at the
-  // repo root (--config is relative to the caller's cwd), so resolve and
-  // load them before the research phase chdirs into its v1 root.
+  // Resolve and load everything repo-root-relative before the research
+  // phase chdirs into its v1 root (--config is relative to the caller's cwd).
   const repoRoot = process.cwd();
   const resolvedConfigPath = resolve(configPath ?? (await resolveProjectConfigPath(project)));
   const config = await loadConfig(resolvedConfigPath);
@@ -523,39 +401,66 @@ async function main(): Promise<void> {
   // here the parent dev CLAUDE.md would load too, so exclude it.
   const excludeClaudeMd =
     phase === "research" ? researchClaudeMdExcludes(repoRoot, PHASE_ROOT.research) : [];
-  process.chdir(PHASE_ROOT[phase]);
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();
   const jiraClient = new RealJiraClient(credentials, config);
   const githubClient = new RealGitHubClient(config.github, realExecGh());
-
   const slug = repoSlugFromUrl(config.targetRepo.url);
-  await mkdir(legacyRunsRoot(), { recursive: true });
-  const rawUsageDir = legacyRawUsageDir(slug);
-  await mkdir(rawUsageDir, { recursive: true });
 
+  // One live worker per project. v2 paths are absolute (resolveRepoPath), so
+  // the chdir below doesn't move them.
+  const session = await acquireSession({
+    dir: resolveRepoPath(v2SessionsDir(v2Slug(slug))),
+    requested: requestedSession,
+    pid: process.pid,
+    isAlive: isProcessAlive,
+    now: new Date(),
+  });
+  const tracked = trackInFlight(session);
+  const onSignal = (sig: NodeJS.Signals) => {
+    // Mid-phase, keep the lock (and its inFlight) for the next start to
+    // resume: a dead pid's lock is reclaimed. Otherwise release it.
+    void (tracked.busy() ? Promise.resolve() : session.release()).finally(() => process.exit(sig === "SIGINT" ? 130 : 143));
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  log(`[${SKILL_NAME[phase]}] acquired session ${session.name}`);
+
+  process.chdir(PHASE_ROOT[phase]);
   const ctx: PhaseContext = {
+    phase,
     config,
     loopConfig,
     once,
     stream,
     credentials,
-    assigneeAccountId,
     jiraClient,
     githubClient,
     slug,
-    runsLogPath: legacyRunsLog(slug),
     runsBaseDir: legacyRunDirs(slug),
-    rawUsageDir,
     excludeClaudeMd,
   };
-
-  if (phase === "research") {
-    await runResearchPhase(ctx);
-  } else {
-    await runDevPhase(ctx);
+  try {
+    await runPhaseLoop(ctx, tracked.session, assigneeAccountId);
+  } finally {
+    if (!tracked.busy()) await session.release();
   }
+}
+
+/** Wraps setInFlight so main knows whether a phase is mid-run (keep the lock on a signal). */
+function trackInFlight(session: Session): { session: Session; busy: () => boolean } {
+  let current: InFlight | null = session.inFlight;
+  return {
+    session: {
+      ...session,
+      setInFlight: async (f) => {
+        await session.setInFlight(f);
+        current = f;
+      },
+    },
+    busy: () => current !== null,
+  };
 }
 
 main().catch((err) => {
