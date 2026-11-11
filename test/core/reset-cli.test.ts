@@ -77,3 +77,38 @@ describe("reset-cli --close-remote --dry-run", () => {
     ).rejects.toMatchObject({ code: 1 });
   });
 });
+
+// The research phase's v1 state lives in research-loop/runs and
+// research-loop/.pipeline, and reset is run from there (cwd = state root).
+// Since 2.0.0 the project config exists only at the repo root, so a cwd
+// with no pipeline.<project>.config.json falls back to the repo root's.
+describe("reset-cli from a state root with no config of its own (research-loop/)", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "reset-cli-research-root-"));
+    await mkdir(join(dir, "runs"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("resolves --project against the repo-root config and plans against the cwd's runs/", async () => {
+    await writeFile(join(dir, "runs", "webtarsthree.jsonl"), line("TARS-1", "bounced", null) + "\n");
+    const { stdout } = await run(
+      process.execPath,
+      [CLI, "--project", "webtarsthree", "--ticket", "TARS-1", "--dry-run"],
+      { cwd: dir },
+    );
+    expect(stdout).toContain("--dry-run: nothing deleted or closed.");
+    expect(stdout).toContain(join(dir, "runs", "webtarsthree.jsonl"));
+  });
+
+  it("still fails, listing the repo root's projects, for an unknown project", async () => {
+    await expect(
+      run(process.execPath, [CLI, "--project", "nope", "--ticket", "TARS-1", "--dry-run"], { cwd: dir }),
+    ).rejects.toMatchObject({ stderr: expect.stringMatching(/Unknown project "nope".*webtarsthree/) });
+  });
+});
+
