@@ -17,7 +17,6 @@ import type { Config, Role } from "../../src/core/types.ts";
 import { makeV2Config } from "../fixtures/config.ts";
 import * as fs from "node:fs/promises";
 import { readFileSync, readdirSync } from "node:fs";
-import { V1_AUTO_PROMOTE_LABEL } from "../../src/roles/research/phase.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -614,8 +613,16 @@ describe(".claude/ prose references only v2 config keys", () => {
     expect(hits).toEqual([]);
   });
 
-  it("ticket-refine keys its Needs-decision section on the runner's auto-promote ticket label", () => {
+  it("ticket-refine's passing-verdict comment never has a Needs-decision / Approve section (v1 parity: always omitted)", () => {
     const skill = readFileSync(path.join(REPO_ROOT, ".claude/skills/ticket-refine/SKILL.md"), "utf8");
-    expect(skill).toContain(`carries the \`${V1_AUTO_PROMOTE_LABEL}\` label`);
+    const start = skill.indexOf("2. **On a passing verdict**");
+    const end = skill.indexOf("3. **On a bounce**");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const passing = skill.slice(start, end);
+    expect(passing).not.toContain("**Needs decision:**");
+    expect(passing).not.toMatch(/omit this\s+whole "Needs decision" section/);
+    expect(skill).not.toContain("Approve — move to");
+    expect(passing).toContain('A passing verdict\'s comment never has a "Needs decision" section');
   });
 });
