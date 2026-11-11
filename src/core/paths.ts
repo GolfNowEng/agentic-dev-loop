@@ -3,7 +3,7 @@
 // every result is checked to stay inside the directory it belongs to, so a
 // hostile ticket key / session id / slug can never escape (UnsafePathError).
 
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 import type { Role } from "./types.ts";
 
 /** A Jira issue key, e.g. "TARS-1465". */
@@ -62,6 +62,32 @@ export function v1RunsLog(role: Role, project: string): string {
   return contain(`runs/v1/${role}/${project}.jsonl`, REPO_ROOT, ["runs/v1"]);
 }
 
+/** runs/v2/<project>.reset-archive.jsonl: where reset moves archived v2 records (append-only). */
+export function v2RunsArchive(project: string): string {
+  check("project", project, PROJECT_SLUG);
+  return contain(`runs/v2/${project}.reset-archive.jsonl`, REPO_ROOT, V2);
+}
+
+/** .pipeline/v2/<project>: the project's v2 state root (session dirs, sessions/, repo/). */
+export function v2ProjectDir(project: string): string {
+  check("project", project, PROJECT_SLUG);
+  return contain(`.pipeline/v2/${project}`, REPO_ROOT, V2);
+}
+
+const PRE_CUTOVER = ["runs", "research-loop/runs"];
+
+/**
+ * The pre-cutover live v1 log of a role, repo-root-relative: dev wrote
+ * runs/<project>.jsonl, research wrote research-loop/runs/<project>.jsonl.
+ * v1 readers use it only when the post-cutover v1RunsLog file is absent.
+ */
+export function v1PreCutoverRunsLog(role: Role, project: string): string {
+  checkRole(role);
+  check("project", project, PROJECT_SLUG);
+  const rel = role === "dev" ? `runs/${project}.jsonl` : `research-loop/runs/${project}.jsonl`;
+  return contain(rel, REPO_ROOT, PRE_CUTOVER);
+}
+
 /** .pipeline/v2/<project>/<session>/<ticket>/<phase>-<runId> (usage.json lives inside). */
 export function v2RunDir(project: string, session: string, ticket: string, phase: Role, runId: string): string {
   check("project", project, PROJECT_SLUG);
@@ -92,55 +118,18 @@ export function runIdNow(now: Date): string {
 /** Resolve a repo-relative path from the functions above to an absolute one, re-checking containment. */
 export function resolveRepoPath(rel: string): string {
   if (isAbsolute(rel)) throw new UnsafePathError(`path ${JSON.stringify(rel)} must be repo-relative`);
-  contain(rel, REPO_ROOT, [...V2, "runs/v1"]);
+  contain(rel, REPO_ROOT, [...V2, "runs/v1", ...PRE_CUTOVER]);
   return resolve(REPO_ROOT, rel);
 }
 
-// ---- v1 --phase runner paths: RELATIVE, resolved against process.cwd() ----
-
-function legacy(rel: string): string {
-  return contain(rel, process.cwd(), ["runs", ".pipeline"]);
-}
+// ---- v1 --phase runner verdict discovery: RELATIVE, resolved against process.cwd() ----
 
 /**
- * runs/<slug>.jsonl, relative to cwd.
- * @deprecated — v1 layout; still read by reset (Task 14) and the --phase research/dev v1 verdict discovery and v1 log reads until Task 15
- */
-export function legacyRunsLog(slug: string): string {
-  check("slug", slug, LEGACY_SLUG);
-  return legacy(`runs/${slug}.jsonl`);
-}
-
-/**
- * runs/<slug>.reset-archive.jsonl, relative.
- * @deprecated — v1 layout; still read by reset (Task 14) and the --phase research/dev v1 verdict discovery and v1 log reads until Task 15
- */
-export function legacyRunsArchive(slug: string): string {
-  check("slug", slug, LEGACY_SLUG);
-  return legacy(`runs/${slug}.reset-archive.jsonl`);
-}
-
-/**
- * .pipeline/<slug>, relative to cwd.
- * @deprecated — v1 layout; still read by reset (Task 14) and the --phase research/dev v1 verdict discovery and v1 log reads until Task 15
- */
-export function legacyPipelineDir(slug: string): string {
-  check("slug", slug, LEGACY_SLUG);
-  return legacy(`.pipeline/${slug}`);
-}
-
-/**
- * .pipeline/<slug>/runs, relative.
- * @deprecated — v1 layout; still read by reset (Task 14) and the --phase research/dev v1 verdict discovery and v1 log reads until Task 15
+ * .pipeline/<slug>/runs, relative to cwd: where the skills still write their
+ * own RUN_DIR, so main.ts's RunSkillFn can find the verdict.
+ * @deprecated — v1 layout; only main.ts's v1 verdict discovery uses it, until Task 15 (Ruling 17)
  */
 export function legacyRunDirs(slug: string): string {
-  return join(legacyPipelineDir(slug), "runs");
-}
-
-/**
- * .pipeline/<slug>/raw-usage, relative.
- * @deprecated — v1 layout; still read by reset (Task 14) and the --phase research/dev v1 verdict discovery and v1 log reads until Task 15
- */
-export function legacyRawUsageDir(slug: string): string {
-  return join(legacyPipelineDir(slug), "raw-usage");
+  check("slug", slug, LEGACY_SLUG);
+  return contain(`.pipeline/${slug}/runs`, process.cwd(), [".pipeline"]);
 }

@@ -1,42 +1,36 @@
 /**
  * CLI entrypoint:
- *   node src/reset-cli.ts --project <name> [--ticket <KEY>] [--dry-run] [--yes] [--close-remote]
+ *   node src/core/reset-cli.ts --project <name> [--ticket <KEY>] [--role research|dev|all]
+ *                              [--dry-run] [--yes] [--close-remote] [--root <dir>]
  *
- * Deterministic "start fresh" reset for this repo's own local, gitignored
- * pipeline state -- runs/<project>.jsonl lines, .pipeline/<project>/ run
- * dirs and raw-usage files, and (when --ticket is given and
- * targetRepo.path is set) this repo's own leftover worktrees under that
- * path. See docs/reset.md for exactly what is and isn't in scope, and why.
+ * Deterministic "start fresh" reset of this repo's own v2 pipeline state
+ * (runs/v2/<project>.jsonl records, `<role>-*` run dirs under
+ * .pipeline/v2/<project>/, and for --ticket the ticket's leftover
+ * worktrees). v1 history, in either layout, is never touched. See
+ * docs/reset.md.
  *
- * With --ticket <KEY>: scoped to just that ticket within the project.
- * Without --ticket: wipes the WHOLE project's runs.jsonl and .pipeline/
- * directory -- every ticket, not just one. Requires --yes (or an
- * interactive "yes" confirmation) since this is the harder-to-undo path.
+ * --role (default all) limits the reset to one role's run dirs and the
+ * records containing a phase of that role.
+ * Without --ticket: the WHOLE project. Requires --yes.
+ * --root: the state root (default: this repo's root); tests pass a temp dir.
  *
- * --close-remote (requires --ticket -- rejected for a whole-project
- * reset, see below) additionally closes the real Jira ticket, its mirror
- * GitHub Issue, and any open PR -- see src/remote-close.ts. Needs real
- * Jira/GitHub credentials, so it must be run with `--env-file=.env` (the
- * `reset-project:remote` npm script does this; the default
- * `reset-project` script deliberately does not, so a purely local-only
- * reset never requires .env to exist at all). An agent invoking this flag
- * for a real (non-dry-run) run must always confirm with the human in
- * chat first, regardless of Claude Code permission settings -- see
+ * --close-remote (requires --ticket) additionally closes the real Jira
+ * ticket, its mirror GitHub Issue, and any PR recorded for the ticket (v2
+ * log, else the v1 dev log) -- see src/core/remote-close.ts. Needs
+ * credentials, so run it with `--env-file=.env` (`reset-project:remote`).
+ * An agent must confirm with the human in chat before a real
+ * (non-dry-run) --close-remote, regardless of permission settings -- see
  * docs/reset.md and .claude/skills/reset-project/SKILL.md.
  *
- * This file is deliberately the untested composition root, same rationale
- * as main.ts -- every piece of logic it calls (planReset/executeReset/
- * describeResetPlan/planRemoteClose/executeRemoteClose/describe*) already
- * has full vitest coverage against a temp filesystem or injected mock
- * clients; this is just argv parsing, loading real config/clients, and
- * printing plans/summaries.
+ * The composition root: argv parsing, real config/clients, printing.
+ * Its logic (planReset/executeReset/findRecordedPrUrlAcross/...) is unit-tested,
+ * and test/core/reset-cli.test.ts drives this file as a subprocess.
  */
 
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { loadConfig, resolveProjectConfigPath, repoSlugFromUrl, listAvailableProjects } from "./config.ts";
-import { planReset, executeReset, describeResetPlan, describeResetSummary } from "./reset-project.ts";
+import { planReset, executeReset, describeResetPlan, describeResetSummary, type ResetRole } from "./reset-project.ts";
 import {
-  planRemoteClose,
   executeRemoteClose,
   describeRemoteClosePlan,
   describeRemoteCloseSummary,
@@ -44,7 +38,8 @@ import {
 import { credentialsFromEnv, RealJiraClient } from "./jira-client.ts";
 import { RealGitHubClient, realExecGh } from "./github-client.ts";
 import type { Config } from "./types.ts";
-import { legacyRunsLog } from "./paths.ts";
+import { PROJECT_SLUG } from "./paths.ts";
+import { findRecordedPrUrlAcross } from "./iteration-log.ts";
 
 function getArgValue(argv: string[], name: string): string | undefined {
   const eqPrefix = `${name}=`;
@@ -61,6 +56,15 @@ async function main(): Promise<void> {
   const dryRun = argv.includes("--dry-run");
   const skipConfirm = argv.includes("--yes");
   const closeRemote = argv.includes("--close-remote");
+  const role = getArgValue(argv, "--role") ?? "all";
+  const rootArg = getArgValue(argv, "--root");
+  const root = rootArg === undefined ? undefined : resolve(rootArg);
+
+  if (role !== "research" && role !== "dev" && role !== "all") {
+    console.error(`[reset] --role must be research, dev or all (got "${role}").`);
+    process.exitCode = 1;
+    return;
+  }
 
   if (closeRemote && !ticketKey) {
     console.error(
@@ -71,10 +75,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  // The cwd is the state root (runs/, .pipeline/). The project config is
-  // read from the cwd when it has any, else from this repo's root: since
-  // 2.0.0, research-loop/ (the research phase's v1 state root) has no
-  // config copies of its own.
+  // The project config is read from the cwd when it has any, else from
+  // this repo's root. The state root is --root, else this repo's root
+  // (v2 paths are repo-root-relative, independent of the cwd).
   const configDir = (await listAvailableProjects(".")).length > 0 ? "." : resolve(import.meta.dirname, "../..");
   const configPath = await resolveProjectConfigPath(projectName, configDir);
   let config: Config | null = null;
@@ -93,17 +96,18 @@ async function main(): Promise<void> {
   }
 
   const slug = config ? repoSlugFromUrl(config.targetRepo.url) : projectName!;
-  const repoRoot = process.cwd();
+  if (!PROJECT_SLUG.test(slug)) {
+    console.error(`[reset] project slug ${JSON.stringify(slug)} must match ${PROJECT_SLUG} for the v2 layout.`);
+    process.exitCode = 1;
+    return;
+  }
 
-  const plan = await planReset(repoRoot, slug, ticketKey, config);
+  const plan = await planReset({ project: slug, ticket: ticketKey, role: role as ResetRole, config, root });
 
-  // planRemoteClose reads runs.jsonl to recover the ticket's open PR URL
-  // -- this MUST happen before executeReset below, which archives/trims
-  // that same file. Doing it here (even under --dry-run, where nothing
-  // is executed) keeps the dry-run preview honest about what a real run
-  // would actually find.
+  // The PR lookup reads the logs BEFORE executeReset archives records, and
+  // runs under --dry-run too so the preview matches the real run.
   const remotePlan = closeRemote && ticketKey
-    ? await planRemoteClose(ticketKey, plan.runsLogPath ?? join(repoRoot, legacyRunsLog(slug)))
+    ? { ticketKey, prUrl: await findRecordedPrUrlAcross(slug, ticketKey, root) }
     : null;
 
   console.log(`[reset] project: ${projectName} (slug: ${slug})${ticketKey ? `, ticket: ${ticketKey}` : ", WHOLE PROJECT"}`);
@@ -118,11 +122,10 @@ async function main(): Promise<void> {
   }
 
   const nothingToDo =
-    plan.runsLogLinesToRemove === 0 &&
+    plan.recordsToArchive === 0 &&
     plan.runDirsToRemove.length === 0 &&
-    plan.rawUsageFilesToRemove.length === 0 &&
-    plan.worktreesToRemove.length === 0 &&
-    !(plan.wholeProject && plan.runsLogPath);
+    plan.sessionLeftoversToRemove.length === 0 &&
+    plan.worktreesToRemove.length === 0;
   if (nothingToDo && !plan.wholeProject && !closeRemote) {
     console.log("[reset] nothing matched -- nothing to delete.");
     return;
@@ -155,11 +158,7 @@ async function main(): Promise<void> {
     const credentials = credentialsFromEnv();
     const jiraClient = new RealJiraClient(credentials, config);
     const githubClient = new RealGitHubClient(config.github, realExecGh());
-    const remoteSummary = await executeRemoteClose(remotePlan, {
-      jiraClient,
-      githubClient,
-      runsLogPath: plan.runsLogPath ?? join(repoRoot, legacyRunsLog(slug)),
-    });
+    const remoteSummary = await executeRemoteClose(remotePlan, { jiraClient, githubClient, runsLogPath: plan.runsLogPath });
     console.log(describeRemoteCloseSummary(remoteSummary));
   }
 

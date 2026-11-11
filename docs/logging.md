@@ -152,16 +152,33 @@ as `progress.jsonl`'s final event, and as `verdict.json`'s `detail` field:
 This is the one line a human skimming a terminal, or a future dashboard,
 needs to read to know what happened — no other file required.
 
-### npm run stats
+### npm run stats (2.0.0)
 
-`scripts/stats.mjs` rolls up `runs/<project>.jsonl` into a landed/bounced/
-error/killed breakdown with percentages, a `failure_category` histogram,
-and total cost — the "are we succeeding over time" view.
+The two v1 `npm run stats` sections above describe the pre-2.0.0 script.
+`scripts/stats.mjs` now reads, and never writes:
+
+- **default (v2):** `runs/v2/<project>.jsonl`, per role, counted from
+  **phase entries** (not records): phases run, landed, bounced,
+  error/killed, cost sum, and a `failure_category` histogram. A phase is
+  in the window when its `started` is within `--days`. Records with no
+  phases (`handoff-done`, `interrupted`, `skipped-*`) add nothing.
+- **`--v1`:** v1 dev and v1 research reported separately. Each reads
+  `runs/v1/<role>/<project>.jsonl` when it exists, else the pre-cutover
+  live log (dev: `runs/<project>.jsonl`, research:
+  `research-loop/runs/<project>.jsonl`), and prints which file it read.
+- **`--root <dir>`:** the state root (default: the repo root).
 
 ```
-npm run stats                              # last 7 days, webtarsthree
+npm run stats                              # v2, last 7 days, webtarsthree
 npm run stats -- --project webtarsthree --days 30
+npm run stats -- --v1
 ```
+
+The same v1 resolution (post-cutover first, else pre-cutover) is used by
+`resolveV1RunsLog` in `src/core/iteration-log.ts`, behind reconcile's
+`findLandedTicketsAcross`, the landed guard's `findLandedPrUrlAcross`, the
+research "already refined in v1" check (`hasLandedV1`) and reset's
+`--close-remote` PR lookup (`findRecordedPrUrlAcross`).
 
 ### v2 path layout
 
@@ -172,9 +189,11 @@ the repo root). v2: `runs/v2/<project>.jsonl`; run dirs
 v1 archive: `runs/v1/<role>/<project>.jsonl`. `--phase research|dev` write
 v2 records to `runs/v2/<project>.jsonl` (2.0.0 Task 13). Until Task 15 the
 skills still create their own run dir under the cwd-relative legacy
-`.pipeline/<slug>/runs/`, where main.ts finds `verdict.json` (`legacy*`
-functions); raw claude usage goes to `usage.json` in the v2 run dir. Reset
-still reads the legacy layout until Task 14.
+`.pipeline/<slug>/runs/`, where main.ts finds `verdict.json` (the
+`legacyRunDirs` function, the only legacy path left); raw claude usage goes
+to `usage.json` in the v2 run dir. Reset works on the v2 layout only
+(`docs/reset.md`); `runs/v2/<project>.reset-archive.jsonl` holds what it
+archived.
 
 ### v2 iteration record (`runs/v2/<project>.jsonl`)
 

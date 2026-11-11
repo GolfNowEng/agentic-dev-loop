@@ -12,8 +12,8 @@
  *   - research: claim + ticket-refine; a green ticket is left with a pending
  *     handoff for a dev-enabled worker (no label swap, no dev).
  *   - dev: completes pending handoffs, then polls the dev JQL and runs
- *     ticket-to-pr; plus the v1 merged-PR reconciliation pass (Task 14
- *     moves it onto the v2 log).
+ *     ticket-to-pr; plus the merged-PR reconciliation pass over the v1 and
+ *     v2 landed logs.
  * Each writes one v2 iteration record per ticket iteration to
  * `runs/v2/<slug>.jsonl`; an idle iteration writes nothing.
  *
@@ -53,14 +53,13 @@ import {
   realExecGhFindMergedPr,
   realFindOpenPrUrl,
 } from "./core/github-client.ts";
-import { hasLandedRun } from "./core/runs-log.ts";
 import { snapshotRunDirs, findNewestRunDir } from "./core/run-dirs.ts";
 import { redactSensitive } from "./core/redact.ts";
 import { decideNextAction, type PollResultKind } from "./core/poll-loop.ts";
-import { PROJECT_SLUG, legacyRunsLog, legacyRunDirs, resolveRepoPath, v2RunsLog, v2SessionsDir } from "./core/paths.ts";
+import { PROJECT_SLUG, legacyRunDirs, resolveRepoPath, v2RunsLog, v2SessionsDir } from "./core/paths.ts";
 import { acquireSession, isProcessAlive, type Session } from "./core/session.ts";
 import { trackSession, type TrackedSession } from "./worker/signal.ts";
-import { findLandedPrUrlAcross } from "./core/iteration-log.ts";
+import { findLandedPrUrlAcross, hasLandedV1 } from "./core/iteration-log.ts";
 import type { RunSkillFn, RunSkillResult } from "./core/run-skill.ts";
 import { spawnClaudeRun, startProgressTail } from "./core/spawn-claude.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
@@ -294,15 +293,21 @@ function makeRunSkill(ctx: PhaseContext): RunSkillFn {
   };
 }
 
-/** Dev only: the v1 merged-PR reconciliation pass (reads the v1 dev log until Task 14). Never throws. */
-async function reconcile(ctx: PhaseContext, execGhPrView: ReturnType<typeof realExecGhPrView>, reconciled: Set<string>): Promise<void> {
+/** Dev only: the merged-PR reconciliation pass over the v1 and v2 landed logs. Never throws. */
+async function reconcile(
+  ctx: PhaseContext,
+  session: string,
+  execGhPrView: ReturnType<typeof realExecGhPrView>,
+  reconciled: Set<string>,
+): Promise<void> {
   const skill = SKILL_NAME.dev;
   try {
     const r = await reconcileMergedTickets({
       jiraClient: ctx.jiraClient,
       githubClient: ctx.githubClient,
-      view: roleView(ctx.config, "dev"),
-      runsLogPath: legacyRunsLog(ctx.slug),
+      config: ctx.config,
+      slug: v2Slug(ctx.slug),
+      session,
       execGhPrView,
       execGhFindMergedPr: realExecGhFindMergedPr(ctx.config.github.repo),
       reconciled,
@@ -340,7 +345,7 @@ async function runPhaseLoop(ctx: PhaseContext, tracked: TrackedSession, assignee
     findOpenPrUrl: realFindOpenPrUrl(config.github.repo),
     roles: [ctx.phase],
     // Never re-refine a ticket the v1 research runner already refined.
-    hasLandedResearchV1: ctx.phase === "research" ? (key) => hasLandedRun(legacyRunsLog(ctx.slug), key) : undefined,
+    hasLandedResearchV1: ctx.phase === "research" ? (key) => hasLandedV1("research", projectSlug, key) : undefined,
     log,
   };
 
@@ -351,7 +356,7 @@ async function runPhaseLoop(ctx: PhaseContext, tracked: TrackedSession, assignee
   log(`[${prefix}] session ${session.name}: loop started, polling every ${loopConfig.pollIntervalSec}s (project: ${ctx.slug})`);
   const reconciled = new Set<string>();
   for (;;) {
-    if (ctx.phase === "dev") await reconcile(ctx, execGhPrView, reconciled);
+    if (ctx.phase === "dev") await reconcile(ctx, session.name, execGhPrView, reconciled);
     const result = await runWorkerIteration(deps);
     let kind: PollResultKind;
     switch (result.kind) {

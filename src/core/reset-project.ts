@@ -1,316 +1,304 @@
-// Deterministic "start this project fresh" reset -- scoped to this
-// repo's own local, gitignored state for one project slug. Deletes nothing this
-// repo doesn't already consider disposable scratch space (runs.jsonl
-// lines, .pipeline/<slug>/ run dirs, this repo's own worktrees under
-// targetRepo.path). Never touches Jira, GitHub, the target repo's git
-// history, or any other project's data.
+// Deterministic "start fresh" reset of this repo's own v2 pipeline state for
+// one project (and optionally one ticket, and one role). Scope:
+//   - runs/v2/<project>.jsonl records: archived to
+//     runs/v2/<project>.reset-archive.jsonl (append-only), never just deleted;
+//   - `<role>-<RUN_ID>` run dirs under .pipeline/v2/<project>/<session>/<ticket>/,
+//     in every session;
+//   - per-ticket only: leftover worktrees named for the ticket;
+//   - whole-project, role all only: session-dir leftovers (.lock.adopted-*,
+//     .acquire.stale-*/reclaim-*/release-*, .tmp-*), never a *.lock,
+//     *.lock.stale-* (unadopted in-flight records) or the .acquire mutex.
+// v1 history is never modified or deleted, in either layout: not runs/v1/**,
+// .pipeline/v1/**, nor the pre-cutover runs/<slug>.jsonl, .pipeline/<slug>/,
+// research-loop/runs/, research-loop/.pipeline/. Never touches Jira, GitHub,
+// the target repo's git history, or another project's state.
 //
-// Split into a pure planReset() (what would be deleted, given directory
-// listings this module reads) and a separate executeReset() (the actual
-// fs.rm/appendFile calls) so the decision logic is unit-testable without
-// touching a real filesystem, and so --dry-run can share the exact same
-// plan the real run acts on -- no risk of the two ever silently diverging.
+// planReset() only reads; executeReset() acts on exactly that plan, and
+// refuses any path outside the plan's own v2 roots, so --dry-run shows what
+// the real run does.
 
-import { readFile, writeFile, appendFile, rm, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { appendFile, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
-import type { Config } from "./types.ts";
-import { legacyPipelineDir, legacyRawUsageDir, legacyRunDirs, legacyRunsArchive, legacyRunsLog } from "./paths.ts";
+import type { Config, Role } from "./types.ts";
+import { resolveRepoPath, RUN_ID, SESSION_ID, TICKET_KEY, UnsafePathError, v2CloneDir, v2ProjectDir, v2RunsArchive, v2RunsLog, v2SessionsDir } from "./paths.ts";
 
-/**
- * Shorten a path under the home directory to ~/... for display only --
- * describeResetPlan/describeResetSummary output, never the ResetPlan/
- * ResetSummary objects themselves (those keep real absolute paths, since
- * executeReset and its tests need them unambiguous). Falls back to the
- * original path when it isn't under the home directory at all (e.g. a
- * test fixture's synthetic /repo/... paths).
- */
+export type ResetRole = Role | "all";
+
+export interface ResetOptions {
+  project: string;
+  /** Omit for a whole-project reset. */
+  ticket?: string;
+  /** Default "all". */
+  role?: ResetRole;
+  /** Supplies targetRepo.path for the worktree scan; null/omitted = the v2 clone's worktrees only. */
+  config?: Config | null;
+  /** State root; defaults to the repo root. Tests pass a temp dir. */
+  root?: string;
+}
+
+export interface ResetPlan {
+  project: string;
+  ticketKey: string | null;
+  role: ResetRole;
+  wholeProject: boolean;
+  /** The state root every v2 path below lives under. */
+  root: string;
+  /** runs/v2/<project>.jsonl (absolute), whether or not it exists. */
+  runsLogPath: string;
+  runsLogExists: boolean;
+  /** runs/v2/<project>.reset-archive.jsonl: archived records are appended here. */
+  runsLogArchivePath: string;
+  /** How many log lines will be archived (and removed from the live log). */
+  recordsToArchive: number;
+  /** `<role>-<RUN_ID>` dirs under .pipeline/v2/<project>/<session>/<ticket>/, sorted. */
+  runDirsToRemove: string[];
+  /** Whole-project role-all only: leftover files in .pipeline/v2/<project>/sessions/. */
+  sessionLeftoversToRemove: string[];
+  /** Per-ticket only: worktrees named for the ticket (role-scoped by name). */
+  worktreesToRemove: string[];
+  /** The worktrees dir scanned, or null. */
+  worktreesDir: string | null;
+  /** `<name>.lock` files in the sessions dir: a worker may be running; reset doesn't stop it. */
+  liveLocks: string[];
+}
+
+export interface ResetSummary {
+  recordsArchived: number;
+  archivePath: string;
+  runsLogDeleted: boolean;
+  runDirsDeleted: string[];
+  sessionLeftoversDeleted: string[];
+  worktreesDeleted: string[];
+}
+
+/** Display only: ~/... for paths under the home directory. */
 function shortenPath(path: string): string {
   const home = homedir();
   return path.startsWith(home) ? `~${path.slice(home.length)}` : path;
 }
 
-export interface ResetPlan {
-  /** The ticket this plan was built for, or null for a whole-project reset. */
-  ticketKey: string | null;
-  /** .pipeline/<slug>/ itself -- only ever deleted wholesale for a whole-project reset (wholeProject: true); a per-ticket reset deletes individual entries under it instead (runDirsToRemove/rawUsageFilesToRemove), never this whole directory. */
-  pipelineDir: string;
-  /** Absolute/relative path to runs/<slug>.jsonl, or null if it doesn't exist. */
-  runsLogPath: string | null;
-  /** Always runs/<slug>.reset-archive.jsonl -- where removed lines get appended instead of deleted outright. Never overwritten, only ever appended to. */
-  runsLogArchivePath: string;
-  /** How many of runs/<slug>.jsonl's lines belong to this ticket (0 if runsLogPath is null, or ticketKey is undefined -- whole-project reset keeps the log file, see below). */
-  runsLogLinesToRemove: number;
-  /** .pipeline/<slug>/runs/<TICKET>-<RUN_ID>/ directories to delete. */
-  runDirsToRemove: string[];
-  /** .pipeline/<slug>/raw-usage/<TICKET>-<...>.json files to delete. */
-  rawUsageFilesToRemove: string[];
-  /** This repo's own <targetRepo.path>/.claude/worktrees/<TICKET>-<...> directories to delete, if targetRepo.path is set. Empty for a whole-project reset -- worktrees are always per-ticket by name, there is no "all of them for this project" grouping to key off safely without touching another project's worktrees that might share the same targetRepo.path. */
-  worktreesToRemove: string[];
-  /** Whether this is a whole-project reset (no ticketKey given) -- deletes runs/<slug>.jsonl and .pipeline/<slug>/ entirely instead of filtering by ticket. */
-  wholeProject: boolean;
-}
-
-/**
- * List every top-level entry directly under `dir` whose name starts with
- * `prefix` -- used for both `.pipeline/<slug>/runs/<TICKET>-*` directories
- * and `.pipeline/<slug>/raw-usage/<TICKET>-*.json` files. Returns an empty
- * array if `dir` doesn't exist (nothing to remove is not an error here --
- * a project that never ran ticket-to-pr for this ticket has no directory
- * to clean up at all).
- */
-async function listMatchingEntries(dir: string, prefix: string): Promise<string[]> {
-  let entries: string[];
+async function list(dir: string): Promise<string[]> {
   try {
-    entries = await readdir(dir);
+    return (await readdir(dir)).sort();
   } catch {
     return [];
   }
-  return entries.filter((name) => name.startsWith(prefix)).sort();
 }
 
-/**
- * Count how many lines of a runs.jsonl file belong to `ticketKey`. Returns
- * 0 if the file doesn't exist or is empty -- same "nothing to do is not an
- * error" stance as listMatchingEntries.
- */
-async function countTicketLogLines(path: string, ticketKey: string): Promise<number> {
-  let raw: string;
+async function isDir(p: string): Promise<boolean> {
+  return stat(p).then((s) => s.isDirectory(), () => false);
+}
+
+const RUN_DIR_NAME = /^(research|dev)-(.+)$/;
+
+function runDirMatches(name: string, role: ResetRole): boolean {
+  const m = RUN_DIR_NAME.exec(name);
+  return m !== null && RUN_ID.test(m[2]) && (role === "all" || m[1] === role);
+}
+
+const LEFTOVER = [/\.lock\.adopted-/, /^\.acquire\.stale-/, /^\.acquire\.reclaim-/, /^\.acquire\.release-/, /^\.tmp-/];
+const isLeftover = (name: string) => LEFTOVER.some((re) => re.test(name));
+const isLock = (name: string) => name.endsWith(".lock") && !name.startsWith(".");
+
+/** Does this log line belong to the reset? Unreadable lines only go with a whole-project role-all reset. */
+function lineMatches(line: string, ticket: string | null, role: ResetRole): boolean {
+  let r: { ticket?: unknown; phases?: unknown; resume?: unknown } | null;
   try {
-    raw = await readFile(path, "utf8");
+    r = JSON.parse(line);
   } catch {
-    return 0;
+    return ticket === null && role === "all";
   }
-  const ticketField = `"ticket":"${ticketKey}"`;
-  return raw
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .filter((line) => line.includes(ticketField)).length;
+  if (!r || typeof r !== "object") return ticket === null && role === "all";
+  if (ticket !== null && r.ticket !== ticket) return false;
+  if (role === "all") return true;
+  const phases = Array.isArray(r.phases) ? (r.phases as Array<{ role?: unknown }>) : [];
+  return phases.some((p) => p?.role === role) || r.resume === role;
 }
 
-/**
- * Compute what a reset would delete for `slug` (and, if given, one
- * `ticketKey` within it) under `repoRoot`. Read-only -- touches nothing on
- * disk beyond directory listings and a read of runs.jsonl to count
- * matching lines. `config` supplies `targetRepo.path` for the worktree
- * scan; pass null when no config was loadable (a --project the caller
- * hasn't resolved yet) -- worktreesToRemove is then always empty, since
- * there's no path to scan.
- */
-export async function planReset(
-  repoRoot: string,
-  slug: string,
-  ticketKey: string | undefined,
-  config: Config | null,
-): Promise<ResetPlan> {
-  const runsLogPath = join(repoRoot, legacyRunsLog(slug));
-  const runsLogArchivePath = join(repoRoot, legacyRunsArchive(slug));
-  const runsLogExists = await readFile(runsLogPath, "utf8").then(
-    () => true,
-    () => false,
-  );
-
-  const pipelineDir = join(repoRoot, legacyPipelineDir(slug));
-  const pipelineRunsDir = join(repoRoot, legacyRunDirs(slug));
-  const pipelineRawUsageDir = join(repoRoot, legacyRawUsageDir(slug));
-
-  if (!ticketKey) {
-    return {
-      ticketKey: null,
-      pipelineDir,
-      runsLogPath: runsLogExists ? runsLogPath : null,
-      runsLogArchivePath,
-      runsLogLinesToRemove: 0,
-      runDirsToRemove: [],
-      rawUsageFilesToRemove: [],
-      worktreesToRemove: [],
-      wholeProject: true,
-    };
+async function readLines(path: string): Promise<string[] | null> {
+  try {
+    return (await readFile(path, "utf8")).split("\n").filter((l) => l.trim() !== "");
+  } catch {
+    return null;
   }
+}
 
-  const runDirNames = await listMatchingEntries(pipelineRunsDir, `${ticketKey}-`);
-  const rawUsageNames = await listMatchingEntries(pipelineRawUsageDir, `${ticketKey}-`);
-  const linesToRemove = runsLogExists ? await countTicketLogLines(runsLogPath, ticketKey) : 0;
+/** Compute what a reset would do. Read-only. */
+export async function planReset(opts: ResetOptions): Promise<ResetPlan> {
+  const role = opts.role ?? "all";
+  if (role !== "all" && role !== "research" && role !== "dev") throw new Error(`role must be research, dev or all (got ${JSON.stringify(role)})`);
+  const ticket = opts.ticket ?? null;
+  if (ticket !== null && !TICKET_KEY.test(ticket)) throw new UnsafePathError(`ticket ${JSON.stringify(ticket)} must match ${TICKET_KEY}`);
+  const at = (rel: string) => (opts.root === undefined ? resolveRepoPath(rel) : resolve(opts.root, rel));
+  // runs/v2/<project>.jsonl is two levels below the state root.
+  const root = opts.root === undefined ? resolve(resolveRepoPath(v2RunsLog(opts.project)), "../../..") : resolve(opts.root);
 
+  const runsLogPath = at(v2RunsLog(opts.project));
+  const lines = await readLines(runsLogPath);
+  const recordsToArchive = (lines ?? []).filter((l) => lineMatches(l, ticket, role)).length;
+
+  const projectDir = at(v2ProjectDir(opts.project));
+  const sessionsDir = at(v2SessionsDir(opts.project));
+  const cloneDir = at(v2CloneDir(opts.project));
+  const runDirsToRemove: string[] = [];
+  for (const s of await list(projectDir)) {
+    const sDir = join(projectDir, s);
+    if (!SESSION_ID.test(s) || sDir === sessionsDir || sDir === cloneDir || !(await isDir(sDir))) continue;
+    for (const t of ticket !== null ? [ticket] : await list(sDir)) {
+      if (!TICKET_KEY.test(t)) continue;
+      const tDir = join(sDir, t);
+      for (const name of await list(tDir)) {
+        if (runDirMatches(name, role) && (await isDir(join(tDir, name)))) runDirsToRemove.push(join(tDir, name));
+      }
+    }
+  }
+  runDirsToRemove.sort();
+
+  const sessionFiles = await list(sessionsDir);
+  const sessionLeftoversToRemove =
+    ticket === null && role === "all" ? sessionFiles.filter(isLeftover).map((f) => join(sessionsDir, f)) : [];
+  const liveLocks = sessionFiles.filter(isLock).map((f) => join(sessionsDir, f));
+
+  let worktreesDir: string | null = null;
   let worktreesToRemove: string[] = [];
-  if (config?.targetRepo.path) {
-    const worktreesDir = join(config.targetRepo.path, ".claude", "worktrees");
-    const names = await listMatchingEntries(worktreesDir, `${ticketKey}-`);
-    worktreesToRemove = names.map((name) => join(worktreesDir, name));
+  if (ticket !== null) {
+    const base = opts.config?.targetRepo.path ?? (opts.config ? cloneDir : null);
+    if (base) {
+      worktreesDir = join(base, ".claude", "worktrees");
+      worktreesToRemove = (await list(worktreesDir))
+        .filter((n) => n.startsWith(`${ticket}-`))
+        .filter((n) => role === "all" || (role === "research") === n.endsWith("-ground"))
+        .map((n) => join(worktreesDir!, n));
+    }
   }
 
   return {
-    ticketKey,
-    pipelineDir,
-    runsLogPath: runsLogExists ? runsLogPath : null,
-    runsLogArchivePath,
-    runsLogLinesToRemove: linesToRemove,
-    runDirsToRemove: runDirNames.map((name) => join(pipelineRunsDir, name)),
-    rawUsageFilesToRemove: rawUsageNames.map((name) => join(pipelineRawUsageDir, name)),
+    project: opts.project,
+    ticketKey: ticket,
+    role,
+    wholeProject: ticket === null,
+    root,
+    runsLogPath,
+    runsLogExists: lines !== null,
+    runsLogArchivePath: at(v2RunsArchive(opts.project)),
+    recordsToArchive,
+    runDirsToRemove,
+    sessionLeftoversToRemove,
     worktreesToRemove,
-    wholeProject: false,
+    worktreesDir,
+    liveLocks,
   };
 }
 
-export interface ResetSummary {
-  runsLogLinesRemoved: number;
-  /** Always equal to runsLogLinesRemoved -- kept as its own field so a caller can assert archiving actually happened, not just that lines were removed. */
-  runsLogLinesArchived: number;
-  archivePath: string;
-  runDirsDeleted: string[];
-  rawUsageFilesDeleted: string[];
-  worktreesDeleted: string[];
-  wholeProjectLogDeleted: boolean;
-  pipelineDirDeleted: boolean;
+function assertUnder(path: string, base: string, what: string): void {
+  if (!resolve(path).startsWith(resolve(base) + sep)) {
+    throw new UnsafePathError(`refusing to delete ${JSON.stringify(path)}: ${what} outside ${base}`);
+  }
 }
 
 /**
- * Apply a ResetPlan for real: archive removed runs.jsonl lines (never
- * delete them outright -- see runsLogArchivePath's own doc comment),
- * rewrite/delete the live log accordingly, delete every run dir /
- * raw-usage file / worktree the plan named. Deletions happen in an order
- * that leaves the plan's own paths orphaned rather than half-consistent
- * if interrupted mid-way (runs.jsonl last, since it's the most reversible
- * edit -- rewriting it wrong is a text fix; a deleted directory is gone).
- * Archiving happens before the live log is ever rewritten or deleted, so
- * an interruption between the two leaves (at worst) a harmless duplicate
- * in the append-only archive, never a lost line.
+ * Apply a plan. Every path is checked first (nothing is deleted if one is
+ * outside the plan's v2 roots). Dirs go first, the log last; archived lines
+ * are appended before the live log is rewritten (temp file + rename), so an
+ * interruption can at worst leave a duplicate in the archive.
  */
 export async function executeReset(plan: ResetPlan): Promise<ResetSummary> {
-  for (const dir of plan.runDirsToRemove) {
-    await rm(dir, { recursive: true, force: true });
+  const projectDir = resolve(plan.root, v2ProjectDir(plan.project));
+  const sessionsDir = resolve(plan.root, v2SessionsDir(plan.project));
+  for (const d of plan.runDirsToRemove) assertUnder(d, projectDir, "run dir");
+  for (const f of plan.sessionLeftoversToRemove) assertUnder(f, sessionsDir, "session leftover");
+  for (const w of plan.worktreesToRemove) {
+    if (!plan.worktreesDir) throw new UnsafePathError(`refusing to delete ${JSON.stringify(w)}: no worktrees dir in the plan`);
+    assertUnder(w, plan.worktreesDir, "worktree");
   }
-  for (const file of plan.rawUsageFilesToRemove) {
-    await rm(file, { force: true });
+  if (plan.runsLogPath !== resolve(plan.root, v2RunsLog(plan.project)) || plan.runsLogArchivePath !== resolve(plan.root, v2RunsArchive(plan.project))) {
+    throw new UnsafePathError("refusing to rewrite a runs log outside the plan's v2 roots");
   }
-  for (const dir of plan.worktreesToRemove) {
-    await rm(dir, { recursive: true, force: true });
-  }
+
+  for (const d of plan.runDirsToRemove) await rm(d, { recursive: true, force: true });
+  for (const f of plan.sessionLeftoversToRemove) await rm(f, { force: true });
+  for (const w of plan.worktreesToRemove) await rm(w, { recursive: true, force: true });
 
   const summary: ResetSummary = {
-    runsLogLinesRemoved: 0,
-    runsLogLinesArchived: 0,
+    recordsArchived: 0,
     archivePath: plan.runsLogArchivePath,
+    runsLogDeleted: false,
     runDirsDeleted: plan.runDirsToRemove,
-    rawUsageFilesDeleted: plan.rawUsageFilesToRemove,
+    sessionLeftoversDeleted: plan.sessionLeftoversToRemove,
     worktreesDeleted: plan.worktreesToRemove,
-    wholeProjectLogDeleted: false,
-    pipelineDirDeleted: false,
   };
 
-  if (plan.wholeProject) {
-    if (plan.runsLogPath) {
-      const raw = await readFile(plan.runsLogPath, "utf8");
-      const lines = raw.split("\n").filter((line) => line.trim().length > 0);
-      if (lines.length > 0) {
-        await appendFile(plan.runsLogArchivePath, `${lines.join("\n")}\n`, "utf8");
-      }
-      summary.runsLogLinesRemoved = lines.length;
-      summary.runsLogLinesArchived = lines.length;
-      await rm(plan.runsLogPath, { force: true });
-      summary.wholeProjectLogDeleted = true;
-    }
-    await rm(plan.pipelineDir, { recursive: true, force: true });
-    summary.pipelineDirDeleted = true;
-    return summary;
+  const lines = plan.runsLogExists ? await readLines(plan.runsLogPath) : null;
+  if (lines === null) return summary;
+  const archived = lines.filter((l) => lineMatches(l, plan.ticketKey, plan.role));
+  const kept = lines.filter((l) => !lineMatches(l, plan.ticketKey, plan.role));
+  if (archived.length === 0) return summary;
+  await appendFile(plan.runsLogArchivePath, `${archived.join("\n")}\n`, "utf8");
+  summary.recordsArchived = archived.length;
+  if (plan.wholeProject && kept.length === 0) {
+    await rm(plan.runsLogPath, { force: true });
+    summary.runsLogDeleted = true;
+  } else {
+    const tmp = `${plan.runsLogPath}.tmp-${process.pid}`;
+    await writeFile(tmp, kept.length > 0 ? `${kept.join("\n")}\n` : "", "utf8");
+    await rename(tmp, plan.runsLogPath);
   }
-
-  if (plan.runsLogPath && plan.runsLogLinesToRemove > 0 && plan.ticketKey) {
-    const raw = await readFile(plan.runsLogPath, "utf8");
-    const ticketField = `"ticket":"${plan.ticketKey}"`;
-    const allLines = raw.split("\n").filter((line) => line.trim().length > 0);
-    const removed = allLines.filter((line) => line.includes(ticketField));
-    const kept = allLines.filter((line) => !line.includes(ticketField));
-
-    if (removed.length > 0) {
-      await appendFile(plan.runsLogArchivePath, `${removed.join("\n")}\n`, "utf8");
-    }
-    const rewritten = kept.length > 0 ? `${kept.join("\n")}\n` : "";
-    await writeFile(plan.runsLogPath, rewritten, "utf8");
-
-    summary.runsLogLinesRemoved = removed.length;
-    summary.runsLogLinesArchived = removed.length;
-  }
-
   return summary;
 }
 
-/**
- * Human-readable summary of a ResetPlan, for --dry-run output and for
- * confirming what a real run is about to do before it does it.
- */
+/** Human-readable plan, for --dry-run and before a real run. */
 export function describeResetPlan(plan: ResetPlan): string {
-  if (plan.wholeProject) {
-    const lines = [
-      plan.runsLogPath
-        ? `- delete runs.jsonl entirely (${shortenPath(plan.runsLogPath)})`
-        : "- runs.jsonl: nothing to delete (file doesn't exist)",
-      "- delete .pipeline/<slug>/ entirely (all runs, all raw-usage, every ticket)",
-    ];
-    return lines.join("\n");
-  }
-
   const lines: string[] = [];
+  lines.push(`- scope: ${plan.wholeProject ? "WHOLE PROJECT" : `ticket ${plan.ticketKey}`}, role: ${plan.role}`);
   lines.push(
-    plan.runsLogLinesToRemove > 0
-      ? `- remove ${plan.runsLogLinesToRemove} line(s) from ${shortenPath(plan.runsLogPath ?? "")}`
-      : "- runs.jsonl: no matching lines for this ticket",
+    plan.recordsToArchive > 0
+      ? `- archive ${plan.recordsToArchive} record(s) from ${shortenPath(plan.runsLogPath)} to ${shortenPath(plan.runsLogArchivePath)}`
+      : `- ${shortenPath(plan.runsLogPath)}: no matching records${plan.runsLogExists ? "" : " (file doesn't exist)"}`,
   );
   lines.push(
     plan.runDirsToRemove.length > 0
       ? `- delete ${plan.runDirsToRemove.length} run dir(s): ${plan.runDirsToRemove.map(shortenPath).join(", ")}`
-      : "- .pipeline/<slug>/runs/: no matching run dirs",
+      : "- .pipeline/v2/<project>/<session>/<ticket>/: no matching run dirs",
   );
-  lines.push(
-    plan.rawUsageFilesToRemove.length > 0
-      ? `- delete ${plan.rawUsageFilesToRemove.length} raw-usage file(s): ${plan.rawUsageFilesToRemove.map(shortenPath).join(", ")}`
-      : "- .pipeline/<slug>/raw-usage/: no matching files",
-  );
-  lines.push(
-    plan.worktreesToRemove.length > 0
-      ? `- delete ${plan.worktreesToRemove.length} worktree(s): ${plan.worktreesToRemove.map(shortenPath).join(", ")}`
-      : "- targetRepo.path worktrees: none matching (or targetRepo.path unset)",
-  );
+  if (plan.wholeProject) {
+    lines.push(
+      plan.sessionLeftoversToRemove.length > 0
+        ? `- prune ${plan.sessionLeftoversToRemove.length} session leftover(s): ${plan.sessionLeftoversToRemove.map(shortenPath).join(", ")}`
+        : `- sessions/: no leftovers to prune${plan.role === "all" ? "" : " (only pruned with --role all)"}`,
+    );
+  } else {
+    lines.push(
+      plan.worktreesToRemove.length > 0
+        ? `- delete ${plan.worktreesToRemove.length} worktree(s): ${plan.worktreesToRemove.map(shortenPath).join(", ")}`
+        : "- worktrees: none matching (or no config to find them)",
+    );
+  }
+  if (plan.liveLocks.length > 0) {
+    lines.push(
+      `- WARNING: session lock(s) present, a worker may be running: ${plan.liveLocks.map(shortenPath).join(", ")}. Stop it first; reset does not.`,
+    );
+  }
+  lines.push("- v1 history (runs/v1/, .pipeline/v1/, runs/<slug>.jsonl, .pipeline/<slug>/, research-loop/) is never touched");
   return lines.join("\n");
 }
 
-/**
- * Human-readable rendering of a ResetSummary -- what actually happened,
- * printed by reset-cli.ts after a real (non-dry-run) run. Distinct from
- * describeResetPlan, which describes what *would* happen.
- */
+/** Human-readable summary of what a real run did. */
 export function describeResetSummary(summary: ResetSummary): string {
   const lines: string[] = [];
-
-  if (summary.wholeProjectLogDeleted || summary.pipelineDirDeleted) {
-    lines.push(
-      summary.wholeProjectLogDeleted
-        ? `- runs.jsonl deleted (${summary.runsLogLinesRemoved} line(s) archived to ${shortenPath(summary.archivePath)})`
-        : "- runs.jsonl: nothing to delete",
-    );
-    lines.push(
-      summary.pipelineDirDeleted
-        ? "- .pipeline/<slug>/ deleted"
-        : "- .pipeline/<slug>/: nothing to delete",
-    );
-    return lines.join("\n");
-  }
-
   lines.push(
-    summary.runsLogLinesRemoved > 0
-      ? `- ${summary.runsLogLinesRemoved} line(s) removed from runs.jsonl, archived to ${shortenPath(summary.archivePath)}`
-      : "- runs.jsonl: no lines removed",
+    summary.recordsArchived > 0
+      ? `- ${summary.recordsArchived} record(s) archived to ${shortenPath(summary.archivePath)}${summary.runsLogDeleted ? " (live log deleted, now empty)" : ""}`
+      : "- no records archived",
   );
   lines.push(
     summary.runDirsDeleted.length > 0
       ? `- ${summary.runDirsDeleted.length} run dir(s) deleted: ${summary.runDirsDeleted.map(shortenPath).join(", ")}`
       : "- no run dirs deleted",
   );
-  lines.push(
-    summary.rawUsageFilesDeleted.length > 0
-      ? `- ${summary.rawUsageFilesDeleted.length} raw-usage file(s) deleted: ${summary.rawUsageFilesDeleted.map(shortenPath).join(", ")}`
-      : "- no raw-usage files deleted",
-  );
+  if (summary.sessionLeftoversDeleted.length > 0) {
+    lines.push(`- ${summary.sessionLeftoversDeleted.length} session leftover(s) deleted`);
+  }
   lines.push(
     summary.worktreesDeleted.length > 0
       ? `- ${summary.worktreesDeleted.length} worktree(s) deleted: ${summary.worktreesDeleted.map(shortenPath).join(", ")}`

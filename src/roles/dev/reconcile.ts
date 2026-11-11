@@ -3,12 +3,16 @@
  * reacts to a GitHub PR merge event, and a merge routinely happens while
  * dev-loop is off, after which Jira's own merge automation moves the ticket
  * out of Code Review (e.g. to Development Complete). So this pass does not
- * look at Jira status at all: it works from runs.jsonl, taking every ticket
- * whose latest "landed" line is inside a recent window, and asks GitHub
+ * look at Jira status at all: it works from the landed logs of both
+ * generations (findLandedTicketsAcross: the v2 log, and the v1 dev log in
+ * either layout, v2 winning per ticket), taking every ticket whose latest
+ * landed run is inside a recent window, and asks GitHub
  * (`gh pr view --json state,mergedAt`) whether that PR merged. For each
  * merged one it comments on and closes the mirror GitHub Issue (state_reason
- * "completed", skipped if already closed) and removes the handoff label
- * (pipeline:dev) from the Jira ticket, leaving only the repo label. That is
+ * "completed", skipped if already closed; the comment ends with
+ * `— <session>`) and removes every pipeline label from the Jira ticket (the
+ * research trigger, the handoff, the dev trigger, and the v1
+ * pipeline:research / pipeline:dev), leaving only the repo label. That is
  * the only Jira write this pass makes: it never changes status or assignee,
  * and a failed label removal is swallowed (the worker cycle's dev landed
  * guard, src/worker/cycle-steps.ts, is the backstop). Called once per
@@ -17,8 +21,10 @@
 
 import type { JiraClient } from "../../core/jira-client.ts";
 import type { GitHubClient, ExecGhPrViewFn, ExecGhFindMergedPrFn } from "../../core/github-client.ts";
-import type { DevView } from "../../core/types.ts";
-import { readRunLog } from "../../core/runs-log.ts";
+import type { Config } from "../../core/types.ts";
+import { roleView } from "../../core/config.ts";
+import { findLandedTicketsAcross } from "../../core/iteration-log.ts";
+import { withSessionSuffixText } from "./code-review.ts";
 
 /** How far back a "landed" line still counts as a candidate. */
 const LANDED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
@@ -26,9 +32,14 @@ const LANDED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 export interface ReconcileDeps {
   jiraClient: JiraClient;
   githubClient: GitHubClient;
-  /** The dev role's settings; its triggerLabel is the stage label removed on merge. */
-  view: DevView;
-  runsLogPath: string;
+  /** The project config: its role labels are the ones removed on merge. */
+  config: Config;
+  /** The v2 project slug: which runs/v2/<slug>.jsonl and v1 dev log are read. */
+  slug: string;
+  /** The worker session name, appended to the close comment. */
+  session: string;
+  /** State root override for tests; defaults to the repo root. */
+  root?: string;
   execGhPrView: ExecGhPrViewFn;
   /**
    * Fallback for when the recorded PR was closed unmerged but the work landed
@@ -58,34 +69,14 @@ interface GhPrViewResult {
   mergedAt: string | null;
 }
 
-/** A ticket's most recent "landed" run: its PR and when the run ended. */
-export interface LandedTicket {
-  ticket: string;
-  pr: string;
-  ended: string;
-}
+/** The v1 role labels, removed too so a ticket labelled before the cutover ends up clean. */
+const V1_PIPELINE_LABELS = ["pipeline:research", "pipeline:dev"];
 
-/** Latest "landed" line with a PR per ticket key, in runs.jsonl order of first appearance. Missing/unreadable log -> []. */
-export async function findLandedTickets(runsLogPath: string): Promise<LandedTicket[]> {
-  let lines;
-  try {
-    lines = await readRunLog(runsLogPath);
-  } catch {
-    return [];
-  }
-  const latest = new Map<string, LandedTicket>();
-  for (const l of lines) {
-    if (l.outcome === "landed" && l.pr) {
-      latest.set(l.ticket, { ticket: l.ticket, pr: l.pr, ended: l.ended });
-    }
-  }
-  return [...latest.values()];
-}
-
-/** PR URL of the ticket's latest "landed" run, or null if it never landed. */
-export async function findLandedPrUrl(runsLogPath: string, ticketKey: string): Promise<string | null> {
-  const found = (await findLandedTickets(runsLogPath)).find((t) => t.ticket === ticketKey);
-  return found?.pr ?? null;
+/** Every pipeline label reconcile strips from a merged ticket, de-duplicated. */
+export function pipelineLabels(config: Config): string[] {
+  const research = roleView(config, "research");
+  const dev = roleView(config, "dev");
+  return [...new Set([research.triggerLabel, research.handoffLabel, dev.triggerLabel, ...V1_PIPELINE_LABELS])];
 }
 
 /**
@@ -93,16 +84,16 @@ export async function findLandedPrUrl(runsLogPath: string, ticketKey: string): P
  * closed Issue never looks like it was closed by a human with no context.
  * Kept to a fixed short template. mergedAt is rendered as "YYYY-MM-DD HH:MM UTC".
  */
-export function buildCloseComment(info: { prUrl: string; mergedAt: string; ticketKey: string }): string {
+export function buildCloseComment(info: { prUrl: string; mergedAt: string; ticketKey: string; session: string }): string {
   const merged = new Date(info.mergedAt).toISOString().slice(0, 16).replace("T", " ");
-  return [
+  return withSessionSuffixText([
     "**Closed automatically by dev-loop**",
     "",
     `PR: ${info.prUrl}`,
     `Merged: ${merged} UTC`,
     `Ticket: ${info.ticketKey}`,
     "Reason: PR merged, closed as completed",
-  ].join("\n");
+  ].join("\n"), info.session);
 }
 
 /**
@@ -113,7 +104,7 @@ export function buildCloseComment(info: { prUrl: string; mergedAt: string; ticke
 async function postCloseComment(
   githubClient: GitHubClient,
   issueNumber: number,
-  info: { prUrl: string; mergedAt: string; ticketKey: string },
+  info: { prUrl: string; mergedAt: string; ticketKey: string; session: string },
 ): Promise<void> {
   try {
     await githubClient.addComment(issueNumber, buildCloseComment(info));
@@ -123,11 +114,11 @@ async function postCloseComment(
 }
 
 export async function reconcileMergedTickets(deps: ReconcileDeps): Promise<ReconcileResult> {
-  const { jiraClient, githubClient, view, runsLogPath, execGhPrView } = deps;
+  const { jiraClient, githubClient, execGhPrView } = deps;
   const now = deps.now ?? new Date();
   const reconciled = deps.reconciled;
 
-  const candidates = (await findLandedTickets(runsLogPath)).filter(
+  const candidates = (await findLandedTicketsAcross(deps.slug, deps.root)).filter(
     (t) =>
       !reconciled?.has(t.ticket) &&
       now.getTime() - new Date(t.ended).getTime() <= LANDED_WINDOW_MS,
@@ -159,16 +150,20 @@ export async function reconcileMergedTickets(deps: ReconcileDeps): Promise<Recon
           prUrl: mergedPrUrl,
           mergedAt,
           ticketKey: ticket,
+          session: deps.session,
         });
         await githubClient.closeIssue(issue.number, "completed");
       }
 
       // Never blocks or fails the reconcile: the worker cycle's dev landed
       // guard keeps a ticket that still carries the label from being re-run.
-      try {
-        await jiraClient.removeLabel(ticket, view.triggerLabel);
-      } catch {
-        // Swallowed deliberately -- see above.
+      // removeLabel is a no-op for a label the ticket doesn't carry.
+      for (const label of pipelineLabels(deps.config)) {
+        try {
+          await jiraClient.removeLabel(ticket, label);
+        } catch {
+          // Swallowed deliberately -- see above.
+        }
       }
 
       reconciled?.add(ticket);

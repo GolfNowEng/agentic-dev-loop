@@ -2,10 +2,10 @@
 // iteration (runs/v2/<project>.jsonl), plus readers, counters and the
 // landed-PR lookups that span the v1 and v2 log generations.
 
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { redactSensitive } from "./redact.ts";
-import { resolveRepoPath, SESSION_ID, TICKET_KEY, v1RunsLog, v2RunsLog } from "./paths.ts";
+import { resolveRepoPath, SESSION_ID, TICKET_KEY, v1PreCutoverRunsLog, v1RunsLog, v2RunsLog } from "./paths.ts";
 import type { FailureCategory, PhaseReached, Role, RunOutcome, SizeTrajectory } from "./types.ts";
 
 export interface PhaseEntry {
@@ -203,29 +203,105 @@ async function v2Landed(slug: string, root?: string): Promise<Map<string, Landed
   return latest;
 }
 
-async function v1Landed(slug: string, root?: string): Promise<Map<string, LandedTicket>> {
-  const latest = new Map<string, LandedTicket>();
+/** Which v1 log a reader used: the post-cutover archive or the pre-cutover live log. */
+export interface V1LogLocation {
+  path: string;
+  layout: "post-cutover" | "pre-cutover";
+}
+
+/**
+ * The role's v1 log: runs/v1/<role>/<slug>.jsonl when it exists, else the
+ * pre-cutover live log (dev: runs/<slug>.jsonl, research:
+ * research-loop/runs/<slug>.jsonl), else null. Never both: once the
+ * post-cutover file exists it is the whole v1 history.
+ */
+export async function resolveV1RunsLog(role: Role, slug: string, root?: string): Promise<V1LogLocation | null> {
+  const candidates: Array<[string, V1LogLocation["layout"]]> = [
+    [abs(v1RunsLog(role, slug), root), "post-cutover"],
+    [abs(v1PreCutoverRunsLog(role, slug), root), "pre-cutover"],
+  ];
+  for (const [path, layout] of candidates) {
+    try {
+      await access(path);
+      return { path, layout };
+    } catch {
+      /* try the next layout */
+    }
+  }
+  return null;
+}
+
+interface V1Line {
+  ticket: string;
+  outcome: unknown;
+  pr: string | null;
+  ended: string;
+}
+
+/** Usable v1 lines of the role's resolved v1 log, in file order; bad lines skipped; no log -> []. */
+async function readV1(role: Role, slug: string, root?: string): Promise<V1Line[]> {
+  const loc = await resolveV1RunsLog(role, slug, root);
+  if (!loc) return [];
   let raw: string;
   try {
-    raw = await readFile(abs(v1RunsLog("dev", slug), root), "utf8");
+    raw = await readFile(loc.path, "utf8");
   } catch {
-    return latest;
+    return [];
   }
+  const out: V1Line[] = [];
   for (const line of raw.split("\n")) {
     if (line.trim() === "") continue;
     try {
       const l = JSON.parse(line) as { ticket?: unknown; outcome?: unknown; pr?: unknown; ended?: unknown };
-      if (l.outcome === "landed" && typeof l.pr === "string" && l.pr && typeof l.ticket === "string" && TICKET_KEY.test(l.ticket)) {
-        latest.set(l.ticket, { ticket: l.ticket, pr: l.pr, source: "v1", ended: typeof l.ended === "string" ? l.ended : "" });
-      }
+      if (typeof l.ticket !== "string" || !TICKET_KEY.test(l.ticket)) continue;
+      out.push({
+        ticket: l.ticket,
+        outcome: l.outcome,
+        pr: typeof l.pr === "string" && l.pr ? l.pr : null,
+        ended: typeof l.ended === "string" ? l.ended : "",
+      });
     } catch {
       /* skip bad line */
     }
   }
+  return out;
+}
+
+async function v1Landed(slug: string, root?: string): Promise<Map<string, LandedTicket>> {
+  const latest = new Map<string, LandedTicket>();
+  for (const l of await readV1("dev", slug, root)) {
+    if (l.outcome === "landed" && l.pr) latest.set(l.ticket, { ticket: l.ticket, pr: l.pr, source: "v1", ended: l.ended });
+  }
   return latest;
 }
 
-/** Latest landed dev PR for the ticket: v2 first, else the v1 dev log. */
+/** True if the role's v1 log (either layout) has a landed line for the ticket. */
+export async function hasLandedV1(role: Role, slug: string, ticketKey: string, root?: string): Promise<boolean> {
+  return (await readV1(role, slug, root)).some((l) => l.ticket === ticketKey && l.outcome === "landed");
+}
+
+/**
+ * The ticket's most recently recorded PR from a landed or bounced run (any
+ * PR it ever opened, for reset's --close-remote): the v2 log first (dev
+ * phases), else the v1 dev log. null if none.
+ */
+export async function findRecordedPrUrlAcross(slug: string, ticketKey: string, root?: string): Promise<string | null> {
+  let v2: string | null = null;
+  for (const r of await readIterations(abs(v2RunsLog(slug), root))) {
+    if (r.ticket !== ticketKey) continue;
+    for (const p of r.phases) {
+      if (p.role === "dev" && (p.outcome === "landed" || p.outcome === "bounced") && p.pr) v2 = p.pr;
+    }
+  }
+  if (v2) return v2;
+  let v1: string | null = null;
+  for (const l of await readV1("dev", slug, root)) {
+    if (l.ticket === ticketKey && (l.outcome === "landed" || l.outcome === "bounced") && l.pr) v1 = l.pr;
+  }
+  return v1;
+}
+
+/** Latest landed dev PR for the ticket: v2 first, else the v1 dev log (resolveV1RunsLog). */
 export async function findLandedPrUrlAcross(slug: string, ticketKey: string, root?: string): Promise<string | null> {
   return (await v2Landed(slug, root)).get(ticketKey)?.pr ?? (await v1Landed(slug, root)).get(ticketKey)?.pr ?? null;
 }

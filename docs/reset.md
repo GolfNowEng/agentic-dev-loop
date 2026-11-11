@@ -1,13 +1,69 @@
 # Resetting a ticket or project to a clean local state
 
-> Merged in dev-loop 2.0.0: one repo, two phases. `## Research phase` is the
-> former research-loop doc (`--phase research`); `## Dev phase` is the former
+## 2.0.0: v2 state, `--role` (current behavior)
+
+`npm run reset-project` (`src/core/reset-cli.ts` over
+`src/core/reset-project.ts`, wired up via
+`.claude/skills/reset-project/SKILL.md`) deterministically resets this
+repo's own **v2** pipeline state for one project, optionally one ticket,
+and optionally one role. Every path comes from `src/core/paths.ts`, under
+the repo root (or `--root <dir>`), independent of the cwd.
+
+```bash
+npm run reset-project -- --project webtarsthree --ticket TARS-1465 --dry-run           # role all
+npm run reset-project -- --project webtarsthree --ticket TARS-1465 --role research
+npm run reset-project -- --project webtarsthree --yes                                   # whole project
+npm run reset-project:remote -- --project webtarsthree --ticket TARS-1465 --close-remote --dry-run
+```
+
+**`--role research|dev|all`** (default `all`):
+
+| | `research` / `dev` | `all` |
+|---|---|---|
+| run dirs | `.pipeline/v2/<project>/<session>/<ticket>/<role>-<RUN_ID>/`, every session | both roles' |
+| `runs/v2/<project>.jsonl` | records with a phase of that role, or `resume: <role>` | every record for the ticket (whole project: every line, unreadable ones included) |
+| worktrees (`--ticket` only) | research: `<TICKET>-*-ground`; dev: the other `<TICKET>-*` | all `<TICKET>-*` |
+
+Archived records are appended to `runs/v2/<project>.reset-archive.jsonl`
+before the live log is rewritten (temp file + rename), or deleted when a
+whole-project reset empties it. Worktrees are found under
+`targetRepo.path` when set, else the v2 clone `.pipeline/v2/<project>/repo`.
+
+**Whole project, `--role all` only**: also prunes the session dir's
+leftovers in `.pipeline/v2/<project>/sessions/`: `*.lock.adopted-*`,
+`.acquire.stale-*`, `.acquire.reclaim-*`, `.acquire.release-*`, `.tmp-*`.
+It never removes a `*.lock`, a `*.lock.stale-*` (it may hold an in-flight
+record a worker has not adopted yet) or the `.acquire` mutex. A present
+`*.lock` is reported as a warning: stop the worker before resetting.
+
+**Never touched, in any mode:** all v1 history, in both layouts:
+`runs/v1/**`, `.pipeline/v1/**`, and the pre-cutover `runs/<slug>.jsonl`,
+`runs/<slug>.reset-archive.jsonl`, `.pipeline/<slug>/`,
+`research-loop/runs/`, `research-loop/.pipeline/`. Also the clone
+`.pipeline/v2/<project>/repo`, another project's state, Jira, GitHub, and
+git history. `executeReset` refuses a plan naming any path outside the
+project's v2 roots. Tests: `test/core/reset-project.test.ts` (both v1
+layouts, every role and scope) and `test/core/reset-cli.test.ts`.
+
+**`--close-remote`** (requires `--ticket`) is unchanged in what it closes
+(Jira ticket, mirror Issue, PR). The PR is the ticket's latest recorded
+landed/bounced dev PR from the v2 log, else the v1 dev log
+(`findRecordedPrUrlAcross`), read before any record is archived. The
+confirmation-first agent policy below still applies.
+
+The two sections below are the pre-2.0.0 documents (v1 layout, the cwd
+picking the role). Their rationale (why archive, why no whole-project
+worktree sweep, how `--close-remote` walks Jira transitions) still holds;
+their paths and "run it from `research-loop/`" instructions do not.
+
+> Merged in dev-loop 2.0.0: one repo, two phases. "Research phase" is the
+> former research-loop doc (`--phase research`); "Dev phase" is the former
 > dev-loop doc (`--phase dev`). Wording inside each section still describes its
 > repo as it was; "this repo" / "the sibling repo" there means that phase, and
 > paths like `src/types.ts` map to `src/core/` and `src/roles/<phase>/` now.
 > See `docs/migration-ledger.md`.
 
-## Research phase
+## Research phase (v1, pre-2.0.0)
 
 `npm run reset-project` (backed by `src/reset-project.ts`, wired up via
 `.claude/skills/reset-project/SKILL.md`) deterministically deletes this
@@ -197,7 +253,7 @@ separate, potentially-diverging "preview" logic path (see
 `src/reset-project.ts`'s and `src/remote-close.ts`'s own top-of-file
 comments). Always safe to run before the real thing.
 
-## Dev phase
+## Dev phase (v1, pre-2.0.0)
 
 `npm run reset-project` (backed by `src/core/reset-project.ts`, wired up via
 `.claude/skills/reset-project/SKILL.md`) deterministically deletes this
