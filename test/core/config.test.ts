@@ -16,7 +16,8 @@ import {
 import type { Config, Role } from "../../src/core/types.ts";
 import { makeV2Config } from "../fixtures/config.ts";
 import * as fs from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { V1_AUTO_PROMOTE_LABEL } from "../../src/roles/research/phase.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -569,5 +570,52 @@ describe("loadLoopConfig", () => {
 
   it("throws if the file does not exist", async () => {
     await expect(loadLoopConfig()).rejects.toThrow();
+  });
+});
+
+/**
+ * Skill/agent/hook prose is pipeline logic with no unit test of its own.
+ * These pin that it names only config keys the v2 loader accepts.
+ */
+describe(".claude/ prose references only v2 config keys", () => {
+  function files(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) return files(p);
+      return e.isFile() ? [p] : [];
+    });
+  }
+  const claudeFiles = files(path.join(REPO_ROOT, ".claude")).map((f) => ({
+    rel: path.relative(REPO_ROOT, f),
+    text: readFileSync(f, "utf8"),
+  }));
+
+  it("finds the skills, agents and hooks", () => {
+    const rels = claudeFiles.map((f) => f.rel);
+    expect(rels).toContain(path.join(".claude", "skills", "ticket-refine", "SKILL.md"));
+    expect(rels.some((r) => r.startsWith(path.join(".claude", "agents")))).toBe(true);
+    expect(rels.some((r) => r.startsWith(path.join(".claude", "hooks")))).toBe(true);
+  });
+
+  it("no .claude/ file mentions autoPromoteLabel (removed in 2.0.0, the loader rejects it)", () => {
+    expect(claudeFiles.filter((f) => f.text.includes("autoPromoteLabel")).map((f) => f.rel)).toEqual([]);
+  });
+
+  it("no .claude/ file names a v1 config key path that moved under roles.*", () => {
+    const v1Key =
+      /\bjira\.(triggerLabel|handoffLabel|pollJql|codeReviewFields)\b|\bceilings\.(maxCostPerRunUsd|runTimeoutMin)\b|(?<![.\w])(triggerLabel|handoffLabel|pollJql|codeReviewFields)(?=`)/;
+    const hits = claudeFiles.flatMap((f) =>
+      f.text
+        .split("\n")
+        .map((line, i) => ({ line, i }))
+        .filter(({ line }) => v1Key.test(line))
+        .map(({ line, i }) => `${f.rel}:${i + 1}: ${line.trim()}`),
+    );
+    expect(hits).toEqual([]);
+  });
+
+  it("ticket-refine keys its Needs-decision section on the runner's auto-promote ticket label", () => {
+    const skill = readFileSync(path.join(REPO_ROOT, ".claude/skills/ticket-refine/SKILL.md"), "utf8");
+    expect(skill).toContain(`carries the \`${V1_AUTO_PROMOTE_LABEL}\` label`);
   });
 });

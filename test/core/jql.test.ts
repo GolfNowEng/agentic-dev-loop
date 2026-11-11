@@ -37,12 +37,23 @@ describe("buildPollJql", () => {
   });
 
   it.each(['abc" OR project = X', "abc\\", "abc\nd", "", "a b"])(
-    "throws on an assignee account id outside [A-Za-z0-9:_-]+ (%j)",
+    "throws on an assignee account id outside [A-Za-z0-9:_-]+ (%j) when the template uses {assignee}",
     (bad) => {
-      const view = roleView(makeV2Config(), "dev");
+      const view = roleView(
+        makeV2Config((c) => (c.roles.dev.pollJql = 'labels = "{label}" AND assignee = "{assignee}"')),
+        "dev",
+      );
       expect(() => buildPollJql(view, { assigneeAccountId: bad })).toThrow(/assignee/i);
     },
   );
+
+  it("does not validate the assignee when the template has no {assignee} (it is never interpolated)", () => {
+    const view = roleView(makeV2Config(), "research");
+    expect(view.pollJql).not.toContain("{assignee}");
+    expect(buildPollJql(view, { assigneeAccountId: "" })).toBe(
+      'labels = "pipeline:v2.0.0" AND labels = "repo:org-repo" AND status = "To Do" ORDER BY created ASC',
+    );
+  });
 
   it("does not re-expand a placeholder that appears inside a substituted value", () => {
     const view = roleView(makeV2Config((c) => (c.jira.repoLabel = "repo:{label}")), "research");
