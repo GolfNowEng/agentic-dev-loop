@@ -152,12 +152,15 @@ export function redactSecrets(text: string): string {
     result = result.split(value).join("REDACTED_SECRET");
   }
 
-  const isRedactableValue = (value: string): boolean => {
-    if (value === "true" || value === "false") return false;
-    if (/^-?\d+(\.\d+)?$/.test(value)) return false;
-    if (value.length < MIN_PATTERN_VALUE_LENGTH) return false;
-    return true;
-  };
+  // The true/false/number skip applies to UNQUOTED values only (a JSON
+  // boolean/number literal, or `FLAG=true`): a quoted string under a
+  // secret-shaped name is a secret even when it is all digits (a numeric
+  // PIN or password). This is research-loop's rule; dev-loop's original
+  // also skipped quoted digit strings, which leaked them.
+  const isLiteralNonSecret = (value: string): boolean =>
+    value === "true" || value === "false" || /^-?\d+(\.\d+)?$/.test(value);
+  const isRedactableValue = (value: string): boolean =>
+    value.length >= MIN_PATTERN_VALUE_LENGTH;
 
   const redactQuoted = (
     match: string,
@@ -178,6 +181,7 @@ export function redactSecrets(text: string): string {
     value: string,
   ): string => {
     if (!isSecretShapedName(name)) return match;
+    if (isLiteralNonSecret(value)) return match;
     if (!isRedactableValue(value)) return match;
     if (URL_SHAPED_VALUE.test(value)) return match;
     return `${prefix}REDACTED_SECRET`;
