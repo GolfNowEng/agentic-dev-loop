@@ -1,0 +1,76 @@
+{
+  "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+  "id": "10501",
+  "self": "https://example.atlassian.net/rest/api/3/issue/10501",
+  "key": "TARS-5",
+  "fields": {
+    "issuelinks": [
+      {
+        "id": "20001",
+        "self": "https://example.atlassian.net/rest/api/3/issueLink/20001",
+        "type": {
+          "id": "10000",
+          "name": "Blocks",
+          "inward": "is blocked by",
+          "outward": "blocks",
+          "self": "https://example.atlassian.net/rest/api/3/issueLinkType/10000"
+        },
+        "inwardIssue": {
+          "id": "10401",
+          "key": "TARS-1",
+          "self": "https://example.atlassian.net/rest/api/3/issue/10401",
+          "fields": {
+            "summary": "Add the venue lookup endpoint",
+            "status": { "name": "Code Review", "statusCategory": { "key": "indeterminate" } },
+            "priority": { "name": "Medium" },
+            "issuetype": { "name": "Story" }
+          }
+        }
+      },
+      {
+        "id": "20002",
+        "self": "https://example.atlassian.net/rest/api/3/issueLink/20002",
+        "type": {
+          "id": "10000",
+          "name": "Blocks",
+          "inward": "is blocked by",
+          "outward": "blocks",
+          "self": "https://example.atlassian.net/rest/api/3/issueLinkType/10000"
+        },
+        "outwardIssue": {
+          "id": "10601",
+          "key": "TARS-7",
+          "self": "https://example.atlassian.net/rest/api/3/issue/10601",
+          "fields": {
+            "summary": "Show venue details on the page",
+            "status": { "name": "To Do", "statusCategory": { "key": "new" } },
+            "priority": { "name": "Medium" },
+            "issuetype": { "name": "Story" }
+          }
+        }
+      },
+      {
+        "id": "20003",
+        "self": "https://example.atlassian.net/rest/api/3/issueLink/20003",
+        "type": {
+          "id": "10003",
+          "name": "Relates",
+          "inward": "relates to",
+          "outward": "relates to",
+          "self": "https://example.atlassian.net/rest/api/3/issueLinkType/10003"
+        },
+        "inwardIssue": {
+          "id": "10402",
+          "key": "TARS-3",
+          "self": "https://example.atlassian.net/rest/api/3/issue/10402",
+          "fields": {
+            "summary": "Venue data model notes",
+            "status": { "name": "Done", "statusCategory": { "key": "done" } },
+            "priority": { "name": "Low" },
+            "issuetype": { "name": "Task" }
+          }
+        }
+      }
+    ]
+  }
+}

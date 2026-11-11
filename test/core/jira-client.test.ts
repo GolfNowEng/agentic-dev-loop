@@ -8,6 +8,12 @@ import {
 } from "../../src/core/jira-client.ts";
 import type { Config } from "../../src/core/types.ts";
 import { makeV2Config } from "../fixtures/config.ts";
+import { readFileSync } from "node:fs";
+
+const ISSUELINKS_FIXTURE = readFileSync(
+  new URL("../fixtures/jira-issuelinks.json", import.meta.url),
+  "utf8",
+);
 
 function makeConfig(): Config {
   return makeV2Config((c) => {
@@ -741,6 +747,70 @@ describe("RealJiraClient.pollAllMatching", () => {
   });
 });
 
+describe("RealJiraClient.getBlockedBy", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("parses a recorded issuelinks fixture: keeps only inward 'is blocked by' links", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(ISSUELINKS_FIXTURE, { status: 200 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const keys = await client.getBlockedBy("TARS-5");
+
+    expect(keys).toEqual(["TARS-1"]);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://example.atlassian.net/rest/api/3/issue/TARS-5?fields=issuelinks");
+    expect(init.method ?? "GET").toBe("GET");
+  });
+
+  it("drops a linked key that fails the ticket-key regex", async () => {
+    const body = {
+      fields: {
+        issuelinks: [
+          { type: { name: "Blocks", inward: "is blocked by", outward: "blocks" }, inwardIssue: { key: "TARS-2" } },
+          { type: { name: "Blocks", inward: "is blocked by", outward: "blocks" }, inwardIssue: { key: "../evil" } },
+          { type: { name: "Blocks", inward: "is blocked by", outward: "blocks" }, inwardIssue: {} },
+        ],
+      },
+    };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(body), { status: 200 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    expect(await client.getBlockedBy("TARS-5")).toEqual(["TARS-2"]);
+  });
+
+  it("returns [] when the issue has no issuelinks field", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ fields: {} }), { status: 200 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    expect(await client.getBlockedBy("TARS-5")).toEqual([]);
+  });
+
+  it("rejects an invalid ticket key before building any URL", async () => {
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    await expect(client.getBlockedBy("TARS-5/../x")).rejects.toThrow(/invalid ticket key/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("StubJiraClient.getBlockedBy", () => {
+  it("returns the configured blockers, [] for an unlisted key", async () => {
+    const client = new StubJiraClient({ blockedBy: { "TARS-5": ["TARS-1", "TARS-2"] } });
+
+    expect(await client.getBlockedBy("TARS-5")).toEqual(["TARS-1", "TARS-2"]);
+    expect(await client.getBlockedBy("TARS-6")).toEqual([]);
+  });
+});
+
 describe("StubJiraClient", () => {
   it("throws a not-configured error on every method", async () => {
     const client = new StubJiraClient();
@@ -754,6 +824,7 @@ describe("StubJiraClient", () => {
       ["assignTicket", () => client.assignTicket("PROJ-1", "acct")],
       ["addComment", () => client.addComment("PROJ-1", { type: "doc", version: 1, content: [] })],
       ["closeTicket", () => client.closeTicket("PROJ-1")],
+      ["getBlockedBy", () => client.getBlockedBy("PROJ-1")],
     ];
     for (const [name, call] of calls) {
       await expect(call(), name).rejects.toThrow(new RegExp(`${name}.*not configured`));
