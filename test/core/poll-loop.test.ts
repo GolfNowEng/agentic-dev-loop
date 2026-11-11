@@ -45,4 +45,27 @@ describe("decideNextAction", () => {
     expect(decideNextAction("paused", makeLoopConfig(), false)).toEqual({ kind: "exit" });
     expect(decideNextAction("paused", makeLoopConfig(), true)).toEqual({ kind: "exit" });
   });
+
+  it("claim-error: sleeps for pollIntervalSec, not continue -- a claim() that threw (e.g. a Jira transition screen's required field) is persistent, not a resolving race, so retrying immediately would hot-loop on the same broken ticket every iteration", () => {
+    const action = decideNextAction("claim-error", makeLoopConfig({ pollIntervalSec: 60 }), false);
+    expect(action).toEqual({ kind: "sleep", ms: 60_000 });
+  });
+
+  it("claim-error: exits when running once-only", () => {
+    const action = decideNextAction("claim-error", makeLoopConfig(), true);
+    expect(action).toEqual({ kind: "exit" });
+  });
+
+  // research-loop's v1 result vocabulary is an exact synonym of dev-loop's.
+  it.each([
+    ["empty-queue", "idle"],
+    ["processed", "ran"],
+    ["claim-raced", "skipped-race"],
+    ["paused-ceiling", "paused"],
+  ] as const)("research kind %s behaves exactly like dev kind %s", (research, dev) => {
+    const config = makeLoopConfig({ pollIntervalSec: 60, postRunDelaySec: 5 });
+    for (const once of [false, true]) {
+      expect(decideNextAction(research, config, once)).toEqual(decideNextAction(dev, config, once));
+    }
+  });
 });
