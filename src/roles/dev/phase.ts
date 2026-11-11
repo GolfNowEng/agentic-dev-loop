@@ -13,7 +13,7 @@ import { checkCeilings } from "../../core/ceilings.ts";
 import { appendRunLog } from "../../core/runs-log.ts";
 import { buildQaNotesAdf, buildBounceCommentAdf, buildCodeReviewFields } from "./code-review.ts";
 import { findLandedPrUrl } from "./reconcile.ts";
-import type { ExecGhPrViewFn } from "./reconcile.ts";
+import type { ExecGhPrViewFn } from "../../core/github-client.ts";
 
 /**
  * Injected stand-in for spawning "claude -p" headless with the skill.

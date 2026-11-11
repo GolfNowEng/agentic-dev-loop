@@ -557,6 +557,26 @@ cannot be read, the ticket is also skipped. This is the backstop for a
 failed label removal, or a merge reconcile has not seen yet. A landed PR
 closed without merging does not block a re-run.
 
+### Blocker gate (Jira "is blocked by" links)
+
+`src/core/blocker-gate.ts` holds the one rule. A ticket with Jira "is
+blocked by" links (`JiraClient.getBlockedBy`) is worked only when every
+blocker is **cleared**. A blocker is cleared when its PR has merged into the
+default branch of this project's own `github.repo`. Either the blocker's
+recorded landed PR has `mergedAt`, or `gh pr list --state merged` finds a PR
+into the default branch whose head branch or title contains the blocker key
+as a whole token (`TARS-1` never matches `TARS-12`). Anything else is not
+cleared: an open PR, a merge into another base, a blocker from another Jira
+project (gh is not called for it), or any error. A `gh` or Jira error is
+reported as `check failed`, so the gate fails closed. Cleared results are
+cached for the process lifetime, because a merge never reverts. Failures are
+never cached.
+
+A blocker that is Done with no PR, or that lives in another repo or project,
+gets the reason `blocker <K> has no merged PR in <repo> — needs a human`. The
+gate never clears it on its own. A human clears it by **removing the Jira
+link** (a manager's decision), and the ticket is picked up on the next poll.
+
 ### Appendix A (Jira wiring)
 
 Every Jira-specific value above starts as the literal placeholder string

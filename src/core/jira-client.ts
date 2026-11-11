@@ -9,6 +9,7 @@
 // so StubJiraClient throws on every call.
 
 import type { Config } from "./types.ts";
+import { TICKET_KEY } from "./paths.ts";
 
 /**
  * Minimal description of a Jira ticket as the loops need it. Kept narrow
@@ -121,6 +122,15 @@ export interface JiraClient {
    * visible rather than silent.
    */
   closeTicket(ticketKey: string): Promise<CloseTicketResult>;
+
+  /**
+   * Keys of the tickets this one "is blocked by": issue links whose
+   * `type.inward` is "is blocked by" and that carry an `inwardIssue`.
+   * Outward ("blocks") and other link types are ignored, and any linked key
+   * that fails TICKET_KEY is dropped. The blocker gate
+   * (src/core/blocker-gate.ts) is the only caller.
+   */
+  getBlockedBy(ticketKey: string): Promise<string[]>;
 }
 
 export type CloseTicketResult =
@@ -135,6 +145,16 @@ export type CloseTicketResult =
  * rather than silently doing nothing or hitting a real API.
  */
 export class StubJiraClient implements JiraClient {
+  private readonly blockedBy: Record<string, string[]> | undefined;
+
+  /**
+   * `opts.blockedBy` makes getBlockedBy answer from that map (unlisted key
+   * -> []) instead of throwing, for tests of the blocker gate.
+   */
+  constructor(opts: { blockedBy?: Record<string, string[]> } = {}) {
+    this.blockedBy = opts.blockedBy;
+  }
+
   private static notConfigured(method: string): Error {
     return new Error(
       `StubJiraClient.${method}: Jira instance is not configured. ` +
@@ -190,6 +210,11 @@ export class StubJiraClient implements JiraClient {
 
   async closeTicket(_ticketKey: string): Promise<CloseTicketResult> {
     throw StubJiraClient.notConfigured("closeTicket");
+  }
+
+  async getBlockedBy(ticketKey: string): Promise<string[]> {
+    if (!this.blockedBy) throw StubJiraClient.notConfigured("getBlockedBy");
+    return [...(this.blockedBy[ticketKey] ?? [])];
   }
 }
 
@@ -248,6 +273,16 @@ interface JiraSearchResponse {
       assignee: { accountId: string } | null;
     };
   }>;
+}
+
+interface JiraIssueLinksResponse {
+  fields?: {
+    issuelinks?: Array<{
+      type?: { name?: string; inward?: string; outward?: string };
+      inwardIssue?: { key?: unknown };
+      outwardIssue?: { key?: unknown };
+    }>;
+  };
 }
 
 interface JiraTransitionsResponse {
@@ -491,6 +526,21 @@ export class RealJiraClient implements JiraClient {
       hopNames.push(hop.to.name);
     }
     return { result: "no-transition" };
+  }
+
+  async getBlockedBy(ticketKey: string): Promise<string[]> {
+    if (!TICKET_KEY.test(ticketKey)) {
+      throw new Error(`RealJiraClient.getBlockedBy: invalid ticket key ${JSON.stringify(ticketKey)}`);
+    }
+    const response = await this.request(`/rest/api/3/issue/${ticketKey}?fields=issuelinks`);
+    const data = (await response.json()) as JiraIssueLinksResponse;
+    const keys: string[] = [];
+    for (const link of data.fields?.issuelinks ?? []) {
+      if (link.type?.inward !== "is blocked by" || !link.inwardIssue) continue;
+      const key = link.inwardIssue.key;
+      if (typeof key === "string" && TICKET_KEY.test(key)) keys.push(key);
+    }
+    return keys;
   }
 
   private async fetchTransitions(ticketKey: string): Promise<JiraTransitionsResponse> {

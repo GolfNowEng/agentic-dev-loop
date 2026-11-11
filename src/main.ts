@@ -43,7 +43,7 @@ import {
 import type { Config, DevView, LoopConfig, ResearchView, RoleLimits } from "./core/types.ts";
 import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./core/jira-client.ts";
 import type { JiraCredentials, JiraTicket } from "./core/jira-client.ts";
-import { RealGitHubClient, realExecGh } from "./core/github-client.ts";
+import { RealGitHubClient, realExecGh, realExecGhPrView, realExecGhFindMergedPr } from "./core/github-client.ts";
 import { countRunsToday } from "./core/runs-log.ts";
 import { snapshotRunDirs, findNewestRunDir } from "./core/run-dirs.ts";
 import { readVerdictFile, agentErrorVerdict } from "./core/verdict.ts";
@@ -54,7 +54,7 @@ import { legacyRunsRoot, legacyRawUsageDir, legacyRunsLog, legacyRunDirs } from 
 import { spawnClaudeRun, startProgressTail } from "./core/spawn-claude.ts";
 import { runLoopIteration as runDevIteration } from "./roles/dev/phase.ts";
 import type { RunSkillFn as DevRunSkillFn } from "./roles/dev/phase.ts";
-import { reconcileMergedTickets, realExecGhPrView, realExecGhFindMergedPr } from "./roles/dev/reconcile.ts";
+import { reconcileMergedTickets } from "./roles/dev/reconcile.ts";
 import { ALLOWED_TOOLS as DEV_ALLOWED_TOOLS } from "./roles/dev/tools.ts";
 import { devEarlySkillResult } from "./roles/dev/spawn-result.ts";
 import { runLoopIteration as runResearchIteration } from "./roles/research/phase.ts";

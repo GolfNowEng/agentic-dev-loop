@@ -16,15 +16,9 @@
  */
 
 import type { JiraClient } from "../../core/jira-client.ts";
-import type { GitHubClient } from "../../core/github-client.ts";
+import type { GitHubClient, ExecGhPrViewFn, ExecGhFindMergedPrFn } from "../../core/github-client.ts";
 import type { DevView } from "../../core/types.ts";
 import { readRunLog } from "../../core/runs-log.ts";
-
-/** Stand-in for `gh pr view <url> --json state,mergedAt`, returning its raw JSON stdout. Injected so tests never shell out for real. */
-export type ExecGhPrViewFn = (prUrl: string) => Promise<string>;
-
-/** Find a merged PR in the target repo that carries this ticket's work (matched by ticket key in head branch or title), or null. */
-export type ExecGhFindMergedPrFn = (ticketKey: string) => Promise<{ url: string; mergedAt: string } | null>;
 
 /** How far back a "landed" line still counts as a candidate. */
 const LANDED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
@@ -187,51 +181,4 @@ export async function reconcileMergedTickets(deps: ReconcileDeps): Promise<Recon
   }
 
   return result;
-}
-
-/**
- * Real ExecGhPrViewFn for production wiring: spawns
- * `gh pr view <url> --json state,mergedAt`, returning stdout.
- */
-export function realExecGhPrView(): ExecGhPrViewFn {
-  return async (prUrl: string): Promise<string> => {
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
-    try {
-      const { stdout } = await execFileAsync("gh", [
-        "pr",
-        "view",
-        prUrl,
-        "--json",
-        "state,mergedAt",
-      ]);
-      return stdout;
-    } catch (err) {
-      const stderr = (err as { stderr?: string })?.stderr;
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(stderr ? `${message}: ${stderr}` : message);
-    }
-  };
-}
-
-/**
- * Real ExecGhFindMergedPrFn: lists merged PRs in `repo` mentioning the ticket
- * key, keeping only those whose head branch or title contains it as a whole
- * token (so TARS-148 never matches TARS-1487). Latest merge wins.
- */
-export function realExecGhFindMergedPr(repo: string): ExecGhFindMergedPrFn {
-  return async (ticketKey: string) => {
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const { stdout } = await promisify(execFile)("gh", [
-      "pr", "list", "-R", repo, "--state", "merged", "--search", ticketKey,
-      "--json", "url,mergedAt,title,headRefName", "--limit", "20",
-    ]);
-    const token = new RegExp(`(^|[^A-Za-z0-9])${ticketKey}($|[^0-9])`);
-    const prs = (JSON.parse(stdout) as Array<{ url: string; mergedAt: string; title: string; headRefName: string }>)
-      .filter((p) => p.mergedAt && (token.test(p.headRefName) || token.test(p.title)))
-      .sort((a, b) => b.mergedAt.localeCompare(a.mergedAt));
-    return prs[0] ? { url: prs[0].url, mergedAt: prs[0].mergedAt } : null;
-  };
 }

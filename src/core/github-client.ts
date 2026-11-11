@@ -275,3 +275,78 @@ export function realExecGh(): ExecGhFn {
     }
   };
 }
+
+/** Stand-in for `gh pr view <url> --json state,mergedAt`, returning its raw JSON stdout. Injected so tests never shell out for real. */
+export type ExecGhPrViewFn = (prUrl: string) => Promise<string>;
+
+/** A merged PR found by ticket key. `baseRefName` is the branch it merged into. */
+export interface MergedPr {
+  url: string;
+  mergedAt: string;
+  baseRefName: string;
+}
+
+/**
+ * Find a merged PR in the target repo that carries this ticket's work
+ * (matched by ticket key as a whole token in head branch or title), or null.
+ * With `opts.baseRefName`, only PRs merged into that branch count.
+ */
+export type ExecGhFindMergedPrFn = (
+  ticketKey: string,
+  opts?: { baseRefName?: string },
+) => Promise<MergedPr | null>;
+
+/**
+ * True when `text` contains `ticketKey` as a whole token, so TARS-148 never
+ * matches TARS-1487 and TARS-1 never matches TARS-12.
+ */
+export function containsTicketToken(text: string, ticketKey: string): boolean {
+  return new RegExp(`(^|[^A-Za-z0-9])${ticketKey}($|[^0-9])`).test(text);
+}
+
+/**
+ * Real ExecGhPrViewFn for production wiring: runs
+ * `gh pr view <url> --json state,mergedAt`, returning stdout.
+ */
+export function realExecGhPrView(exec: ExecGhFn = realExecGh()): ExecGhPrViewFn {
+  return (prUrl: string) => exec(["pr", "view", prUrl, "--json", "state,mergedAt"]);
+}
+
+/**
+ * Real ExecGhFindMergedPrFn: lists merged PRs in `repo` mentioning the ticket
+ * key, keeping only those whose head branch or title contains it as a whole
+ * token (containsTicketToken), optionally only those merged into
+ * `opts.baseRefName`. Latest merge wins.
+ */
+export function realExecGhFindMergedPr(repo: string, exec: ExecGhFn = realExecGh()): ExecGhFindMergedPrFn {
+  return async (ticketKey, opts) => {
+    const stdout = await exec([
+      "pr", "list", "-R", repo, "--state", "merged", "--search", ticketKey,
+      "--json", "url,mergedAt,title,headRefName,baseRefName", "--limit", "20",
+    ]);
+    const base = opts?.baseRefName;
+    const prs = (JSON.parse(stdout) as Array<MergedPr & { title: string; headRefName: string }>)
+      .filter((p) => p.mergedAt && (containsTicketToken(p.headRefName, ticketKey) || containsTicketToken(p.title, ticketKey)))
+      .filter((p) => base === undefined || p.baseRefName === base)
+      .sort((a, b) => b.mergedAt.localeCompare(a.mergedAt));
+    const top = prs[0];
+    return top ? { url: top.url, mergedAt: top.mergedAt, baseRefName: top.baseRefName } : null;
+  };
+}
+
+/** `owner/name`, each part limited to GitHub's own name characters. */
+const REPO_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/**
+ * The repo's default branch, from
+ * `gh repo view <repo> --json defaultBranchRef --jq .defaultBranchRef.name`.
+ * `repo` is validated as owner/name before gh runs (execFile, no shell).
+ */
+export async function realDefaultBranch(repo: string, exec: ExecGhFn = realExecGh()): Promise<string> {
+  if (!REPO_SLUG.test(repo) || repo.startsWith("-")) {
+    throw new Error(`realDefaultBranch: invalid repo ${JSON.stringify(repo)} (expected owner/name)`);
+  }
+  const name = (await exec(["repo", "view", repo, "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"])).trim();
+  if (!name) throw new Error(`realDefaultBranch: gh returned no default branch for ${repo}`);
+  return name;
+}
