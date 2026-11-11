@@ -1,23 +1,17 @@
 /**
- * GitHub access boundary for dev-loop's first GitHub write capability.
- * Mirrors JiraClient's interface style (src/jira-client.ts) and
- * research-loop's own GitHubClient (src/github-client.ts in that repo) --
- * narrow, purpose-built methods, never a generic "call gh" passthrough.
+ * GitHub access boundary for the pipeline's GitHub-Issue mirror, shared by
+ * both roles. Mirrors JiraClient's interface style (src/core/jira-client.ts)
+ * -- narrow, purpose-built methods, never a generic "call gh" passthrough.
  * Shells out to the `gh` CLI (this pipeline family's established GitHub-
- * auth pattern -- see this repo's own PR-creation code in main.ts) rather
- * than a direct REST client, so this repo needs no second GitHub auth
- * scheme.
+ * auth pattern) rather than a direct REST client, so no second GitHub auth
+ * scheme is needed.
  *
- * Unlike research-loop's GitHubClient, this repo never creates the mirror
- * Issue -- research-loop already did, before handing a ticket off via the
- * pipeline:dev label swap -- so there is no createIssue here. addComment
- * and closeIssue are the two methods dev-loop actually needs: routing
- * bounce/landed detail to the mirror Issue (mirroring research-loop's own
- * Jira-brief/GitHub-full routing rule), and closing the Issue once a PR
- * merges. findIssueByJiraKey is ported unchanged from research-loop's own
- * implementation, since dev-loop has no other way to go from a Jira key
- * to an issue number -- no config field or Jira field ever records the
- * Issue number research-loop's createIssue returned.
+ * The union of both v1 clients: the research role creates the mirror Issue
+ * (createIssue, guarded by findIssueByJiraKey for idempotency); the dev
+ * role comments on it (addComment), closes it once a PR merges
+ * (closeIssue), and reset-project's --close-remote closes an open PR
+ * (closePr). Every method exists on both StubGitHubClient and
+ * RealGitHubClient; which ones a role calls is the role's business.
  */
 
 /** Minimal shape of a GitHub Issue as this pipeline needs it. */
@@ -35,10 +29,19 @@ export interface GitHubClient {
   /**
    * Find an existing mirror Issue for the given Jira ticket key, by
    * searching for an issue whose title starts with "<jiraKey>: " (the
-   * title convention research-loop's own createIssue already
-   * establishes). Returns null if none exists.
+   * title convention createIssue's callers follow). Returns null if none
+   * exists. Callers use this for idempotency: check before creating, to
+   * avoid a duplicate Issue from a poll-loop race.
    */
   findIssueByJiraKey(jiraKey: string): Promise<GitHubIssue | null>;
+
+  /**
+   * Create a new mirror Issue. Callers are responsible for calling
+   * findIssueByJiraKey first and skipping this call if one already
+   * exists -- this method itself does not check. A just-created Issue is
+   * always OPEN, so the returned state is "OPEN".
+   */
+  createIssue(params: { title: string; body: string; jiraKey: string }): Promise<GitHubIssue>;
 
   /**
    * Post a comment to the given issue number. Callers are responsible
@@ -92,6 +95,14 @@ const UNCONFIGURED_MESSAGE = (method: string): string =>
 export class StubGitHubClient implements GitHubClient {
   async findIssueByJiraKey(_jiraKey: string): Promise<GitHubIssue | null> {
     throw new Error(UNCONFIGURED_MESSAGE("findIssueByJiraKey"));
+  }
+
+  async createIssue(_params: {
+    title: string;
+    body: string;
+    jiraKey: string;
+  }): Promise<GitHubIssue> {
+    throw new Error(UNCONFIGURED_MESSAGE("createIssue"));
   }
 
   async addComment(_issueNumber: number, _body: string): Promise<void> {
@@ -174,6 +185,31 @@ export class RealGitHubClient implements GitHubClient {
     const first = entries[0];
     if (!first) return null;
     return { number: first.number, url: first.url, state: first.state };
+  }
+
+  async createIssue(params: {
+    title: string;
+    body: string;
+    jiraKey: string;
+  }): Promise<GitHubIssue> {
+    const stdout = await this.execFn([
+      "issue",
+      "create",
+      "--repo",
+      this.repo,
+      "--title",
+      params.title,
+      "--body",
+      params.body,
+    ]);
+    const url = stdout.trim();
+    const match = url.match(/\/issues\/(\d+)$/);
+    if (!match) {
+      throw new Error(
+        `RealGitHubClient.createIssue: could not parse an issue number from gh's own output: "${url}"`,
+      );
+    }
+    return { number: Number(match[1]), url, state: "OPEN" };
   }
 
   async addComment(issueNumber: number, body: string): Promise<void> {

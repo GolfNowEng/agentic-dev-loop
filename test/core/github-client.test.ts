@@ -5,8 +5,14 @@ describe("StubGitHubClient", () => {
   it("throws on every method until wired with a real config", async () => {
     const client = new StubGitHubClient();
     await expect(client.findIssueByJiraKey("PROJ-1")).rejects.toThrow(/not configured/);
+    await expect(
+      client.createIssue({ title: "PROJ-1: x", body: "y", jiraKey: "PROJ-1" }),
+    ).rejects.toThrow(/not configured/);
     await expect(client.addComment(42, "hello")).rejects.toThrow(/not configured/);
     await expect(client.closeIssue(42, "completed")).rejects.toThrow(/not configured/);
+    await expect(client.closePr("https://github.com/org/repo/pull/1")).rejects.toThrow(
+      /not configured/,
+    );
   });
 });
 
@@ -41,6 +47,54 @@ describe("RealGitHubClient", () => {
     const issue = await client.findIssueByJiraKey("PROJ-1");
 
     expect(issue).toBeNull();
+  });
+
+  it("createIssue passes title/body and repo to gh issue create, returns the parsed issue (always OPEN)", async () => {
+    const execFn = vi.fn(async (args: string[]) => {
+      if (args[0] === "issue" && args[1] === "create") {
+        return "https://github.com/org/repo/issues/43\n";
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    const issue = await client.createIssue({
+      title: "PROJ-1: fix the thing",
+      body: "## Overview\n...",
+      jiraKey: "PROJ-1",
+    });
+
+    expect(issue).toEqual({ number: 43, url: "https://github.com/org/repo/issues/43", state: "OPEN" });
+    expect(execFn).toHaveBeenCalledWith([
+      "issue",
+      "create",
+      "--repo",
+      "org/repo",
+      "--title",
+      "PROJ-1: fix the thing",
+      "--body",
+      "## Overview\n...",
+    ]);
+  });
+
+  it("createIssue throws a descriptive error when gh itself fails", async () => {
+    const execFn = vi.fn(async () => {
+      throw new Error("gh: authentication required");
+    });
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    await expect(
+      client.createIssue({ title: "PROJ-1: x", body: "y", jiraKey: "PROJ-1" }),
+    ).rejects.toThrow(/authentication required/);
+  });
+
+  it("createIssue throws when gh's output is not an issue URL", async () => {
+    const execFn = vi.fn(async () => "something unexpected\n");
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    await expect(
+      client.createIssue({ title: "PROJ-1: x", body: "y", jiraKey: "PROJ-1" }),
+    ).rejects.toThrow(/could not parse an issue number/);
   });
 
   it("addComment posts to the given issue number via gh issue comment", async () => {
@@ -110,6 +164,15 @@ describe("RealGitHubClient", () => {
     const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
 
     await expect(client.closeIssue(42, "completed")).resolves.toBeUndefined();
+  });
+
+  it("closeIssue rethrows a genuinely different gh failure", async () => {
+    const execFn = vi.fn(async () => {
+      throw new Error("gh: authentication required");
+    });
+    const client = new RealGitHubClient({ repo: "org/repo" }, execFn);
+
+    await expect(client.closeIssue(42, "completed")).rejects.toThrow(/authentication required/);
   });
 
   it("closePr closes the PR at the given URL via gh pr close, no number parsing", async () => {
