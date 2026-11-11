@@ -1,6 +1,6 @@
 # Resetting a ticket or project to a clean local state
 
-`npm run reset-project` (backed by `src/reset-project.ts`, wired up via
+`npm run reset-project` (backed by `src/core/reset-project.ts`, wired up via
 `.claude/skills/reset-project/SKILL.md`) deterministically deletes this
 repo's own local, gitignored pipeline state for one ticket or an entire
 project, so it can be run through the pipeline again from scratch.
@@ -15,7 +15,7 @@ bug is fixed, the ticket's local history (multiple `runs.jsonl` lines, a
 run directory per attempt, raw-usage files, sometimes a leftover worktree)
 is no longer representative of a real run and would confuse a genuine
 fresh test — `ticket-to-pr`'s own Phase 0 intake reads prior "landed" runs
-via `findLandedPrUrl` (see `src/reconcile.ts`), so stale history from a
+via `findLandedPrUrl` (see `src/roles/dev/reconcile.ts`), so stale history from a
 diagnostic session can produce misleading "already landed" bounces on a
 ticket you're trying to test fresh.
 
@@ -63,10 +63,10 @@ source, and nothing it deletes exists anywhere but this machine:
   by an exact `<TICKET>-` prefix match (never a broader glob), and a
   whole-project reset only ever touches `runs/<THIS-project>.jsonl` and
   `.pipeline/<THIS-project>/`, never a sibling project's directory. Covered
-  directly by `test/reset-project.test.ts`.
+  directly by `test/core/reset-project.test.ts`.
 
 Local reset and remote-closing are deliberately separate code paths
-(`src/reset-project.ts` vs. `src/remote-close.ts`) and separate flags
+(`src/core/reset-project.ts` vs. `src/core/remote-close.ts`) and separate flags
 (default vs. `--close-remote`) — keeping them apart means a local-only
 reset is always safe to run speculatively (e.g. from a shell script, or a
 future automated "prep for the next test run" step) without ever risking
@@ -77,12 +77,12 @@ at all.
 
 Opt-in, and requires `--ticket` (refused for a whole-project reset —
 closing every ticket a project ever touched is out of scope). Backed by
-`src/remote-close.ts`'s `planRemoteClose`/`executeRemoteClose`, a module
+`src/core/remote-close.ts`'s `planRemoteClose`/`executeRemoteClose`, a module
 kept entirely separate from `reset-project.ts` on purpose: local reset's
 tests use a temp filesystem and zero network; remote-close's tests inject
 mock `JiraClient`/`GitHubClient` and touch no filesystem beyond a single
 `runs.jsonl` read (to recover the ticket's PR URL via `findOpenPrUrl` in
-`src/reconcile.ts`, exported and widened this session to also scan
+`src/roles/dev/reconcile.ts`, exported and widened this session to also scan
 `bounced` lines with a PR attached — a reset should close any open PR for
 the ticket, not only one from a run that fully landed).
 
@@ -167,7 +167,7 @@ append-only, plain JSONL (no wrapping envelope, so it stays greppable and
 replayable) — *before* the live log is ever rewritten or deleted.
 Interrupting a reset between the archive-append and the live-log edit
 leaves, at worst, a harmless duplicate in the append-only archive, never
-a lost line. Neither `scripts/stats.mjs` nor `src/reconcile.ts` ever
+a lost line. Neither `scripts/stats.mjs` nor `src/roles/dev/reconcile.ts` ever
 reads the archive file — only the live `<project>.jsonl` — so archived
 history never affects stats or reconciliation; it exists purely as a
 human-facing safety net.
@@ -194,7 +194,7 @@ the wiped project need cleanup too.
 `--dry-run` prints the exact same plans `planReset()` (and, with
 `--close-remote`, `planRemoteClose()`) compute for the real run — never a
 separate, potentially-diverging "preview" logic path (see
-`src/reset-project.ts`'s and `src/remote-close.ts`'s own top-of-file
+`src/core/reset-project.ts`'s and `src/core/remote-close.ts`'s own top-of-file
 comments). Always safe to run before the real thing, including with
 `--close-remote` — the PR-URL lookup it performs is a local file read,
 never a network call.

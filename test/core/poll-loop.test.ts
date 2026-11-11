@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { decideNextAction } from "../src/poll-loop.ts";
-import type { LoopConfig } from "../src/types.ts";
+import { decideNextAction } from "../../src/core/poll-loop.ts";
+import type { LoopConfig } from "../../src/core/types.ts";
 
 function makeLoopConfig(overrides: Partial<LoopConfig> = {}): LoopConfig {
   return {

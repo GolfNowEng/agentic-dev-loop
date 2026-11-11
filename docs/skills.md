@@ -55,7 +55,7 @@ bounces with evidence instead of guessing.
 `ticket-to-pr` has no Jira-write tool of its own (see "Model policy" below,
 and `ALLOWED_TOOLS` in `src/main.ts`) — it only writes `verdict.detail`
 into `verdict.json`. The loop runner (`runLoopIteration` in
-`src/loop-runner.ts`) is what turns a genuine bounce (`verdict.pr === null`)
+`src/roles/dev/phase.ts`) is what turns a genuine bounce (`verdict.pr === null`)
 into a Jira comment, via `buildBounceCommentAdf()` + `JiraClient.addComment`,
 posted immediately before the existing Blocked transition. Before this
 existed, a bounce's only trace was the local `runs/<project>.jsonl` line —
@@ -84,7 +84,7 @@ server shutdown is never conditional.
 `.claude/agents/qa-agent.md` — a genuinely fresh-context subagent spawned
 during Verify. It sees only the ticket key, the path to `ticket-to-pr`'s
 already-created run worktree, and the dev-loop checkout path (to run
-`src/qa-browser.ts`; never echoed into PR/Jira) — never the implementer's reasoning — and
+`src/roles/dev/qa-browser.ts`; never echoed into PR/Jira) — never the implementer's reasoning — and
 checks, against the research-loop comment's AC/Scope (not the description):
 AC satisfaction, scope discipline (no files touched beyond what Scope
 names), regressions, test quality, and unrelated diff noise. Not
@@ -94,7 +94,7 @@ app and exercises the behavior directly — and if it does, stopping it is
 its own hard gate, independent of `ticket-to-pr`'s end-of-run Cleanup (it
 started it, it stops it).
 
-Browser checks go through one pinned helper, `src/qa-browser.ts` (Playwright
+Browser checks go through one pinned helper, `src/roles/dev/qa-browser.ts` (Playwright
 is a devDependency of dev-loop; a human runs `npm run setup-qa` once to fetch
 the matching Chromium). It is localhost-only, and the agent is forbidden from
 installing or downloading anything mid-run: if the browser is unavailable the
@@ -122,8 +122,8 @@ from whatever spawned it.
 ## verdict.json contract
 
 Every skill run writes `RUN_DIR/verdict.json` (schema in the SKILL.md file
-itself). The loop runner (`src/loop-runner.ts`) reads it via
-`parseVerdict()` in `src/verdict.ts` — a missing or malformed file becomes
+itself). The loop runner (`src/roles/dev/phase.ts`) reads it via
+`parseVerdict()` in `src/core/verdict.ts` — a missing or malformed file becomes
 `outcome: "error"`, `failure_category: "agent_error"`, never a crash. The
 loop runner derives the real `RunLogLine` (adding ticket/skill/timing
 metadata the skill doesn't need to self-report) from this verdict — it no

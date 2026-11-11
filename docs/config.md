@@ -3,7 +3,7 @@
 ## Selecting a project (CLI)
 
 `src/main.ts` requires `--project=<name>`, resolved via
-`resolveProjectConfigPath()` in `src/config.ts` to
+`resolveProjectConfigPath()` in `src/core/config.ts` to
 `pipeline.<name>.config.json` at the repo root:
 
 ```
@@ -35,7 +35,7 @@ concurrent loop instances" below, which this change does not solve.
 
 ## Shape
 
-`src/types.ts`'s `Config` interface is the source of truth for
+`src/core/types.ts`'s `Config` interface is the source of truth for
 `pipeline.<project>.config.json`'s shape:
 
 - `jira.triggerLabel` / `handoffLabel` — the two pipeline-stage labels a
@@ -64,7 +64,7 @@ concurrent loop instances" below, which this change does not solve.
   every `pipeline.<project>.config.json` sets it anyway for a uniform
   scheme across projects.
 - `jira.pollJql.{refine,dev}` — JQL templates with `{label}` and
-  `{repoLabel}` placeholders, filled in by `src/jql.ts`.
+  `{repoLabel}` placeholders, filled in by `src/core/jql.ts`.
 - `jira.statusNames.{bounced,prOpen}` — this Jira instance has no literal
   "bounced" status, so these map the loop's terminal outcomes onto whatever
   statuses actually exist in the *child ticket's* (Bug/Story/Task) workflow.
@@ -76,7 +76,7 @@ concurrent loop instances" below, which this change does not solve.
   instance's Code Review transition (`prOpen`) has a required screen that
   rejects an empty payload.
 - `ceilings.{maxRunsPerDay,maxCostPerRunUsd,runTimeoutMin}` — enforced by
-  `src/ceilings.ts`; a breach pauses the loop, it never silently continues.
+  `src/core/ceilings.ts`; a breach pauses the loop, it never silently continues.
 - `autoPromoteLabel` — the field research-loop's own config reads to decide
   whether to auto-swap a ticket straight to `handoffLabel` (`"pipeline:dev"`)
   without human approval, skipping the manual-review gate. This repo's own
@@ -96,7 +96,7 @@ concurrent loop instances" below, which this change does not solve.
   (`"owner/repo"` shorthand, passed straight to `gh --repo`). One target
   repo per project config, same granularity as `targetRepo`. Mirrors
   research-loop's own `Config.github.repo` — research-loop creates the
-  mirror Issue there; this repo's `GitHubClient` (`src/github-client.ts`)
+  mirror Issue there; this repo's `GitHubClient` (`src/core/github-client.ts`)
   reads and writes to the same repo once a ticket crosses to
   `pipeline:dev`.
 
@@ -139,7 +139,7 @@ full incident writeup and the tradeoff this fix resolves.
 
 **Landed-loop bug, fixed:** the same shape of bug, one status over. A
 landed PR transitions the ticket to `statusNames.prOpen` (e.g. "Code
-Review") per `loop-runner.ts`'s Phase-5 write, but nothing excluded that
+Review") per `src/roles/dev/phase.ts`'s Phase-5 write, but nothing excluded that
 status from `pollJql.dev` either, so a ticket kept re-matching the poll
 after its PR was already open — same label, same assignee, status now
 "Code Review" instead of "Blocked" but still `!= "Blocked"`. Each
@@ -154,7 +154,7 @@ state before the fix. See `CHANGELOG.md`'s entry for this fix.
 only helps once the ticket's real Jira status actually reaches
 `statusNames.prOpen`. If the original landed-verdict transition to Code
 Review itself silently fails (a transient API error, or a race with
-another write to the same ticket — both caught by `loop-runner.ts`'s own
+another write to the same ticket — both caught by `src/roles/dev/phase.ts`'s own
 try/catch, which logs the run but never re-attempts the transition), the
 ticket's real status stays wherever it was before (e.g. "In Progress"),
 which the `prOpen` exclusion does nothing for, and every subsequent poll
@@ -164,7 +164,7 @@ own changelog shows the ticket sitting at "In Progress" throughout),
 so even with the `pollJql.dev` fix above in place it re-ran and
 re-bounced 7+ times over 45 minutes, each bounce correctly reporting "PR
 already open, nothing to do" but never correcting Jira's own state.
-**Fix**: the bounced-with-existing-PR branch of `loop-runner.ts` now
+**Fix**: the bounced-with-existing-PR branch of `src/roles/dev/phase.ts` now
 checks the polled ticket's real status against `statusNames.prOpen` and,
 if they differ, performs the Code Review transition itself (self-heal)
 before posting its GitHub comment — using the same fields a normal
@@ -208,7 +208,7 @@ alone — this is "assign if unassigned," not "reassign to force ownership."
 The human's Jira account ID (`JIRA_ASSIGNEE_ACCOUNT_ID`) lives in `.env`, not
 `pipeline.<project>.config.json` — it's a per-machine/per-runner-identity
 setting like `JIRA_EMAIL`/`JIRA_API_TOKEN`, not per-project wiring. Read via
-`assigneeAccountIdFromEnv()` in `src/jira-client.ts`, same pattern as
+`assigneeAccountIdFromEnv()` in `src/core/jira-client.ts`, same pattern as
 `credentialsFromEnv()`. Find your own account ID via the Atlassian REST API
 (`GET /rest/api/3/myself`) or your Jira profile URL.
 
@@ -268,7 +268,7 @@ verdict only (never for research-loop, which has no PR to review):
   a rich-text field — Jira rejects a plain string for it ("Operation value
   must be an Atlassian Document"), confirmed against a real transition
   attempt — so it's set to a short Atlassian Document (ADF)
-  (`buildQaNotesAdf()` in `src/loop-runner.ts` — one paragraph per line,
+  (`buildQaNotesAdf()` in `src/roles/dev/code-review.ts` — one paragraph per line,
   built purely from the verdict's PR URL and verify-loop count), not from
   anything the skill writes — no `SKILL.md`/verdict.json contract change.
 
@@ -284,7 +284,7 @@ merge then moves the ticket out of Code Review (e.g. to Development Complete), s
 neither decision below looks at Jira status.
 
 **Reconcile.** At the top of every poll cycle (before `runLoopIteration`),
-`main.ts` runs `reconcileMergedTickets` (`src/reconcile.ts`). It takes every
+`main.ts` runs `reconcileMergedTickets` (`src/roles/dev/reconcile.ts`). It takes every
 ticket whose latest `"landed"` line in `runs/<slug>.jsonl` ended within the
 last 30 days (no Jira query), checks the real merge state via `gh pr view
 <url> --json state,mergedAt`, and for each merged PR:
@@ -315,7 +315,7 @@ closed without merging does not block a re-run.
 
 Every Jira-specific value above starts as the literal placeholder string
 `"___"` in a fresh `pipeline.<project>.config.json`. `findPlaceholders()` /
-`assertNoPlaceholders()` in `src/config.ts` detect leftover placeholders —
+`assertNoPlaceholders()` in `src/core/config.ts` detect leftover placeholders —
 `RealJiraClient` refuses to make a Jira call while any remain. Filling these
 in for a real project means: confirming the three pipeline label strings
 (`triggerLabel`, `handoffLabel`, `repoLabel`) and checking the *child
@@ -335,5 +335,5 @@ ticket* workflow for real status names.
 No code changes required. The project's **repo slug** — used to namespace
 `runs/<slug>.jsonl` and `.pipeline/<slug>/...` so multiple projects can
 coexist under one `dev-loop` checkout — is derived from `targetRepo.url` by
-`repoSlugFromUrl()` in `src/config.ts` (e.g. `"webtarsthree"` from
+`repoSlugFromUrl()` in `src/core/config.ts` (e.g. `"webtarsthree"` from
 `git@github.com:fandango/webtarsthree.git`), not a separate config field.

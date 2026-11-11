@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { appendRunLog, readRunLog, countRunsToday } from "../src/runs-log.ts";
-import type { RunLogLine } from "../src/types.ts";
+import { appendRunLog, readRunLog, countRunsToday } from "../../src/core/runs-log.ts";
+import type { RunLogLine } from "../../src/core/types.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

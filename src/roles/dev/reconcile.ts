@@ -15,10 +15,10 @@
  * loop, before runLoopIteration.
  */
 
-import type { JiraClient } from "./jira-client.ts";
-import type { GitHubClient } from "./github-client.ts";
-import type { Config } from "./types.ts";
-import { readRunLog } from "./runs-log.ts";
+import type { JiraClient } from "../../core/jira-client.ts";
+import type { GitHubClient } from "../../core/github-client.ts";
+import type { Config } from "../../core/types.ts";
+import { readRunLog } from "../../core/runs-log.ts";
 
 /** Stand-in for `gh pr view <url> --json state,mergedAt`, returning its raw JSON stdout. Injected so tests never shell out for real. */
 export type ExecGhPrViewFn = (prUrl: string) => Promise<string>;

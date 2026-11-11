@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { reconcileMergedTickets, findOpenPrUrl, findLandedPrUrl } from "../src/reconcile.ts";
-import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
-import type { GitHubClient } from "../src/github-client.ts";
-import type { Config, RunLogLine } from "../src/types.ts";
+import { reconcileMergedTickets, findOpenPrUrl, findLandedPrUrl } from "../../../src/roles/dev/reconcile.ts";
+import type { JiraClient, JiraTicket } from "../../../src/core/jira-client.ts";
+import type { GitHubClient } from "../../../src/core/github-client.ts";
+import type { Config, RunLogLine } from "../../../src/core/types.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

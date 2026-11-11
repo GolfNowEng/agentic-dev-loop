@@ -3,12 +3,12 @@
 ## runs/&lt;project&gt;.jsonl — audit trail
 
 Append-only, one JSON line per completed loop iteration, written by
-`appendRunLog()` in `src/runs-log.ts` — this module is the single writer;
+`appendRunLog()` in `src/core/runs-log.ts` — this module is the single writer;
 it never rewrites or truncates. Namespaced per project (via the repo slug,
 see `docs/config.md`) so multiple projects' history can coexist. Gitignored
 (`runs/`) — this is local run data, not tracked source.
 
-Schema: `RunLogLine` in `src/types.ts` — ticket, skill, skill_version,
+Schema: `RunLogLine` in `src/core/types.ts` — ticket, skill, skill_version,
 model, started/ended timestamps, outcome, phase_reached, red_confirmed,
 verify_loops, retries, failure_category, detail, pr, cost_usd, tokens.
 

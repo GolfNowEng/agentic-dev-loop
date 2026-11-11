@@ -11,8 +11,8 @@
     "check-auth": "node --env-file=.env scripts/check-jira-auth.mjs",
     "stats": "node scripts/stats.mjs",
     "loop": "node --env-file=.env src/main.ts",
-    "reset-project": "node src/reset-cli.ts",
-    "reset-project:remote": "node --env-file=.env src/reset-cli.ts",
+    "reset-project": "node src/core/reset-cli.ts",
+    "reset-project:remote": "node --env-file=.env src/core/reset-cli.ts",
     "setup-qa": "playwright install chromium"
   },
   "devDependencies": {

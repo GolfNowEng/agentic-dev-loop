@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { homedir } from "node:os";
-import { redactPII, redactSecrets, redactSensitive, containsSecret } from "../src/redact.ts";
+import { redactPII, redactSecrets, redactSensitive, containsSecret } from "../../src/core/redact.ts";
 
 describe("redactPII", () => {
   it("redacts a bare email address", () => {

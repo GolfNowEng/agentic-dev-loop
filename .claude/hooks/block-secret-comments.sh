@@ -29,7 +29,7 @@
 # command string when the pre-filter passes.
 #
 # Denies (exit 2) any gh pr create/edit call whose command string contains
-# a secret-shaped value (per src/redact.ts's containsSecret()) before it
+# a secret-shaped value (per src/core/redact.ts's containsSecret()) before it
 # ever reaches the real `gh` CLI / GitHub API.
 #
 # Contract with the checker (scripts/check-secret-in-tool-input.ts), by its
@@ -103,7 +103,7 @@ case "$EXIT_CODE" in
     exit 0
     ;;
   3)
-    echo "BLOCKED: this gh pr create/edit command contains a secret-shaped value (matched a known secret name/format pattern in src/redact.ts). Never write a raw env var value, .envrc/.env content, API key, token, or password into a PR title or body -- report presence/shape only (e.g. \"reads API_KEY from env\"), the same rule SKILL.md's PR body section already requires." >&2
+    echo "BLOCKED: this gh pr create/edit command contains a secret-shaped value (matched a known secret name/format pattern in src/core/redact.ts). Never write a raw env var value, .envrc/.env content, API key, token, or password into a PR title or body -- report presence/shape only (e.g. \"reads API_KEY from env\"), the same rule SKILL.md's PR body section already requires." >&2
     exit 2
     ;;
   *)

@@ -2,8 +2,8 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { planReset, executeReset, describeResetPlan, describeResetSummary } from "../src/reset-project.ts";
-import type { Config } from "../src/types.ts";
+import { planReset, executeReset, describeResetPlan, describeResetSummary } from "../../src/core/reset-project.ts";
+import type { Config } from "../../src/core/types.ts";
 
 function makeConfig(targetRepoPath?: string): Config {
   return {

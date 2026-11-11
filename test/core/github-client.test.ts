@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { RealGitHubClient, StubGitHubClient } from "../src/github-client.ts";
+import { RealGitHubClient, StubGitHubClient } from "../../src/core/github-client.ts";
 
 describe("StubGitHubClient", () => {
   it("throws on every method until wired with a real config", async () => {

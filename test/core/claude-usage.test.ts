@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractUsage } from "../src/claude-usage.ts";
+import { extractUsage } from "../../src/core/claude-usage.ts";
 
 describe("extractUsage", () => {
   it("extracts cost and combines input-token fields per the confirmed claude -p --output-format json shape", () => {

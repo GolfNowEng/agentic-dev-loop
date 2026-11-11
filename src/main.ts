@@ -22,18 +22,18 @@ import {
   repoSlugFromUrl,
   targetRepoAddDir,
   resolveProjectConfigPath,
-} from "./config.ts";
-import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./jira-client.ts";
-import { RealGitHubClient, realExecGh } from "./github-client.ts";
-import { runLoopIteration } from "./loop-runner.ts";
-import type { RunSkillFn } from "./loop-runner.ts";
-import { reconcileMergedTickets, realExecGhPrView, realExecGhFindMergedPr } from "./reconcile.ts";
-import { countRunsToday } from "./runs-log.ts";
-import { snapshotRunDirs, findNewestRunDir } from "./run-dirs.ts";
-import { extractUsage } from "./claude-usage.ts";
-import { readVerdictFile, agentErrorVerdict } from "./verdict.ts";
-import { redactSensitive } from "./redact.ts";
-import { decideNextAction } from "./poll-loop.ts";
+} from "./core/config.ts";
+import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./core/jira-client.ts";
+import { RealGitHubClient, realExecGh } from "./core/github-client.ts";
+import { runLoopIteration } from "./roles/dev/phase.ts";
+import type { RunSkillFn } from "./roles/dev/phase.ts";
+import { reconcileMergedTickets, realExecGhPrView, realExecGhFindMergedPr } from "./roles/dev/reconcile.ts";
+import { countRunsToday } from "./core/runs-log.ts";
+import { snapshotRunDirs, findNewestRunDir } from "./core/run-dirs.ts";
+import { extractUsage } from "./core/claude-usage.ts";
+import { readVerdictFile, agentErrorVerdict } from "./core/verdict.ts";
+import { redactSensitive } from "./core/redact.ts";
+import { decideNextAction } from "./core/poll-loop.ts";
 
 const SKILL_NAME = "ticket-to-pr";
 const MODEL = "sonnet";

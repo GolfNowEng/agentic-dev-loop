@@ -7,9 +7,9 @@ import {
   executeRemoteClose,
   describeRemoteClosePlan,
   describeRemoteCloseSummary,
-} from "../src/remote-close.ts";
-import type { JiraClient } from "../src/jira-client.ts";
-import type { GitHubClient } from "../src/github-client.ts";
+} from "../../src/core/remote-close.ts";
+import type { JiraClient } from "../../src/core/jira-client.ts";
+import type { GitHubClient } from "../../src/core/github-client.ts";
 
 function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
   return {

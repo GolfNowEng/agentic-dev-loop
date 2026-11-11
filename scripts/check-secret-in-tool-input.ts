@@ -25,7 +25,7 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { containsSecret } from "../src/redact.ts";
+import { containsSecret } from "../src/core/redact.ts";
 
 /**
  * Whole-word membership check -- matches the shell pre-filter's own

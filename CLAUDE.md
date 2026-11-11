@@ -27,7 +27,7 @@ skeptic**. Full design: see the pipeline spec referenced in `docs/config.md`.
 - Read `docs/skills.md` before editing `.claude/skills/ticket-to-pr/SKILL.md`
   or `.claude/agents/qa-agent.md` — those are the actual pipeline logic, not
   incidental files.
-- Read `docs/config.md` before touching `src/config.ts`, `src/types.ts`'s
+- Read `docs/config.md` before touching `src/core/config.ts`, `src/types.ts`'s
   `Config` shape, or any `pipeline.*.config.json` file.
 
 ## Docs map

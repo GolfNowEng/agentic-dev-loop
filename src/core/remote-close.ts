@@ -13,7 +13,7 @@
 
 import type { JiraClient } from "./jira-client.ts";
 import type { GitHubClient } from "./github-client.ts";
-import { findOpenPrUrl } from "./reconcile.ts";
+import { findOpenPrUrl } from "../roles/dev/reconcile.ts";
 
 export interface RemoteClosePlan {
   ticketKey: string;

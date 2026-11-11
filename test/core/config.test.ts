@@ -8,8 +8,8 @@ import {
   targetRepoAddDir,
   listAvailableProjects,
   resolveProjectConfigPath,
-} from "../src/config.ts";
-import type { Config } from "../src/types.ts";
+} from "../../src/core/config.ts";
+import type { Config } from "../../src/core/types.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";

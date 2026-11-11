@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { parseQaBrowserArgs, runQaBrowser, type BrowserLauncher } from "../src/qa-browser.ts";
+import { parseQaBrowserArgs, runQaBrowser, type BrowserLauncher } from "../../../src/roles/dev/qa-browser.ts";
 
 describe("parseQaBrowserArgs", () => {
   it("parses url and out with defaults", () => {

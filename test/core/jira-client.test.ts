@@ -4,8 +4,8 @@ import {
   credentialsFromEnv,
   assigneeAccountIdFromEnv,
   type JiraCredentials,
-} from "../src/jira-client.ts";
-import type { Config } from "../src/types.ts";
+} from "../../src/core/jira-client.ts";
+import type { Config } from "../../src/core/types.ts";
 
 function makeConfig(overrides: Partial<Config["jira"]> = {}): Config {
   return {

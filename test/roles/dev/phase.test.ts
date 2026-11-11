@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { runLoopIteration, buildQaNotesAdf, buildBounceCommentAdf } from "../src/loop-runner.ts";
-import type { RunSkillFn, LoopIterationDeps, LoopIterationResult } from "../src/loop-runner.ts";
-import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
-import type { GitHubClient } from "../src/github-client.ts";
-import type { Config, Verdict } from "../src/types.ts";
+import { runLoopIteration } from "../../../src/roles/dev/phase.ts";
+import { buildQaNotesAdf, buildBounceCommentAdf } from "../../../src/roles/dev/code-review.ts";import type { RunSkillFn, LoopIterationDeps, LoopIterationResult } from "../../../src/roles/dev/phase.ts";
+import type { JiraClient, JiraTicket } from "../../../src/core/jira-client.ts";
+import type { GitHubClient } from "../../../src/core/github-client.ts";
+import type { Config, Verdict } from "../../../src/core/types.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
