@@ -45,15 +45,17 @@ export class FakeJira extends StubJiraClient {
     this.polls.push(jql);
     this.events.push(["poll", jql]);
     if (this.pollError) throw this.pollError;
-    const m = /key not in \(([^)]*)\)/.exec(jql);
-    const excluded = new Set(
-      (m?.[1] ?? "")
-        .split(",")
-        .map((s) => s.replace(/"/g, "").trim())
-        .filter(Boolean),
-    );
+    const list_ = (re: RegExp) =>
+      new Set(
+        (re.exec(jql)?.[1] ?? "")
+          .split(",")
+          .map((s) => s.replace(/"/g, "").trim())
+          .filter(Boolean),
+      );
+    const excluded = list_(/key not in \(([^)]*)\)/);
+    const excludedIds = list_(/\bid not in \(([^)]*)\)/);
     const list = jql.includes(`"${DEV_LABEL}"`) ? this.dev : this.research;
-    return list.find((t) => !excluded.has(t.key)) ?? null;
+    return list.find((t) => !excluded.has(t.key) && !(t.id !== undefined && excludedIds.has(t.id))) ?? null;
   }
 
   async claimTicket(key: string, from: string, to: string): Promise<boolean> {
@@ -120,13 +122,22 @@ export interface FakeSession {
   release: ReturnType<typeof vi.fn>;
 }
 
-export function makeSession(name = "dev-1", inFlight: InFlight | null = null, orphaned: InFlight[] = []): FakeSession {
+export function makeSession(
+  name = "dev-1",
+  inFlight: InFlight | null = null,
+  orphaned: InFlight[] = [],
+  /** Make the n-th (1-based) setInFlight call throw, e.g. a lost lock. */
+  failOn?: (f: InFlight | null, n: number) => boolean,
+): FakeSession {
+  let n = 0;
   const s: FakeSession = {
     name,
     inFlight,
     orphanedInFlight: orphaned,
     current: inFlight,
     setInFlight: vi.fn(async (f: InFlight | null) => {
+      n++;
+      if (failOn?.(f, n)) throw new Error("session lock lost");
       s.current = f;
     }),
     release: vi.fn(async () => {}),
@@ -135,7 +146,8 @@ export function makeSession(name = "dev-1", inFlight: InFlight | null = null, or
 }
 
 export function ticket(key: string, o: Partial<JiraTicket> = {}): JiraTicket {
-  return { key, status: "To Do", assignee: "acc-1", labels: [RESEARCH_LABEL, "repo:org-repo"], ...o };
+  const id = String(10000 + Number(/(\d+)$/.exec(key)?.[1] ?? 0));
+  return { key, id, status: "To Do", assignee: "acc-1", labels: [RESEARCH_LABEL, "repo:org-repo"], ...o };
 }
 
 export function devTicket(key: string, o: Partial<JiraTicket> = {}): JiraTicket {

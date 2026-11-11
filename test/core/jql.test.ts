@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPollJql, excludeKeysFromJql } from "../../src/core/jql.ts";
+import { buildPollJql, excludeIdsFromJql, excludeKeysFromJql } from "../../src/core/jql.ts";
 import { roleView } from "../../src/core/config.ts";
 import { makeV2Config } from "../fixtures/config.ts";
 
@@ -92,5 +92,21 @@ describe("excludeKeysFromJql", () => {
 
   it("accepts keys with digits and underscores in the project part", () => {
     expect(excludeKeysFromJql('labels = "x"', ["MC2_X-10"])).toBe('labels = "x" AND key not in ("MC2_X-10")');
+  });
+});
+
+describe("excludeIdsFromJql", () => {
+  it("returns the jql unchanged when there are no ids", () => {
+    expect(excludeIdsFromJql('labels = "x"', [])).toBe('labels = "x"');
+  });
+
+  it("appends an id-not-in clause before ORDER BY", () => {
+    expect(excludeIdsFromJql('labels = "x" ORDER BY created ASC', ["10001", "42"])).toBe(
+      'labels = "x" AND id not in (10001,42) ORDER BY created ASC',
+    );
+  });
+
+  it.each(["10001) OR (1", "", "-1", "1.5", "0x1", "1\n"])("throws on a non-numeric id (%j), never interpolating it", (bad) => {
+    expect(() => excludeIdsFromJql('labels = "x"', ["1", bad])).toThrow(/issue id/i);
   });
 });

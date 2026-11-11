@@ -167,6 +167,14 @@ describe("acquireSession", () => {
     expect((await fs.readdir(dir)).filter((f) => f.includes(".tmp"))).toEqual([]);
   });
 
+  it("an interrupted flag on inFlight (set on SIGINT/SIGTERM mid-phase) survives the reclaim; a non-boolean one is rejected", async () => {
+    const first = await acquireSession(opts());
+    await first.setInFlight({ ...FLIGHT, interrupted: true });
+    const second = await acquireSession(opts({ pid: 1002, started: 1002 }));
+    expect(second.inFlight).toEqual({ ...FLIGHT, interrupted: true });
+    await expect(second.setInFlight({ ...FLIGHT, interrupted: "yes" as never })).rejects.toThrow();
+  });
+
   it("setInFlight rejects an invalid record", async () => {
     const s = await acquireSession(opts());
     await expect(s.setInFlight({ ...FLIGHT, ticket: "../x" })).rejects.toThrow();

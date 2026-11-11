@@ -81,6 +81,7 @@ describe("RealJiraClient", () => {
         JSON.stringify({
           issues: [
             {
+              id: "10042",
               key: "PROJ-1",
               fields: {
                 status: { name: "Backlog" },
@@ -99,6 +100,7 @@ describe("RealJiraClient", () => {
 
     expect(ticket).toEqual({
       key: "PROJ-1",
+      id: "10042",
       status: "Backlog",
       assignee: "user-123",
       labels: ["auto-promote"],
@@ -110,6 +112,18 @@ describe("RealJiraClient", () => {
       `Basic ${Buffer.from("bot@example.com:fake-token").toString("base64")}`,
     );
     expect(JSON.parse(init.body as string).fields).toEqual(["status", "labels", "assignee"]);
+  });
+
+  it("pollOldestMatching returns the issue id as a string (numeric ids too); absent id -> undefined", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ issues: [{ id: 777, key: "PROJ-1", fields: { status: { name: "x" }, assignee: null } }] }), { status: 200 }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ issues: [{ key: "PROJ-1", fields: { status: { name: "x" }, assignee: null } }] }), { status: 200 }),
+    );
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+    expect((await client.pollOldestMatching("x"))?.id).toBe("777");
+    expect((await client.pollOldestMatching("x"))?.id).toBeUndefined();
   });
 
   it("pollOldestMatching maps a missing labels field to an empty array", async () => {

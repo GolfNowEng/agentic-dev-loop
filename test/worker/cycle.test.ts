@@ -285,7 +285,10 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
     expect(recs).toHaveLength(1);
     expect(recs[0].outcome).toBe("skipped-pr-exists");
     expect(recs[0].ticket).toBe("TARS-2");
-    expect(recs[0].phases.map((p) => [p.role, p.outcome])).toEqual([["dev", "error"]]);
+    // A resolved dev phase carrying the PR (resets failedAttempts, teaches findLandedPrUrlAcross); no crash error phase.
+    expect(recs[0].phases.map((p) => [p.role, p.outcome, p.pr])).toEqual([["dev", "landed", "https://github.com/org/repo/pull/77"]]);
+    expect(recs[0].phases[0].detail).toMatch(/self-heal: existing PR/);
+    expect(recs[0].phases[0].run_dir).toBe(runDir);
     expect(recs[0].detail).toContain("https://github.com/org/repo/pull/77");
     expect(result.kind).toBe("did");
   });
@@ -314,6 +317,13 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
 
     await runWorkerIteration(h.deps);
     expect(runSkillCalls(h)[0].slice(1, 3)).toEqual(["research", "TARS-1"]);
+    // Both crash records are durable after the first iteration, before the orphan is resumed.
+    const afterFirst = await records(h);
+    expect(afterFirst.slice(0, 2).map((r) => [r.ticket, r.outcome, r.resume])).toEqual([
+      ["TARS-1", "error", "research"],
+      ["TARS-5", "error", "dev"],
+    ]);
+    expect(runSkillCalls(h).some((e) => e[2] === "TARS-5")).toBe(false);
     h.clock.advance(5_000);
     await runWorkerIteration(h.deps);
 
@@ -640,10 +650,187 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
     it("dev-only: never polls or claims research, completes pending handoffs", async () => {
       h = await harness({ deps: { roles: ["dev"] } });
       h.jira.research = [ticket("TARS-1")];
+      await appendIteration(h.logPath, rec({ ticket: "TARS-9", phases: [phase()] })); // research-only landed, no handoff
 
-      expect(await runWorkerIteration(h.deps)).toEqual({ kind: "idle" });
+      const result = await runWorkerIteration(h.deps);
+
+      expect(h.jira.calls("swapLabel")).toEqual([["swapLabel", "TARS-9", RESEARCH_LABEL, DEV_LABEL]]);
+      expect(runSkillCalls(h).map((e) => [e[1], e[2]])).toEqual([["dev", "TARS-9"]]);
+      expect(result.kind).toBe("did");
       expect(h.jira.polls.some((q) => q.includes(`"${RESEARCH_LABEL}"`) && !q.includes(`"${DEV_LABEL}"`))).toBe(false);
       expect(h.jira.calls("claimTicket")).toEqual([]);
+    });
+  });
+  describe("fix round 1", () => {
+    const rd = (k: string, r: "research" | "dev") => v2RunDir("repo", "dev-1", k, r, "20261111T110000Z");
+    const flight = (k: string, r: "research" | "dev", o: Record<string, unknown> = {}) => ({
+      ticket: k,
+      role: r,
+      runDir: rd(k, r),
+      since: "2026-11-11T11:00:00.000Z",
+      ...o,
+    });
+
+    it("a --phase dev process adopting a crashed research flight records it but never runs research; a research process resumes it", async () => {
+      h = await harness({ deps: { roles: ["dev"] }, session: makeSession("dev-1", flight("TARS-1", "research")) });
+
+      await runWorkerIteration(h.deps);
+
+      expect(runSkillCalls(h)).toEqual([]);
+      const [crash] = await records(h);
+      expect(crash).toMatchObject({ ticket: "TARS-1", outcome: "error", resume: "research" });
+      expect(crash.phases[0]).toMatchObject({ role: "research", outcome: "error", failure_category: "agent_error" });
+      h.clock.advance(5_000);
+      await runWorkerIteration(h.deps);
+      expect(runSkillCalls(h)).toEqual([]);
+
+      h.clock.advance(5_000);
+      await runWorkerIteration(h.restart({ roles: ["research"] }));
+      expect(runSkillCalls(h).map((e) => [e[1], e[2]])).toEqual([["research", "TARS-1"]]);
+      expect(h.jira.calls("claimTicket")).toEqual([]);
+      const last = (await records(h)).at(-1)!;
+      expect(last).toMatchObject({ ticket: "TARS-1", outcome: "landed" });
+      expect(last.resume).toBeUndefined();
+    });
+
+    it("a --phase research process adopting a crashed dev flight records it but never runs dev; a dev process resumes it", async () => {
+      h = await harness({ deps: { roles: ["research"] }, session: makeSession("dev-1", flight("TARS-2", "dev")) });
+
+      await runWorkerIteration(h.deps);
+
+      expect(runSkillCalls(h)).toEqual([]);
+      expect(h.jira.calls("transitionStatus")).toEqual([]);
+      expect((await records(h))[0]).toMatchObject({ ticket: "TARS-2", outcome: "error", resume: "dev" });
+
+      h.clock.advance(5_000);
+      await runWorkerIteration(h.restart({ roles: ["dev"] }));
+      expect(runSkillCalls(h).map((e) => [e[1], e[2]])).toEqual([["dev", "TARS-2"]]);
+      h.clock.advance(5_000);
+      await runWorkerIteration(h.restart({ roles: ["dev"] }));
+      expect(runSkillCalls(h)).toHaveLength(1);
+    });
+
+    it("a resume pending in the log is not re-run once the ticket is at maxAttemptsPerTicket (step 2 blocks it)", async () => {
+      h = await harness({ session: makeSession("dev-1", flight("TARS-2", "dev")) });
+      await appendIteration(
+        h.logPath,
+        rec({ ticket: "TARS-2", outcome: "error", phases: [phase({ role: "dev", skill: "ticket-to-pr", outcome: "error" })] }),
+      );
+
+      await runWorkerIteration(h.deps);
+
+      expect(runSkillCalls(h)).toEqual([]);
+      expect((await records(h)).at(-1)!.outcome).toBe("blocked-attempts");
+    });
+
+    it("an interrupted flight (SIGINT/SIGTERM mid-phase) is resumed with no crash error phase (not a failed attempt)", async () => {
+      h = await harness({ session: makeSession("dev-1", flight("TARS-1", "research", { interrupted: true })) });
+
+      await runWorkerIteration(h.deps);
+
+      const recs = await records(h);
+      expect(recs[0]).toMatchObject({ ticket: "TARS-1", outcome: "interrupted", phases: [], resume: "research" });
+      expect(recs.flatMap((r) => r.phases).some((p) => p.outcome === "error")).toBe(false);
+      expect(runSkillCalls(h).map((e) => [e[1], e[2]])).toEqual([["research", "TARS-1"], ["dev", "TARS-1"]]);
+    });
+
+    it("setInFlight(dev) throws after research landed + handoff: the research record (and its cost) is appended, then paused", async () => {
+      h = await harness({
+        script: { research: [{ costUsd: 7 }] },
+        session: makeSession("dev-1", null, [], (f) => f?.role === "dev"),
+      });
+      h.jira.research = [ticket("TARS-1")];
+
+      const result = await runWorkerIteration(h.deps);
+
+      expect(result.kind).toBe("paused");
+      const [r] = await records(h);
+      expect(r.ticket).toBe("TARS-1");
+      expect(r.phases.map((p) => [p.role, p.outcome, p.cost_usd, p.handoff])).toEqual([["research", "landed", 7, "done"]]);
+      if (result.kind === "paused") {
+        expect(result.reason).toMatch(/session lock lost/);
+        expect(result.record).toEqual(r);
+      }
+      expect(runSkillCalls(h).map((e) => e[1])).toEqual(["research"]);
+    });
+
+    it("setInFlight(research) throws right after the claim: a record (claimed, not run, resume research) is appended, then paused; the next start resumes it", async () => {
+      h = await harness({ session: makeSession("dev-1", null, [], (f) => f?.role === "research") });
+      h.jira.research = [ticket("TARS-1")];
+
+      const result = await runWorkerIteration(h.deps);
+
+      expect(result.kind).toBe("paused");
+      expect(runSkillCalls(h)).toEqual([]);
+      const [r] = await records(h);
+      expect(r).toMatchObject({ ticket: "TARS-1", outcome: "error", phases: [], resume: "research" });
+      expect(r.detail).toMatch(/claimed/);
+      if (result.kind === "paused") expect(result.record).toEqual(r);
+
+      h.clock.advance(5_000);
+      await runWorkerIteration(h.restart());
+      expect(runSkillCalls(h)[0].slice(1, 3)).toEqual(["research", "TARS-1"]);
+      expect(h.jira.calls("claimTicket")).toHaveLength(1);
+    });
+
+    it("a bad-key ticket returned first doesn't stall the queue: excluded by id, the next ticket runs", async () => {
+      h = await harness();
+      h.jira.research = [ticket("bad key", { id: "555" }), ticket("TARS-3")];
+
+      await runWorkerIteration(h.deps);
+
+      expect(runSkillCalls(h).map((e) => e[2])).toEqual(["TARS-3", "TARS-3"]);
+      expect(h.jira.polls[1]).toMatch(/id not in \(555\)/);
+      expect(h.logs.filter((m) => /invalid ticket key/i.test(m))).toHaveLength(1);
+    });
+
+    it("a bad-key ticket with a bad id too: logged, that role's poll stops this iteration (no injection)", async () => {
+      h = await harness();
+      h.jira.research = [ticket("bad key", { id: "5) OR (1" }), ticket("TARS-3")];
+
+      expect(await runWorkerIteration(h.deps)).toEqual({ kind: "idle" });
+      expect(h.jira.polls.every((q) => !q.includes("OR (1"))).toBe(true);
+    });
+
+    it("a successful step-1 swap is recorded (handoff-done): three iterations with dev capped → one swap call", async () => {
+      h = await harness({ config: (c) => (c.ceilings.maxRunsPerDay = 1) });
+      await appendIteration(h.logPath, rec({ ticket: "TARS-9", phases: [phase()] }));
+      await appendIteration(
+        h.logPath,
+        rec({ ticket: "TARS-8", started: "2026-11-11T02:00:00.000Z", ended: "2026-11-11T02:10:00.000Z", phases: [phase({ role: "dev", skill: "ticket-to-pr", started: "2026-11-11T02:00:00.000Z" })] }),
+      );
+
+      for (let i = 0; i < 3; i++) {
+        await runWorkerIteration(h.deps);
+        h.clock.advance(11 * MIN);
+      }
+
+      expect(h.jira.calls("swapLabel")).toHaveLength(1);
+      const done = (await records(h)).filter((r) => r.outcome === "handoff-done");
+      expect(done.map((r) => [r.ticket, r.phases])).toEqual([["TARS-9", []]]);
+      expect(findPendingHandoffs(await records(h))).toEqual([]);
+      expect(runSkillCalls(h)).toEqual([]);
+    });
+
+    it("dev assigns an unassigned ticket (non-fatal), as v1 did", async () => {
+      h = await harness();
+      h.jira.dev = [devTicket("TARS-3", { assignee: null })];
+      h.jira.assignImpl = async () => {
+        throw new Error("assign 403");
+      };
+
+      await runWorkerIteration(h.deps);
+
+      expect(h.jira.calls("assignTicket")).toEqual([["assignTicket", "TARS-3", "acc-1"]]);
+      expect(runSkillCalls(h).map((e) => [e[1], e[2]])).toEqual([["dev", "TARS-3"]]);
+      expect((await records(h))[0].jira_sync_error).toMatch(/assign 403/);
+    });
+
+    it("dev does not reassign an assigned ticket", async () => {
+      h = await harness();
+      h.jira.dev = [devTicket("TARS-3")];
+      await runWorkerIteration(h.deps);
+      expect(h.jira.calls("assignTicket")).toEqual([]);
     });
   });
 });
