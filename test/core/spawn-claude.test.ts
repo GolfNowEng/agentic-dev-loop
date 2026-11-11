@@ -8,6 +8,7 @@ import {
   spawnClaudeRun,
   childEnv,
   killedTimeoutVerdict,
+  POST_KILL_GRACE_MS,
 } from "../../src/core/spawn-claude.ts";
 import type { SpawnClaudeOpts, SpawnFn, SpawnClaudeDeps } from "../../src/core/spawn-claude.ts";
 import { parseVerdict } from "../../src/core/verdict.ts";
@@ -19,13 +20,22 @@ class FakeChild extends EventEmitter {
   stdout = new PassThrough();
   stderr = new PassThrough();
   signals: string[] = [];
-  /** When set, the child "dies" on this signal (emits close). Otherwise it ignores kills. */
-  constructor(private readonly diesOn: string | null = null) {
+  /**
+   * When set, the child "dies" on this signal (emits close). Otherwise it
+   * ignores kills. With `exitOnlyOnKill`, SIGKILL emits 'exit' but never
+   * 'close' -- a grandchild still holding the stdio pipes.
+   */
+  constructor(
+    private readonly diesOn: string | null = null,
+    private readonly exitOnlyOnKill = false,
+  ) {
     super();
   }
   kill(signal: string): boolean {
     this.signals.push(signal);
-    if (signal === this.diesOn || signal === "SIGKILL") {
+    if (signal === "SIGKILL" && this.exitOnlyOnKill) {
+      setImmediate(() => this.emit("exit", null, signal));
+    } else if (signal === this.diesOn || signal === "SIGKILL") {
       setImmediate(() => this.emit("close", null, signal));
     }
     return true;
@@ -120,6 +130,43 @@ describe("spawnClaudeRun", () => {
 
     expect(result.spawnError).toMatch(/EAGAIN/);
     expect(result.killedTimeout).toBe(false);
+  });
+
+  it("a nonzero exit with stdout (e.g. the --max-budget-usd cap) still persists raw usage and returns its cost, alongside spawnError", async () => {
+    const stdout = JSON.stringify({
+      type: "result",
+      subtype: "error_max_budget_usd",
+      total_cost_usd: 20.04,
+      usage: { input_tokens: 900, output_tokens: 80 },
+    });
+    const child = new FakeChild();
+    const spawn: SpawnFn = () => {
+      child.finish(stdout, 1);
+      return child as never;
+    };
+    const opts = makeOpts();
+
+    const result = await spawnClaudeRun(opts, quietDeps({ spawn }));
+
+    expect(result.spawnError).toMatch(/exited with code 1/);
+    expect(result.usage.costUsd).toBe(20.04);
+    expect(result.usage.tokens.out).toBe(80);
+    expect(JSON.parse(await readFile(opts.rawUsagePath, "utf8")).total_cost_usd).toBe(20.04);
+  });
+
+  it("a nonzero exit with empty stdout writes no raw usage and returns zero usage", async () => {
+    const child = new FakeChild();
+    const spawn: SpawnFn = () => {
+      child.finish("", 1);
+      return child as never;
+    };
+    const opts = makeOpts();
+
+    const result = await spawnClaudeRun(opts, quietDeps({ spawn }));
+
+    expect(result.spawnError).toMatch(/exited with code 1/);
+    expect(result.usage).toEqual({ costUsd: 0, tokens: { in: 0, out: 0 } });
+    await expect(stat(opts.rawUsagePath)).rejects.toThrow();
   });
 
   it("reports a nonzero exit through spawnError", async () => {
@@ -248,6 +295,67 @@ describe("spawnClaudeRun", () => {
     expect(result.killedTimeout).toBe(true);
     expect(result.spawnError).toBeUndefined();
     expect(timers.pendingCount()).toBe(0);
+  });
+
+  it("settles after SIGKILL on 'exit' even when 'close' never comes (a grandchild holds the pipes)", async () => {
+    const timers = makeFakeTimers();
+    const child = new FakeChild(null, true);
+    const spawn: SpawnFn = () => child as never;
+
+    const pending = spawnClaudeRun(makeOpts({ timeoutMin: 1 }), quietDeps({ spawn, ...timers }));
+    await flush();
+    timers.advance(60_000);
+    timers.advance(30_000);
+    expect(child.signals).toEqual(["SIGTERM", "SIGKILL"]);
+
+    const result = await pending;
+    expect(result.killedTimeout).toBe(true);
+    expect(result.spawnError).toBeUndefined();
+  });
+
+  it("settles after SIGKILL even if neither 'exit' nor 'close' ever comes, after a short post-kill grace", async () => {
+    const timers = makeFakeTimers();
+    const child = new FakeChild(null, true);
+    child.kill = (signal: string) => {
+      child.signals.push(signal); // never emits anything
+      return true;
+    };
+    const spawn: SpawnFn = () => child as never;
+    let settled = false;
+
+    const pending = spawnClaudeRun(makeOpts({ timeoutMin: 1 }), quietDeps({ spawn, ...timers })).then((r) => {
+      settled = true;
+      return r;
+    });
+    await flush();
+    timers.advance(60_000);
+    timers.advance(30_000);
+    await flush();
+    expect(settled).toBe(false);
+    timers.advance(POST_KILL_GRACE_MS);
+
+    const result = await pending;
+    expect(result.killedTimeout).toBe(true);
+    expect(timers.pendingCount()).toBe(0);
+  });
+
+  it("passes --settings with claudeMdExcludes when excludeClaudeMd is given, and none otherwise", async () => {
+    const seen: string[][] = [];
+    const spawn: SpawnFn = (_cmd, args) => {
+      seen.push(args);
+      const child = new FakeChild();
+      child.finish("{}");
+      return child as never;
+    };
+
+    await spawnClaudeRun(makeOpts({ excludeClaudeMd: ["/abs/repo/CLAUDE.md"] }), quietDeps({ spawn }));
+    await spawnClaudeRun(makeOpts(), quietDeps({ spawn }));
+
+    const withExcl = seen[0];
+    expect(JSON.parse(withExcl[withExcl.indexOf("--settings") + 1])).toEqual({
+      claudeMdExcludes: ["/abs/repo/CLAUDE.md"],
+    });
+    expect(seen[1]).not.toContain("--settings");
   });
 
   it("does not send SIGKILL when the child exits on SIGTERM", async () => {
