@@ -308,6 +308,31 @@ describe("redactSecrets", () => {
 // 17dc2b7, research 334ced5) and differential fuzzing showed each redacts
 // shapes the other leaks. The unified core redacts the union.
 describe("redactSecrets -- union of dev and research pattern sets", () => {
+  // research-only: research skips true/false/numeric values only when
+  // UNQUOTED; a quoted all-digit or boolean string under a secret name is
+  // still a secret (e.g. a numeric PIN/password).
+  it("redacts a quoted all-digit JSON secret value (research)", () => {
+    expect(redactSecrets('{"password":"123456789012"}')).toBe('{"password":"REDACTED_SECRET"}');
+  });
+
+  it("redacts a quoted all-digit env-style secret value (research)", () => {
+    expect(redactSecrets('PASSWORD="123456789012"')).toBe('PASSWORD="REDACTED_SECRET"');
+  });
+
+  // Not a divergence: "true"/"false" (4-5 chars) are under
+  // MIN_PATTERN_VALUE_LENGTH (6), so research leaves them too. Pinned so the
+  // boolean-skip change below cannot start redacting them by accident.
+  it("leaves a quoted \"true\" under a secret name alone (below the min length, same as research)", () => {
+    expect(redactSecrets('{"password":"true"}')).toBe('{"password":"true"}');
+    expect(redactSecrets('PASSWORD="true"')).toBe('PASSWORD="true"');
+  });
+
+  it("still leaves an unquoted boolean/number under a secret name alone", () => {
+    expect(redactSecrets('{"tokenCount":123456789012,"authEnabled":true}')).toBe(
+      '{"tokenCount":123456789012,"authEnabled":true}',
+    );
+  });
+
   // research-only: its unquoted value class does not exclude `[`.
   it("redacts an env-style secret value that starts with `[` (research)", () => {
     expect(redactSecrets("TOKEN=[abcdefgh12345]")).toBe("TOKEN=REDACTED_SECRET]");
