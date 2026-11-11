@@ -1,0 +1,152 @@
+---
+name: reset-project
+description: Deterministically wipe this repo's own local pipeline state for one ticket, or an entire project, so it can be re-run from scratch. Local reset never touches Jira/GitHub/git history; the optional --close-remote flag additionally closes the real Jira ticket and its mirror GitHub Issue -- see the confirmation-first policy below before ever passing it.
+---
+
+# reset-project
+
+## Arguments
+
+`$ARGUMENTS` — `--project <name>` (required) plus one of:
+- `--ticket <KEY>` — reset just this ticket within the project.
+- (nothing) — reset the WHOLE project: every ticket's `runs.jsonl` history
+  and its entire `.pipeline/<slug>/` directory. Requires `--yes`.
+
+Optional: `--dry-run` (print the plans, act on nothing), `--yes` (skip the
+whole-project confirmation gate), `--close-remote` (see below — requires
+`--ticket`, refused for a whole-project reset).
+
+## What this is for
+
+This is a **deterministic script**, not agent judgment — deleting local
+pipeline state, or closing a real ticket/Issue, should never depend on an
+LLM's read of the situation on a given day. When you need to start a
+ticket (or a whole project) fresh — most often after diagnosing and
+fixing a bug via a live ticket, the way TARS-1465 was used and then wiped
+clean — run the script directly. Do not improvise the equivalent by hand
+with `rm -rf`/`grep -v`/one-off Jira/`gh` calls — this script already
+handles the "don't touch any other ticket's data," "don't delete another
+project's `.pipeline/` directory," and "don't silently drop a failed
+remote close" cases correctly, with test coverage (`test/reset-project
+.test.ts`, `test/remote-close.test.ts`) backing every guarantee.
+
+## Local reset: what it does and does not do
+
+Local reset (no `--close-remote`) is scoped **strictly to research-loop's
+own local, gitignored state** — see `docs/reset.md` for the exact
+rationale. It never touches Jira, GitHub, or the target repo's git
+history, and never touches another ticket's or another project's data. It
+also never swaps the ticket's `pipeline:research`/`pipeline:dev` label.
+
+## `--close-remote`: closing the real ticket and Issue
+
+**Requires `--ticket`** — remote-closing is refused for a whole-project
+reset, since closing every ticket a project has ever touched is out of
+scope. When passed:
+
+1. Closes the Jira ticket via a `done`-category status transition (first
+   one found, by name if more than one exists — the summary always names
+   which transition was actually used). If no done-category transition is
+   offered directly, walks up to 4 intermediate hops through single
+   unambiguous forward-progress-looking statuses first (e.g. Code Review
+   → Development Complete → Deployed to INT → Closed — the exact
+   two-hop case hit live on TARS-1467's Story workflow). Generic across
+   issue types — a Task's short workflow just needs 0-1 hops, a Story
+   gated behind review/deploy steps needs more, same logic either way.
+   Never guesses when more than one hop candidate is offered at any step,
+   or the hop bound is exhausted — reports `no-transition` instead.
+   Posts one comment first, noting this was a test/reset ticket closed as
+   not-planned.
+2. Closes the mirror GitHub Issue with reason `not planned`.
+
+(This repo's version has no PR to close, unlike dev-loop's — research-
+loop never opens a PR itself.)
+
+Each of the two is attempted independently; one failing never blocks the
+other. The printed summary distinguishes `closed` / `already-done`/
+`already-closed` (a safe no-op) / `no-transition` (the ticket isn't done,
+no done-category transition is offered, and no unambiguous intermediate
+hop path within the bound reaches one either — likely needs a human to
+walk it through Jira's UI; never silently treated as success) / `error`
+(with the actual failure message) for each item.
+
+**Needs real Jira/GitHub credentials** — invoke via
+`npm run reset-project:remote` (loads `.env`), not the plain
+`reset-project` script (which deliberately never loads `.env`, so a
+purely local reset never requires credentials to exist at all).
+
+**Agent policy — always confirm first.** If you are an agent about to
+invoke `--close-remote` for a real (non-`--dry-run`) run: always ask the
+human to confirm in chat first, every time, regardless of Claude Code's
+permission-mode settings for this session. `--dry-run --close-remote` is
+always safe to run without asking (it makes no network calls at all — no
+local data exists to read for this plan, unlike dev-loop's PR-URL
+lookup). This policy lives in the agent's own behavior, not in the
+script, precisely so it applies no matter how permissions are configured.
+
+## Running it
+
+```bash
+# Local-only: see what would be deleted, without deleting anything:
+npm run reset-project -- --project=webtarsthree --ticket=TARS-1465 --dry-run
+
+# Local-only: actually delete it:
+npm run reset-project -- --project=webtarsthree --ticket=TARS-1465
+
+# Whole-project wipe (every ticket) -- requires --yes:
+npm run reset-project -- --project=webtarsthree --yes
+
+# Preview a remote close too (safe, no network calls, no confirmation needed):
+npm run reset-project:remote -- --project=webtarsthree --ticket=TARS-1465 --close-remote --dry-run
+
+# The real thing -- confirm with the human first if you are an agent:
+npm run reset-project:remote -- --project=webtarsthree --ticket=TARS-1465 --close-remote
+```
+
+## What gets deleted locally (per-ticket)
+
+1. Every line in `runs/<project>.jsonl` whose `"ticket"` field matches the
+   given key — archived to `runs/<project>.reset-archive.jsonl` first
+   (append-only, never overwritten), then removed from the live log.
+   Every other ticket's lines are preserved, in order.
+2. Every `.pipeline/<slug>/runs/<TICKET>-<RUN_ID>/` directory for that
+   ticket (there can be several, one per run attempt).
+3. Every `.pipeline/<slug>/raw-usage/<TICKET>-<...>.json` file for that
+   ticket.
+4. If `pipeline.<project>.config.json`'s `targetRepo.path` is set: any
+   leftover `<targetRepo.path>/.claude/worktrees/<TICKET>-<...>/`
+   directories for that ticket — this matches
+   `<TICKET>-<RUN_ID>-ground` (`ticket-refine`'s own Ground-step worktree
+   naming, see `docs/skills.md`) since the match is by `<TICKET>-` prefix,
+   not an exact name.
+
+## What gets deleted locally (whole-project, no `--ticket`)
+
+The entire prior `runs/<project>.jsonl` is archived to
+`runs/<project>.reset-archive.jsonl` first, then deleted, and
+`.pipeline/<project>/` is deleted entirely (every ticket's run dirs and
+raw-usage files at once). Worktrees are **not** swept in this mode — see
+`docs/reset.md` for why (no safe way to scope "every worktree for this
+project" without risking another project's worktree that happens to
+share the same `targetRepo.path`).
+
+## Recovering archived history
+
+`runs/<project>.reset-archive.jsonl` is plain JSONL, one line per removed
+run — greppable/replayable the same way the live log is. It is never read
+by `stats.mjs`, so archived lines never affect stats; it exists purely as
+a safety net for a human who wants the diagnostic history back later.
+
+## After running it
+
+The next research-loop poll cycle for that ticket starts genuinely fresh:
+no prior `runs.jsonl` history, no stale `.pipeline/<slug>/runs/` directory,
+no leftover Ground-step worktree from an interrupted run. Note local
+reset only resets *this repo's* local record — if the ticket's Jira label
+is still `pipeline:dev` (handed off) or its Jira comment/GitHub Issue
+still carries a prior refinement, `ticket-refine`'s own idempotent-
+re-refinement check (see `SKILL.md`'s "Setup: idempotent re-refinement")
+will treat it as a re-pickup, not a first pickup — reset the ticket's
+label/comments in Jira too if you want a truly first-pickup-shaped fresh
+run. If `--close-remote` was used instead, the ticket and Issue are
+closed, so there's no re-pickup to worry about at all.
