@@ -172,3 +172,14 @@ the repo root). v2: `runs/v2/<project>.jsonl`; run dirs
 v1 archive: `runs/v1/<role>/<project>.jsonl`. The `--phase` runners still use
 the legacy `runs/<slug>.jsonl` and `.pipeline/<slug>/` via `legacy*` functions
 until they are removed.
+
+### v2 iteration record (`runs/v2/<project>.jsonl`)
+
+One JSON line per ticket iteration (`src/core/iteration-log.ts`), append-only.
+`phases` has one entry per skill run (empty for `skipped-blocked` /
+`claim-error`). `detail` and `jira_sync_error` are redacted before writing.
+Readers skip blank, truncated and malformed lines.
+
+```json
+{"ticket":"TARS-1465","session":"s1","loop_version":"2.0.0","started":"2026-11-10T10:00:00.000Z","ended":"2026-11-10T10:41:00.000Z","outcome":"landed","phases":[{"role":"dev","skill":"ticket-to-pr","skill_version":"2.0.0","model":"opus","started":"2026-11-10T10:00:00.000Z","ended":"2026-11-10T10:41:00.000Z","outcome":"landed","phase_reached":"pr","cost_usd":4.2,"tokens":{"in":120000,"out":30000},"failure_category":null,"detail":"PR opened","pr":"https://github.com/org/repo/pull/12","run_dir":".pipeline/v2/webtarsthree/s1/TARS-1465/dev-20261110T100000Z"}]}
+```
