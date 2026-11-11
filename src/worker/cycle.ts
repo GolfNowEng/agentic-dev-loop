@@ -35,23 +35,50 @@ export { WorkerPausedError } from "./cycle-steps.ts";
 
 const DEFAULT_RECENT_WINDOW_MS = 600_000;
 
-export async function runWorkerIteration(deps: WorkerDeps): Promise<WorkerIterationResult> {
-  const { state, first } = workerState(deps);
+/**
+ * Write every in-flight run the session adopted (inFlight, then orphans) to
+ * the log with `resume: <role>`, then clear the lock's inFlight: from here the
+ * log owns the resume. Idempotent; runWorkerIteration calls it if the caller
+ * didn't. main.ts calls it right after acquiring the session, before any
+ * other work, and only then lets a signal release the lock.
+ */
+export async function recordAdoptedFlights(deps: WorkerDeps): Promise<void> {
+  const { state } = workerState(deps);
+  if (state.flightsRecorded) return;
   const ctx = makeCtx(deps, state, await readIterations(deps.logPath));
-  if (first) {
-    for (const f of deps.session.orphanedInFlight) {
-      ctx.log(`[worker] orphaned in-flight ${f.role} run on ${f.ticket} from a crashed session (${f.runDir}): recorded for resume`);
+  await recordFlightsOnce(ctx);
+}
+
+async function recordFlightsOnce(ctx: Ctx): Promise<void> {
+  const { state, deps } = ctx;
+  if (state.flightsRecorded) return;
+  for (const f of deps.session.orphanedInFlight) {
+    ctx.log(`[worker] orphaned in-flight ${f.role} run on ${f.ticket} from a crashed session (${f.runDir}): recorded for resume`);
+  }
+  state.healed = await recordFlights(ctx, state.flights);
+  state.flightsRecorded = true;
+  if (deps.session.inFlight !== null) {
+    try {
+      await deps.session.setInFlight(null);
+    } catch (err) {
+      // Harmless: the flight is in the log; re-adopting it later is idempotent.
+      ctx.log(`[worker] could not clear the adopted in-flight record from the lock: ${errorMessage(err)}`);
     }
   }
+}
+
+export async function runWorkerIteration(deps: WorkerDeps): Promise<WorkerIterationResult> {
+  const { state } = workerState(deps);
+  const ctx = makeCtx(deps, state, await readIterations(deps.logPath));
   try {
-    return await iterate(ctx, first);
+    return await iterate(ctx);
   } catch (err) {
     if (err instanceof WorkerPausedError) return { kind: "paused", reason: err.message };
     throw err;
   }
 }
 
-async function iterate(ctx: Ctx, first: boolean): Promise<WorkerIterationResult> {
+async function iterate(ctx: Ctx): Promise<WorkerIterationResult> {
   const { deps } = ctx;
   // Recently ended as of the iteration start (records this iteration appends, e.g. a
   // step-1 handoff-done, don't hide their own ticket from this iteration).
@@ -59,7 +86,9 @@ async function iterate(ctx: Ctx, first: boolean): Promise<WorkerIterationResult>
 
   // 0. RECOVER. First iteration: every adopted in-flight run becomes a durable record
   // (resume: <role>). Every iteration: resume one pending run of a role this process runs.
-  const healed = first ? await recordFlights(ctx, ctx.state.flights) : null;
+  await recordFlightsOnce(ctx);
+  const healed = ctx.state.healed;
+  ctx.state.healed = null;
   const resumed = await resumeNext(ctx, (c, t, s) => researchThenDev(c, t, s, []), (c, t, s) => devOnly(c, t, s));
   if (resumed) return resumed;
   if (healed) return healed;
@@ -145,8 +174,9 @@ async function finish(
   syncErrors: string[],
   fatal: string | undefined,
   detail?: string,
+  resume?: "research" | "dev",
 ): Promise<WorkerIterationResult> {
-  const record = await append(ctx, ticket, started, outcome, phases, extra(syncErrors, detail));
+  const record = await append(ctx, ticket, started, outcome, phases, { ...extra(syncErrors, detail), ...(resume ? { resume } : {}) });
   if (fatal) return { kind: "paused", reason: fatal, record };
   const last = phases.at(-1);
   const breach = last ? postPhaseBreach(ctx, last) : null;
@@ -183,7 +213,12 @@ export async function researchThenDev(
   }
   const research = r.entry;
   if (research.outcome !== "landed" || r.fatal) {
-    return finish(ctx, t.key, started, research.outcome, [research], syncErrors, r.fatal);
+    // Ruling 20: an error/killed research leaves the ticket claimed (In Progress), out of
+    // the research poll, so the record carries resume:"research" and step 0 retries it
+    // until the attempt cap (step 2) blocks it. A dev error needs nothing: the dev poll
+    // (dev label, status not bounced/prOpen) re-finds it.
+    const retry = research.outcome === "error" || research.outcome === "killed";
+    return finish(ctx, t.key, started, research.outcome, [research], syncErrors, r.fatal, undefined, retry ? "research" : undefined);
   }
 
   const breach = postPhaseBreach(ctx, research);

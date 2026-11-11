@@ -59,11 +59,11 @@ import { redactSensitive } from "./core/redact.ts";
 import { decideNextAction, type PollResultKind } from "./core/poll-loop.ts";
 import { PROJECT_SLUG, legacyRunsLog, legacyRunDirs, resolveRepoPath, v2RunsLog, v2SessionsDir } from "./core/paths.ts";
 import { acquireSession, isProcessAlive, type Session } from "./core/session.ts";
-import { trackSession } from "./worker/signal.ts";
+import { trackSession, type TrackedSession } from "./worker/signal.ts";
 import { findLandedPrUrlAcross } from "./core/iteration-log.ts";
 import type { RunSkillFn, RunSkillResult } from "./core/run-skill.ts";
 import { spawnClaudeRun, startProgressTail } from "./core/spawn-claude.ts";
-import { runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
+import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
 import { reconcileMergedTickets } from "./roles/dev/reconcile.ts";
 import { ALLOWED_TOOLS as DEV_ALLOWED_TOOLS } from "./roles/dev/tools.ts";
 import { devEarlySkillResult } from "./roles/dev/spawn-result.ts";
@@ -314,7 +314,8 @@ async function reconcile(ctx: PhaseContext, execGhPrView: ReturnType<typeof real
   }
 }
 
-async function runPhaseLoop(ctx: PhaseContext, session: Session, assigneeAccountId: string): Promise<void> {
+async function runPhaseLoop(ctx: PhaseContext, tracked: TrackedSession, assigneeAccountId: string): Promise<void> {
+  const session = tracked.session;
   const prefix = SKILL_NAME[ctx.phase];
   const { config, loopConfig, once } = ctx;
   const projectSlug = v2Slug(ctx.slug);
@@ -343,6 +344,10 @@ async function runPhaseLoop(ctx: PhaseContext, session: Session, assigneeAccount
     log,
   };
 
+  // First, before any network-bound work: the adopted in-flight runs go to the log.
+  await recordAdoptedFlights(deps);
+  tracked.markFlightsRecorded();
+
   log(`[${prefix}] session ${session.name}: loop started, polling every ${loopConfig.pollIntervalSec}s (project: ${ctx.slug})`);
   const reconciled = new Set<string>();
   for (;;) {
@@ -363,7 +368,7 @@ async function runPhaseLoop(ctx: PhaseContext, session: Session, assigneeAccount
         break;
       case "paused":
         logError(`[${prefix}] PAUSED: ${result.reason}`);
-        await session.release();
+        if (tracked.canRelease()) await session.release();
         process.exit(1);
     }
     const action = decideNextAction(kind, loopConfig, once);
@@ -443,9 +448,10 @@ async function main(): Promise<void> {
     excludeClaudeMd,
   };
   try {
-    await runPhaseLoop(ctx, tracked.session, assigneeAccountId);
+    await runPhaseLoop(ctx, tracked, assigneeAccountId);
   } finally {
-    if (tracked.current() === null) await session.release();
+    // Never release while an adopted flight is only in the lock, or a phase is mid-run.
+    if (tracked.canRelease()) await session.release();
   }
 }
 

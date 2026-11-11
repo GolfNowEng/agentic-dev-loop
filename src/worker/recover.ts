@@ -30,7 +30,7 @@ import { failedAttempts } from "../core/iteration-log.ts";
 import type { Role } from "../core/types.ts";
 import { errorMessage } from "../core/run-skill.ts";
 import { buildCodeReviewFields, buildPrLinkQaNotesAdf } from "../roles/dev/code-review.ts";
-import { append, crashEntry, knownTicket, latestRecord, nowIso, type Ctx, type WorkerIterationResult } from "./context.ts";
+import { append, crashEntry, knownTicket, latestRecord, nowIso, roleCapped, type Ctx, type WorkerIterationResult } from "./context.ts";
 
 type Runner = (ctx: Ctx, t: JiraTicket, started: string) => Promise<WorkerIterationResult>;
 
@@ -114,6 +114,7 @@ export function pendingResumes(ctx: Ctx): Array<{ ticket: string; role: Role; ru
     const role = latest?.resume;
     if (!latest || !role || !ctx.roles.has(role)) continue;
     if (failedAttempts(ctx.records, r.ticket, role) >= cap) continue;
+    if (roleCapped(ctx, role)) continue; // maxRunsPerDay applies to resumes like to polls
     out.push({ ticket: r.ticket, role, runDir: latest.phases[0]?.run_dir ?? "", since: latest.phases[0]?.started ?? latest.started });
   }
   return out;

@@ -1,22 +1,37 @@
-// What the process does with its session on SIGINT/SIGTERM. Mid-phase, the
-// lock is kept (the next start resumes the run) and its inFlight is marked
-// `interrupted: true`, so recovery does not count a stopped run as a failed
-// attempt. Not mid-phase, the lock is released. Pure over the session handle
-// so the session fake can test it; main.ts installs it.
+// What the process does with its session on SIGINT/SIGTERM.
+//   - Before the adopted flights are recorded in the log (recordAdoptedFlights):
+//     the lock is left untouched. Its inFlight is the only durable copy of the
+//     adopted run; the next start re-adopts it. Orphans exist only in memory
+//     by then (their stale files are already .adopted), so they are named in
+//     the error log for a human. main.ts records the flights first thing after
+//     acquiring, so this window is one log append.
+//   - Mid-phase: the lock is kept and its inFlight marked `interrupted: true`,
+//     so recovery does not count the stopped run as a failed attempt.
+//   - Otherwise: the lock is released.
+// Pure over the session handle so the session fake can test it; main.ts installs it.
 
 import type { InFlight, Session } from "../core/session.ts";
+
+export type SignalAction = "kept-unrecorded" | "marked-interrupted" | "released";
 
 export interface TrackedSession {
   /** The handle the cycle uses: its setInFlight is tracked. */
   session: Session;
-  /** The run in flight right now, or null. */
+  /** The phase run in flight right now, or null. */
   current: () => InFlight | null;
-  /** On a signal: mark the in-flight run interrupted (kept in the lock), or release the lock. Never throws. */
-  onSignal: () => Promise<"marked-interrupted" | "released">;
+  /** Call once recordAdoptedFlights has written the adopted flights to the log. */
+  markFlightsRecorded: () => void;
+  /** True when releasing the lock loses nothing (flights recorded, no phase in flight). */
+  canRelease: () => boolean;
+  /** On a signal; never throws. */
+  onSignal: () => Promise<SignalAction>;
 }
 
 export function trackSession(session: Session, logError: (m: string) => void = () => {}): TrackedSession {
+  const adopted: InFlight[] = [...(session.inFlight ? [session.inFlight] : []), ...session.orphanedInFlight];
+  let recorded = adopted.length === 0;
   let current: InFlight | null = null;
+  const msg = (err: unknown) => (err instanceof Error ? err.message : String(err));
   return {
     session: {
       ...session,
@@ -26,20 +41,31 @@ export function trackSession(session: Session, logError: (m: string) => void = (
       },
     },
     current: () => current,
+    markFlightsRecorded: () => {
+      recorded = true;
+    },
+    canRelease: () => recorded && current === null,
     onSignal: async () => {
+      if (!recorded) {
+        logError(
+          `signal before the adopted in-flight runs were recorded; keeping the session lock. ` +
+            `Not yet in the log: ${adopted.map((f) => `${f.ticket} (${f.role}, ${f.runDir})`).join(", ")}`,
+        );
+        return "kept-unrecorded";
+      }
       if (current !== null) {
         try {
           await session.setInFlight({ ...current, interrupted: true });
         } catch (err) {
           // The run stays recorded as in flight (a crash): resumed, counted as an attempt.
-          logError(`could not mark the in-flight run interrupted: ${err instanceof Error ? err.message : String(err)}`);
+          logError(`could not mark the in-flight run interrupted: ${msg(err)}`);
         }
         return "marked-interrupted";
       }
       try {
         await session.release();
       } catch (err) {
-        logError(`could not release the session lock: ${err instanceof Error ? err.message : String(err)}`);
+        logError(`could not release the session lock: ${msg(err)}`);
       }
       return "released";
     },

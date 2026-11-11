@@ -60,6 +60,10 @@ export interface WorkerState {
   badKeys: Set<string>;
   /** Issue ids of polled tickets with an invalid key: excluded from every poll by id. */
   badIds: Set<string>;
+  /** The adopted flights are in the log (recordAdoptedFlights ran). */
+  flightsRecorded: boolean;
+  /** A self-heal done while recording flights, returned by the next iteration. */
+  healed: WorkerIterationResult | null;
 }
 
 const STATES = new WeakMap<object, WorkerState>();
@@ -68,7 +72,7 @@ export function workerState(deps: WorkerDeps): { state: WorkerState; first: bool
   let state = STATES.get(deps.session);
   if (state) return { state, first: false };
   const flights = [...(deps.session.inFlight ? [deps.session.inFlight] : []), ...deps.session.orphanedInFlight];
-  state = { flights, badKeys: new Set(), badIds: new Set() };
+  state = { flights, badKeys: new Set(), badIds: new Set(), flightsRecorded: false, healed: null };
   STATES.set(deps.session, state);
   return { state, first: true };
 }

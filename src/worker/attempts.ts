@@ -28,7 +28,11 @@ export function buildAttemptsCommentAdf(role: Role, attempts: number, lastDetail
   );
 }
 
-/** Adds every attempt-capped ticket to ctx.exclude; acts once on each that just reached the cap. */
+/**
+ * Adds every attempt-capped ticket to ctx.exclude; acts once on each that just
+ * reached the cap, for roles this process runs only (a --phase research
+ * process never Blocks a ticket over dev failures; a dev-capable one does).
+ */
 export async function enforceAttemptCap(ctx: Ctx): Promise<void> {
   const cap = ctx.deps.config.ceilings.maxAttemptsPerTicket;
   const tickets = [...new Set(ctx.records.map((r) => r.ticket))];
@@ -37,6 +41,7 @@ export async function enforceAttemptCap(ctx: Ctx): Promise<void> {
       const n = failedAttempts(ctx.records, key, role);
       if (n < cap) continue;
       ctx.exclude.add(key);
+      if (!ctx.roles.has(role)) continue;
       if (latestRecord(ctx.records, key)?.outcome === "blocked-attempts") break;
 
       const last = ctx.records

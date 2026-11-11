@@ -193,10 +193,12 @@ Readers skip blank, truncated and malformed lines.
 at most one ticket and writes one record per ticket iteration; an idle
 iteration writes nothing. The steps run in this order:
 
-0. **Recover** (`recover.ts`). On a process's first iteration, every
-   in-flight record the session adopted (its `inFlight`, then each
-   `orphanedInFlight`, each logged) is written to the log with
-   `resume: <role>` before anything else runs:
+0. **Recover** (`recover.ts`). Right after the session is acquired,
+   `recordAdoptedFlights` (main.ts; `runWorkerIteration` does it too if
+   the caller didn't) writes every in-flight record the session adopted (its
+   `inFlight`, then each `orphanedInFlight`, each logged) to the log with
+   `resume: <role>`, then clears the lock's `inFlight`. Until then a signal
+   leaves the lock alone, so the adopted run is never lost:
    - A crashed run is outcome `error` with one `error` phase (`agent_error`),
      which counts toward `maxAttemptsPerTicket`.
    - A run stopped by SIGINT/SIGTERM (main marks the lock's flight
@@ -208,8 +210,12 @@ iteration writes nothing. The steps run in this order:
      resets attempts and teaches the landed lookup), no rebuild.
 
    Then, every iteration, one ticket whose latest record has `resume` set to
-   a role this process runs, and that is below the attempt cap, is re-run
-   without a claim. Its new record resolves it. The resume lives in the log,
+   a role this process runs, and that is below both the attempt cap and that
+   role's `maxRunsPerDay`, is re-run without a claim. A research phase that
+   ends `error`/`killed` also records `resume: "research"`: the claim moved
+   the ticket out of the research poll's status, so this is how it is
+   retried until the attempt cap blocks it. Dev errors need nothing extra,
+   because the dev poll re-finds them. Its new record resolves it. The resume lives in the log,
    not the lock, because every `--phase` process of a project shares the
    session dir: a `--phase dev` start can adopt a `--phase research` crash
    and must leave it for a research process. A claim whose research phase
@@ -224,8 +230,9 @@ iteration writes nothing. The steps run in this order:
 2. **Exclude**. Every poll excludes `recentlyEnded` (10 min, read from the
    log, so the exclusion survives restarts) and tickets at
    `maxAttemptsPerTicket` failed attempts of a role (`attempts.ts`). A ticket
-   that has just reached the cap gets a comment, the bounced status and one
-   `blocked-attempts` record.
+   that has just reached the cap, for a role this process runs, gets a
+   comment, the bounced status and one `blocked-attempts` record. A
+   `--phase research` process never blocks a ticket over dev failures.
 3. **Dev first** (no claim). The candidates are step 1's handoffs, then the
    dev poll; a polled unassigned ticket is assigned (non-fatal), as in v1. The landed guard (recorded PR merged/open/unreadable) and the
    blocker gate apply.
