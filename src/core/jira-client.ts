@@ -1,5 +1,6 @@
-// Jira client boundary. The loop runner depends only on this interface, so
-// tests can inject a mock instead of touching real Jira.
+// Jira client boundary, shared by both roles. The loop runners depend only
+// on this interface, so tests can inject a mock instead of touching real
+// Jira.
 //
 // Appendix A of the pipeline spec (the concrete Jira instance/binding
 // values: base URL, auth, status IDs, epic link field, etc.) is currently
@@ -9,11 +10,17 @@
 
 import type { Config } from "./types.ts";
 
+/**
+ * Minimal description of a Jira ticket as the loops need it. Kept narrow
+ * deliberately -- the loops should not need full Jira field fidelity.
+ */
 export interface JiraTicket {
   key: string;
   status: string;
   /** Jira accountId of the current assignee, or null if unassigned. */
   assignee: string | null;
+  /** The ticket's labels (research's autoPromoteLabel gate reads these). */
+  labels: string[];
 }
 
 export interface JiraClient {
@@ -37,6 +44,12 @@ export interface JiraClient {
    * failed because another process raced it and already moved the
    * ticket - the caller should skip this ticket and continue, not treat
    * that as an error.
+   *
+   * Any other failure (a non-2xx Jira response, e.g. a 400 from a
+   * transition screen with a required field this call doesn't send, or a
+   * network error) throws. Callers must catch that themselves and treat
+   * it as a per-ticket skip, never let it escape the poll loop (the
+   * research role reports it as poll-loop's "claim-error" kind).
    */
   claimTicket(ticketKey: string, from: string, to: string): Promise<boolean>;
 
@@ -231,6 +244,7 @@ interface JiraSearchResponse {
     key: string;
     fields: {
       status: { name: string };
+      labels?: string[];
       assignee: { accountId: string } | null;
     };
   }>;
@@ -322,7 +336,7 @@ export class RealJiraClient implements JiraClient {
       body: JSON.stringify({
         jql,
         maxResults: 1,
-        fields: ["status", "assignee"],
+        fields: ["status", "labels", "assignee"],
       }),
     });
     const data = (await response.json()) as JiraSearchResponse;
@@ -332,6 +346,7 @@ export class RealJiraClient implements JiraClient {
     return {
       key: issue.key,
       status: issue.fields.status.name,
+      labels: issue.fields.labels ?? [],
       assignee: issue.fields.assignee?.accountId ?? null,
     };
   }
@@ -341,13 +356,14 @@ export class RealJiraClient implements JiraClient {
       method: "POST",
       body: JSON.stringify({
         jql,
-        fields: ["status", "assignee"],
+        fields: ["status", "labels", "assignee"],
       }),
     });
     const data = (await response.json()) as JiraSearchResponse;
     return data.issues.map((issue) => ({
       key: issue.key,
       status: issue.fields.status.name,
+      labels: issue.fields.labels ?? [],
       assignee: issue.fields.assignee?.accountId ?? null,
     }));
   }

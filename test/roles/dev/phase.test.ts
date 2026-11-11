@@ -40,6 +40,7 @@ function makeTicket(overrides: Partial<JiraTicket> = {}): JiraTicket {
     key: "PROJ-1",
     status: "In Progress",
     assignee: ASSIGNEE_ACCOUNT_ID,
+    labels: [],
     ...overrides,
   };
 }

@@ -33,7 +33,7 @@ function makeConfig(): Config {
 }
 
 function makeTicket(overrides: Partial<JiraTicket> = {}): JiraTicket {
-  return { key: "PROJ-1", status: "Development Complete", assignee: "user-123", ...overrides };
+  return { key: "PROJ-1", status: "Development Complete", assignee: "user-123", labels: [], ...overrides };
 }
 
 function makeRunLogLine(overrides: Partial<RunLogLine> = {}): RunLogLine {

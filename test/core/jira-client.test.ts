@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   RealJiraClient,
+  StubJiraClient,
   credentialsFromEnv,
   assigneeAccountIdFromEnv,
   type JiraCredentials,
@@ -86,6 +87,7 @@ describe("RealJiraClient", () => {
               key: "PROJ-1",
               fields: {
                 status: { name: "Backlog" },
+                labels: ["auto-promote"],
                 assignee: { accountId: "user-123" },
               },
             },
@@ -102,6 +104,7 @@ describe("RealJiraClient", () => {
       key: "PROJ-1",
       status: "Backlog",
       assignee: "user-123",
+      labels: ["auto-promote"],
     });
 
     const [url, init] = fetchMock.mock.calls[0];
@@ -109,7 +112,23 @@ describe("RealJiraClient", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe(
       `Basic ${Buffer.from("bot@example.com:fake-token").toString("base64")}`,
     );
-    expect(JSON.parse(init.body as string).fields).toContain("assignee");
+    expect(JSON.parse(init.body as string).fields).toEqual(["status", "labels", "assignee"]);
+  });
+
+  it("pollOldestMatching maps a missing labels field to an empty array", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          issues: [{ key: "PROJ-3", fields: { status: { name: "Backlog" }, assignee: null } }],
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const ticket = await client.pollOldestMatching("labels = pipeline:research");
+
+    expect(ticket?.labels).toEqual([]);
   });
 
   it("pollOldestMatching maps a null assignee to null (unassigned ticket)", async () => {
@@ -162,7 +181,29 @@ describe("RealJiraClient", () => {
     ).resolves.not.toThrow();
 
     expect(claimed).toBe(false);
+    // Only the GET to list transitions should have happened -- no POST.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("claimTicket throws (not false) when Jira rejects the transition POST -- callers must treat this as a per-ticket skip, not a race", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ transitions: [{ id: "42", to: { name: "In Progress" } }] }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response('{"errors":{"customfield_1":"required"}}', {
+          status: 400,
+          statusText: "Bad Request",
+        }),
+      );
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    await expect(client.claimTicket("PROJ-1", "Backlog", "In Progress")).rejects.toThrow(
+      /400 Bad Request/,
+    );
   });
 
   it("claimTicket posts the matching transition and returns true on success", async () => {
@@ -663,6 +704,7 @@ describe("RealJiraClient.pollAllMatching", () => {
               key: "PROJ-1",
               fields: {
                 status: { name: "Code Review" },
+                labels: ["pipeline:dev"],
                 assignee: { accountId: "user-123" },
               },
             },
@@ -683,8 +725,8 @@ describe("RealJiraClient.pollAllMatching", () => {
     const tickets = await client.pollAllMatching('labels = "pipeline:dev"');
 
     expect(tickets).toEqual([
-      { key: "PROJ-1", status: "Code Review", assignee: "user-123" },
-      { key: "PROJ-2", status: "Code Review", assignee: null },
+      { key: "PROJ-1", status: "Code Review", assignee: "user-123", labels: ["pipeline:dev"] },
+      { key: "PROJ-2", status: "Code Review", assignee: null, labels: [] },
     ]);
 
     const [url, init] = fetchMock.mock.calls[0];
@@ -692,7 +734,7 @@ describe("RealJiraClient.pollAllMatching", () => {
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({
       jql: 'labels = "pipeline:dev"',
-      fields: ["status", "assignee"],
+      fields: ["status", "labels", "assignee"],
     });
   });
 
@@ -705,5 +747,25 @@ describe("RealJiraClient.pollAllMatching", () => {
     const tickets = await client.pollAllMatching('labels = "pipeline:dev"');
 
     expect(tickets).toEqual([]);
+  });
+});
+
+describe("StubJiraClient", () => {
+  it("throws a not-configured error on every method", async () => {
+    const client = new StubJiraClient();
+    const calls: Array<[string, () => Promise<unknown>]> = [
+      ["pollOldestMatching", () => client.pollOldestMatching("x")],
+      ["pollAllMatching", () => client.pollAllMatching("x")],
+      ["claimTicket", () => client.claimTicket("PROJ-1", "A", "B")],
+      ["transitionStatus", () => client.transitionStatus("PROJ-1", "B", { f: 1 })],
+      ["swapLabel", () => client.swapLabel("PROJ-1", "a", "b")],
+      ["removeLabel", () => client.removeLabel("PROJ-1", "a")],
+      ["assignTicket", () => client.assignTicket("PROJ-1", "acct")],
+      ["addComment", () => client.addComment("PROJ-1", { type: "doc", version: 1, content: [] })],
+      ["closeTicket", () => client.closeTicket("PROJ-1")],
+    ];
+    for (const [name, call] of calls) {
+      await expect(call(), name).rejects.toThrow(new RegExp(`${name}.*not configured`));
+    }
   });
 });
