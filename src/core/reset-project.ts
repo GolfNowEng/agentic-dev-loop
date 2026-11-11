@@ -1,5 +1,5 @@
-// Deterministic "start this project fresh" reset -- scoped to dev-loop's
-// own local, gitignored state for one project slug. Deletes nothing this
+// Deterministic "start this project fresh" reset -- scoped to this
+// repo's own local, gitignored state for one project slug. Deletes nothing this
 // repo doesn't already consider disposable scratch space (runs.jsonl
 // lines, .pipeline/<slug>/ run dirs, this repo's own worktrees under
 // targetRepo.path). Never touches Jira, GitHub, the target repo's git
