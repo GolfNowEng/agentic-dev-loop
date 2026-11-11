@@ -32,9 +32,8 @@
  * printing plans/summaries.
  */
 
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { loadConfig, resolveProjectConfigPath, repoSlugFromUrl, listAvailableProjects } from "./config.ts";
-import { resolve } from "node:path";
 import { planReset, executeReset, describeResetPlan, describeResetSummary } from "./reset-project.ts";
 import {
   planRemoteClose,

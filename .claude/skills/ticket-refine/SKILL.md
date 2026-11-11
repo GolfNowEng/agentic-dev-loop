@@ -626,17 +626,11 @@ requirement).
      title plus Needs-decision bullets already give a reader everything
      they need — that should be rare, not the default path.>
 
-   **Needs decision:**
-   - If the ticket carries the `auto-promote` label (read its labels via
-     `getJiraIssue`): omit this whole "Needs decision" section entirely —
-     there is nothing to decide, the loop runner promotes automatically.
-   - Otherwise: exactly one bullet, something like "Approve — move to
-     `<roles.research.handoffLabel>` to send to dev-loop" (phrase it for
-     this project's actual configured label, from
-     `pipeline.<project>.config.json`).
-
    [GitHub Issue](<url>)
    ```
+   A passing verdict's comment never has a "Needs decision" section:
+   there is nothing for a human to decide, the loop runner hands the
+   ticket to dev itself.
    The GitHub Issue itself carries the full `### Overview` / `###
    Acceptance Criteria` / `### Scope` refined spec content as its own
    comment (see item 4 below) — `ticket-to-pr` reads the GitHub Issue as
