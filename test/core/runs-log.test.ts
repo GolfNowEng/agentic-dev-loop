@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendRunLog, readRunLog, countRunsToday } from "../../src/core/runs-log.ts";
+import { appendRunLog, readRunLog, countRunsToday, hasLandedRun } from "../../src/core/runs-log.ts";
 import type { RunLogLine } from "../../src/core/types.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -163,6 +163,27 @@ describe("countRunsToday", () => {
       await appendRunLog(path, makeLine({ ticket: "PROJ-1", started: "2026-08-15T12:00:00Z" }));
       const count = await countRunsToday(path, new Date("2026-08-16T12:00:00Z"));
       expect(count).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("hasLandedRun", () => {
+  it("is false when the runs file does not exist", async () => {
+    expect(await hasLandedRun("/nonexistent/runs.jsonl", "PROJ-1")).toBe(false);
+  });
+
+  it("is true only for a landed line on that ticket", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "runs-log-landed-"));
+    const file = join(dir, "runs.jsonl");
+    try {
+      await appendRunLog(file, makeLine({ ticket: "PROJ-1", outcome: "bounced", pr: null }));
+      await appendRunLog(file, makeLine({ ticket: "PROJ-2", outcome: "landed" }));
+      expect(await hasLandedRun(file, "PROJ-1")).toBe(false);
+      expect(await hasLandedRun(file, "PROJ-2")).toBe(true);
+      await appendRunLog(file, makeLine({ ticket: "PROJ-1", outcome: "landed" }));
+      expect(await hasLandedRun(file, "PROJ-1")).toBe(true);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
