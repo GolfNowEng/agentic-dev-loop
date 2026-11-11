@@ -47,14 +47,16 @@ import { readVerdictFile, agentErrorVerdict } from "./core/verdict.ts";
 import { redactSensitive } from "./core/redact.ts";
 import { decideNextAction } from "./core/poll-loop.ts";
 import { buildRefineJql } from "./core/jql.ts";
-import { spawnClaudeRun, startProgressTail, killedTimeoutVerdict } from "./core/spawn-claude.ts";
+import { spawnClaudeRun, startProgressTail } from "./core/spawn-claude.ts";
 import { runLoopIteration as runDevIteration } from "./roles/dev/phase.ts";
 import type { RunSkillFn as DevRunSkillFn } from "./roles/dev/phase.ts";
 import { reconcileMergedTickets, realExecGhPrView, realExecGhFindMergedPr } from "./roles/dev/reconcile.ts";
 import { ALLOWED_TOOLS as DEV_ALLOWED_TOOLS } from "./roles/dev/tools.ts";
+import { devEarlySkillResult } from "./roles/dev/spawn-result.ts";
 import { runLoopIteration as runResearchIteration } from "./roles/research/phase.ts";
 import type { RunSkillFn as ResearchRunSkillFn, RunSkillResult } from "./roles/research/phase.ts";
 import { ALLOWED_TOOLS as RESEARCH_ALLOWED_TOOLS } from "./roles/research/tools.ts";
+import { researchEarlySkillResult } from "./roles/research/spawn-result.ts";
 import {
   assertResearchRoot,
   researchClaudeMdExcludes,
@@ -271,20 +273,15 @@ async function runResearchPhase(ctx: PhaseContext): Promise<void> {
       durationMin,
     };
 
-    if (run.killedTimeout) {
-      return {
-        ...base,
-        verdictRaw: JSON.stringify(killedTimeoutVerdict(config.ceilings.runTimeoutMin)),
-        costUsd: run.usage.costUsd,
-        tokens: run.usage.tokens,
-      };
-    }
-    if (run.spawnError !== undefined) {
-      // A spawn failure must never throw out of runSkill. Treat it the same
-      // as a missing verdict.json: the loop records an agent_error and
-      // keeps polling.
-      return { ...base, verdictRaw: undefined, costUsd: 0, tokens: { in: 0, out: 0 } };
-    }
+    // Timeout kill or spawn failure: never throw out of runSkill. A spawn
+    // failure is treated as a missing verdict.json (agent_error), as in v1,
+    // but keeps the run's real cost/tokens (fix round 2).
+    const early = researchEarlySkillResult(
+      run,
+      { skill: base.skill, skillVersion: base.skillVersion, model: base.model },
+      config.ceilings.runTimeoutMin,
+    );
+    if (early) return early;
 
     const runDirName = await findNewestRunDir(ctx.runsBaseDir, ticket.key, before);
     let verdictRaw: string | undefined;
@@ -397,26 +394,11 @@ async function runDevPhase(ctx: PhaseContext): Promise<void> {
     );
     await tail.stop();
 
-    if (run.killedTimeout) {
-      return {
-        verdict: killedTimeoutVerdict(config.ceilings.runTimeoutMin),
-        started: run.started,
-        ended: run.ended,
-        costUsd: run.usage.costUsd,
-        tokens: run.usage.tokens,
-      };
-    }
-    if (run.spawnError !== undefined) {
-      // A spawn failure must never throw out of runSkill -- treat it the
-      // same as a missing verdict.json: the loop records an agent_error.
-      return {
-        verdict: agentErrorVerdict(run.spawnError),
-        started: run.started,
-        ended: run.ended,
-        costUsd: 0,
-        tokens: { in: 0, out: 0 },
-      };
-    }
+    // Timeout kill or spawn failure: never throw out of runSkill. A spawn
+    // failure records v1's agent_error verdict, but keeps the run's real
+    // cost/tokens (fix round 2).
+    const early = devEarlySkillResult(run, config.ceilings.runTimeoutMin);
+    if (early) return early;
 
     const runDirName = await findNewestRunDir(ctx.runsBaseDir, ticketKey, before);
     let verdict = runDirName
