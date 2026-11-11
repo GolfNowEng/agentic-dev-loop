@@ -9,8 +9,10 @@ import {
   v2CloneDir,
   v2SessionsDir,
   runIdNow,
-  legacyRunsLog,
-  legacyPipelineDir,
+  legacyRunDirs,
+  v1PreCutoverRunsLog,
+  v2RunsArchive,
+  v2ProjectDir,
   resolveRepoPath,
   TICKET_KEY,
   SESSION_ID,
@@ -33,8 +35,18 @@ describe("paths: exact strings", () => {
   it("v2SessionsDir", () => expect(v2SessionsDir("web")).toBe(".pipeline/v2/web/sessions"));
   it("runIdNow", () => expect(runIdNow(new Date("2026-11-11T01:02:03.456Z"))).toBe(RID));
   it("legacy fns are relative", () => {
-    expect(legacyRunsLog("web")).toBe("runs/web.jsonl");
-    expect(legacyPipelineDir("web")).toBe(".pipeline/web");
+    expect(legacyRunDirs("web")).toBe(".pipeline/web/runs");
+  });
+  it("v2RunsArchive", () => expect(v2RunsArchive("web")).toBe("runs/v2/web.reset-archive.jsonl"));
+  it("v2ProjectDir", () => expect(v2ProjectDir("web")).toBe(".pipeline/v2/web"));
+  it("v1PreCutoverRunsLog: the pre-cutover live v1 logs, repo-root-relative", () => {
+    expect(v1PreCutoverRunsLog("dev", "web")).toBe("runs/web.jsonl");
+    expect(v1PreCutoverRunsLog("research", "web")).toBe("research-loop/runs/web.jsonl");
+  });
+  it("resolveRepoPath accepts the pre-cutover v1 logs", () => {
+    expect(resolveRepoPath(v1PreCutoverRunsLog("research", "web"))).toBe(
+      resolve(import.meta.dirname, "../..", "research-loop/runs/web.jsonl"),
+    );
   });
   it("resolveRepoPath is absolute under the repo root", () => {
     expect(resolveRepoPath(v2CloneDir("web"))).toBe(resolve(import.meta.dirname, "../..", ".pipeline/v2/web/repo"));
@@ -54,8 +66,10 @@ describe("paths: validation", () => {
       expect(() => v2RunDir("web", "s1", bad, "dev", RID)).toThrow(UnsafePathError);
       expect(() => v2RunDir("web", "s1", "TARS-1", bad as never, RID)).toThrow(UnsafePathError);
       expect(() => v2RunDir("web", "s1", "TARS-1", "dev", bad)).toThrow(UnsafePathError);
-      expect(() => legacyRunsLog(bad)).toThrow(UnsafePathError);
-      expect(() => legacyPipelineDir(bad)).toThrow(UnsafePathError);
+      expect(() => legacyRunDirs(bad)).toThrow(UnsafePathError);
+      expect(() => v2RunsArchive(bad)).toThrow(UnsafePathError);
+      expect(() => v2ProjectDir(bad)).toThrow(UnsafePathError);
+      expect(() => v1PreCutoverRunsLog("dev", bad)).toThrow(UnsafePathError);
       expect(() => v1RunsLog(bad as never, "web")).toThrow(UnsafePathError);
     });
   }

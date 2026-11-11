@@ -1,493 +1,364 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { planReset, executeReset, describeResetPlan, describeResetSummary } from "../../src/core/reset-project.ts";
+import {
+  planReset,
+  executeReset,
+  describeResetPlan,
+  describeResetSummary,
+  type ResetPlan,
+} from "../../src/core/reset-project.ts";
 import type { Config } from "../../src/core/types.ts";
 import { makeV2Config } from "../fixtures/config.ts";
+
+const P = "proj";
 
 function makeConfig(targetRepoPath?: string): Config {
   return makeV2Config((c) => {
     c.targetRepo = {
-      url: "git@github.com:fandango/webtarsthree.git",
-      defaultBranch: "master",
+      url: "git@github.com:org/proj.git",
+      defaultBranch: "main",
       ...(targetRepoPath ? { path: targetRepoPath } : {}),
     };
   });
 }
 
-describe("planReset", () => {
-  let repoRoot: string;
-
-  beforeEach(async () => {
-    repoRoot = await mkdtemp(join(tmpdir(), "reset-project-test-"));
+function phase(role: "research" | "dev", outcome = "landed") {
+  return {
+    role, skill: role === "dev" ? "ticket-to-pr" : "ticket-refine", skill_version: "s", model: "m",
+    started: "2026-11-10T00:00:00.000Z", ended: "2026-11-10T00:01:00.000Z", outcome, phase_reached: "pr",
+    cost_usd: 1, tokens: { in: 1, out: 1 }, failure_category: null, detail: "d", pr: null, run_dir: "d",
+  };
+}
+function rec(ticket: string, phases: object[], extra: object = {}): string {
+  return JSON.stringify({
+    ticket, session: "dev-1", loop_version: "2.0.0", started: "2026-11-10T00:00:00.000Z",
+    ended: "2026-11-10T00:01:00.000Z", outcome: "landed", phases, ...extra,
   });
+}
 
-  afterEach(async () => {
-    await rm(repoRoot, { recursive: true, force: true });
-  });
+const LOG = [
+  rec("TARS-1", [phase("research")]), // 0: research only
+  rec("TARS-2", [phase("dev")]), // 1: other ticket
+  rec("TARS-1", [phase("research"), phase("dev", "bounced")]), // 2: both roles
+  rec("TARS-1", [phase("dev", "error")]), // 3: dev only
+  rec("TARS-1", [], { outcome: "interrupted", resume: "dev" }), // 4: dev resume marker
+  rec("TARS-1", [], { outcome: "handoff-done" }), // 5: no role
+  "{ truncated", // 6: unreadable
+];
 
-  it("finds no lines/dirs/files to remove for a ticket with no data at all", async () => {
-    const plan = await planReset(repoRoot, "webtarsthree", "TARS-9999", null);
-    expect(plan.ticketKey).toBe("TARS-9999");
-    expect(plan.wholeProject).toBe(false);
-    expect(plan.runsLogPath).toBeNull();
-    expect(plan.runsLogLinesToRemove).toBe(0);
-    expect(plan.runDirsToRemove).toEqual([]);
-    expect(plan.rawUsageFilesToRemove).toEqual([]);
-    expect(plan.worktreesToRemove).toEqual([]);
-  });
+/** Every v1 location, in both layouts. Reset must never change one byte here. */
+const V1_FILES: Record<string, string> = {
+  [`runs/v1/dev/${P}.jsonl`]: '{"ticket":"TARS-1","outcome":"landed"}\n',
+  [`runs/v1/research/${P}.jsonl`]: '{"ticket":"TARS-1","outcome":"landed"}\n',
+  [`.pipeline/v1/dev/${P}/runs/TARS-1-20260101T000000Z/verdict.json`]: "{}",
+  [`.pipeline/v1/research/${P}/runs/TARS-1-20260101T000000Z/verdict.json`]: "{}",
+  [`runs/${P}.jsonl`]: '{"ticket":"TARS-1","outcome":"landed"}\n',
+  [`runs/${P}.reset-archive.jsonl`]: '{"ticket":"TARS-1"}\n',
+  [`.pipeline/${P}/runs/TARS-1-20260101T000000Z/verdict.json`]: "{}",
+  [`.pipeline/${P}/raw-usage/TARS-1-x.json`]: "{}",
+  [`research-loop/runs/${P}.jsonl`]: '{"ticket":"TARS-1","outcome":"landed"}\n',
+  [`research-loop/.pipeline/${P}/runs/TARS-1-20260101T000000Z/verdict.json`]: "{}",
+};
 
-  it("counts only the target ticket's lines in runs.jsonl, ignoring other tickets", async () => {
-    await mkdir(join(repoRoot, "runs"), { recursive: true });
-    const lines = [
-      { ticket: "TARS-1465", outcome: "landed" },
-      { ticket: "TARS-1389", outcome: "landed" },
-      { ticket: "TARS-1465", outcome: "bounced" },
-    ];
-    await writeFile(
-      join(repoRoot, "runs", "webtarsthree.jsonl"),
-      lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
-      "utf8",
-    );
+const RUN_DIRS = [
+  `.pipeline/v2/${P}/dev-1/TARS-1/research-20261110T000000Z`,
+  `.pipeline/v2/${P}/dev-1/TARS-1/dev-20261110T010000Z`,
+  `.pipeline/v2/${P}/dev-2/TARS-1/dev-20261110T020000Z`,
+  `.pipeline/v2/${P}/dev-1/TARS-2/dev-20261110T030000Z`,
+];
 
-    const plan = await planReset(repoRoot, "webtarsthree", "TARS-1465", null);
-    expect(plan.runsLogLinesToRemove).toBe(2);
-    expect(plan.runsLogPath).toBe(join(repoRoot, "runs", "webtarsthree.jsonl"));
-  });
+const SESSIONS = `.pipeline/v2/${P}/sessions`;
+const LEFTOVERS = [
+  "dev-1.lock.adopted-20261110T000000Z-1-ab",
+  ".acquire.stale-ab",
+  ".acquire.reclaim-0123",
+  ".acquire.release-1-ab",
+  ".tmp-1-ab",
+];
+const KEEP_IN_SESSIONS = ["dev-1.lock", ".acquire", "dev-2.lock.stale-20261110T000000Z-1-ab"];
 
-  it("finds .pipeline/<slug>/runs/<TICKET>-* directories, ignoring other tickets' run dirs", async () => {
-    const runsDir = join(repoRoot, ".pipeline", "webtarsthree", "runs");
-    await mkdir(join(runsDir, "TARS-1465-20260917T212959Z"), { recursive: true });
-    await mkdir(join(runsDir, "TARS-1465-20260917T220051Z"), { recursive: true });
-    await mkdir(join(runsDir, "TARS-1389-20260902T024916Z"), { recursive: true });
+async function put(root: string, rel: string, content: string): Promise<void> {
+  await mkdir(join(root, rel, ".."), { recursive: true });
+  await writeFile(join(root, rel), content);
+}
 
-    const plan = await planReset(repoRoot, "webtarsthree", "TARS-1465", null);
-    expect(plan.runDirsToRemove.sort()).toEqual([
-      join(runsDir, "TARS-1465-20260917T212959Z"),
-      join(runsDir, "TARS-1465-20260917T220051Z"),
-    ]);
-  });
+async function build(root: string): Promise<void> {
+  await put(root, `runs/v2/${P}.jsonl`, LOG.join("\n") + "\n");
+  for (const d of RUN_DIRS) await put(root, `${d}/usage.json`, "{}");
+  for (const f of [...LEFTOVERS, ...KEEP_IN_SESSIONS]) await put(root, `${SESSIONS}/${f}`, "{}");
+  await put(root, `.pipeline/v2/${P}/repo/README`, "clone");
+  await put(root, "runs/v2/other.jsonl", rec("TARS-1", [phase("dev")]) + "\n");
+  await put(root, ".pipeline/v2/other/dev-1/TARS-1/dev-20261110T000000Z/usage.json", "{}");
+  await put(root, ".pipeline/v2/other/sessions/.tmp-1-ab", "{}");
+  for (const [rel, c] of Object.entries(V1_FILES)) await put(root, rel, c);
+}
 
-  it("finds .pipeline/<slug>/raw-usage/<TICKET>-*.json files, ignoring other tickets", async () => {
-    const rawUsageDir = join(repoRoot, ".pipeline", "webtarsthree", "raw-usage");
-    await mkdir(rawUsageDir, { recursive: true });
-    await writeFile(join(rawUsageDir, "TARS-1465-2026-09-17T212906339Z.json"), "{}", "utf8");
-    await writeFile(join(rawUsageDir, "TARS-1389-2026-09-02T024916Z.json"), "{}", "utf8");
+async function exists(p: string): Promise<boolean> {
+  return stat(p).then(() => true, () => false);
+}
 
-    const plan = await planReset(repoRoot, "webtarsthree", "TARS-1465", null);
-    expect(plan.rawUsageFilesToRemove).toEqual([
-      join(rawUsageDir, "TARS-1465-2026-09-17T212906339Z.json"),
-    ]);
-  });
-
-  it("finds targetRepo.path's own worktrees for this ticket when config.targetRepo.path is set", async () => {
-    const targetRepoPath = await mkdtemp(join(tmpdir(), "target-repo-test-"));
+async function snapshot(dir: string): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  async function walk(d: string): Promise<void> {
+    let names: string[];
     try {
-      const worktreesDir = join(targetRepoPath, ".claude", "worktrees");
-      await mkdir(join(worktreesDir, "TARS-1465-20260917T212959Z"), { recursive: true });
-      await mkdir(join(worktreesDir, "TARS-1389-20260902T024916Z"), { recursive: true });
+      names = await readdir(d);
+    } catch {
+      return;
+    }
+    for (const name of names.sort()) {
+      const p = join(d, name);
+      if ((await stat(p)).isDirectory()) {
+        out[`${p}/`] = "";
+        await walk(p);
+      } else out[p] = await readFile(p, "utf8");
+    }
+  }
+  await walk(dir);
+  return out;
+}
 
-      const config = makeConfig(targetRepoPath);
-      const plan = await planReset(repoRoot, "webtarsthree", "TARS-1465", config);
-      expect(plan.worktreesToRemove).toEqual([
-        join(worktreesDir, "TARS-1465-20260917T212959Z"),
-      ]);
+/** Every file and dir of both v1 layouts. */
+async function v1Snapshot(root: string): Promise<Record<string, string>> {
+  const all = await snapshot(root);
+  return Object.fromEntries(
+    Object.entries(all).filter(([p]) => {
+      const rel = p.slice(root.length + 1);
+      return !rel.startsWith("runs/v2") && !rel.startsWith(".pipeline/v2") && rel !== "runs/" && rel !== ".pipeline/";
+    }),
+  );
+}
+
+const liveLines = async (root: string) =>
+  (await readFile(join(root, `runs/v2/${P}.jsonl`), "utf8")).split("\n").filter(Boolean);
+const archiveLines = async (root: string) =>
+  (await readFile(join(root, `runs/v2/${P}.reset-archive.jsonl`), "utf8")).split("\n").filter(Boolean);
+
+describe("planReset / executeReset (v2 layout)", () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "reset-project-test-"));
+    await build(root);
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("defaults to role all", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1" });
+    expect(plan.role).toBe("all");
+  });
+
+  it("per-ticket, role all: every TARS-1 run dir in every session, every TARS-1 record", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", role: "all" });
+    expect(plan.wholeProject).toBe(false);
+    expect(plan.runDirsToRemove).toEqual([RUN_DIRS[1], RUN_DIRS[0], RUN_DIRS[2]].map((d) => join(root, d)));
+    expect(plan.recordsToArchive).toBe(5);
+    expect(plan.sessionLeftoversToRemove).toEqual([]);
+
+    const summary = await executeReset(plan);
+    expect(summary.recordsArchived).toBe(5);
+    expect(await liveLines(root)).toEqual([LOG[1], LOG[6]]);
+    expect(await archiveLines(root)).toEqual([LOG[0], LOG[2], LOG[3], LOG[4], LOG[5]]);
+    for (const d of RUN_DIRS.slice(0, 3)) expect(await exists(join(root, d))).toBe(false);
+    expect(await exists(join(root, RUN_DIRS[3]))).toBe(true);
+  });
+
+  it("--role research leaves the dev-* dirs and archives only records with a research phase", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", role: "research" });
+    expect(plan.runDirsToRemove).toEqual([join(root, RUN_DIRS[0])]);
+    await executeReset(plan);
+    expect(await exists(join(root, RUN_DIRS[0]))).toBe(false);
+    for (const d of RUN_DIRS.slice(1)) expect(await exists(join(root, d))).toBe(true);
+    expect(await archiveLines(root)).toEqual([LOG[0], LOG[2]]);
+    expect(await liveLines(root)).toEqual([LOG[1], LOG[3], LOG[4], LOG[5], LOG[6]]);
+  });
+
+  it("--role dev leaves research-* dirs; archives records with a dev phase or a dev resume", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", role: "dev" });
+    expect(plan.runDirsToRemove).toEqual([RUN_DIRS[1], RUN_DIRS[2]].map((d) => join(root, d)));
+    await executeReset(plan);
+    expect(await exists(join(root, RUN_DIRS[0]))).toBe(true);
+    expect(await exists(join(root, RUN_DIRS[3]))).toBe(true);
+    expect(await archiveLines(root)).toEqual([LOG[2], LOG[3], LOG[4]]);
+  });
+
+  it("whole project, role all: archives every line, removes every run dir, prunes only session leftovers", async () => {
+    const plan = await planReset({ root, project: P, role: "all" });
+    expect(plan.wholeProject).toBe(true);
+    expect(plan.sessionLeftoversToRemove.map((p) => p.slice(join(root, SESSIONS).length + 1)).sort()).toEqual([...LEFTOVERS].sort());
+    await executeReset(plan);
+    expect(await exists(join(root, `runs/v2/${P}.jsonl`))).toBe(false);
+    expect(await archiveLines(root)).toEqual(LOG);
+    for (const d of RUN_DIRS) expect(await exists(join(root, d))).toBe(false);
+    expect((await readdir(join(root, SESSIONS))).sort()).toEqual([...KEEP_IN_SESSIONS].sort());
+    expect(await exists(join(root, `.pipeline/v2/${P}/repo/README`))).toBe(true);
+    // another project is untouched
+    expect(await exists(join(root, ".pipeline/v2/other/dev-1/TARS-1/dev-20261110T000000Z/usage.json"))).toBe(true);
+    expect(await exists(join(root, ".pipeline/v2/other/sessions/.tmp-1-ab"))).toBe(true);
+    expect(await readFile(join(root, "runs/v2/other.jsonl"), "utf8")).toBe(rec("TARS-1", [phase("dev")]) + "\n");
+  });
+
+  it("whole project, role research: only research-* dirs and research records", async () => {
+    await executeReset(await planReset({ root, project: P, role: "research" }));
+    expect(await exists(join(root, RUN_DIRS[0]))).toBe(false);
+    for (const d of RUN_DIRS.slice(1)) expect(await exists(join(root, d))).toBe(true);
+    expect(await archiveLines(root)).toEqual([LOG[0], LOG[2]]);
+  });
+
+  it("a per-ticket reset never prunes session leftovers", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1" });
+    await executeReset(plan);
+    expect((await readdir(join(root, SESSIONS))).length).toBe(LEFTOVERS.length + KEEP_IN_SESSIONS.length);
+  });
+
+  it("reports live session locks so the caller can warn", async () => {
+    const plan = await planReset({ root, project: P });
+    expect(plan.liveLocks).toEqual([join(root, SESSIONS, "dev-1.lock")]);
+    expect(describeResetPlan(plan)).toMatch(/session lock.*dev-1\.lock/i);
+  });
+
+  for (const ticket of ["TARS-1", undefined]) {
+    for (const role of ["research", "dev", "all"] as const) {
+      it(`never touches runs/v1/, .pipeline/v1/ or the pre-cutover v1 folders (ticket ${ticket ?? "none"}, role ${role})`, async () => {
+        const before = await v1Snapshot(root);
+        expect(Object.keys(before).length).toBeGreaterThan(Object.keys(V1_FILES).length);
+        await executeReset(await planReset({ root, project: P, ticket, role }));
+        expect(await v1Snapshot(root)).toEqual(before);
+      });
+    }
+  }
+
+  it("executeReset refuses a plan naming a path outside the project's v2 state", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1" });
+    const bad: ResetPlan = { ...plan, runDirsToRemove: [join(root, `.pipeline/${P}/runs/TARS-1-20260101T000000Z`)] };
+    await expect(executeReset(bad)).rejects.toThrow(/outside/);
+    expect(await exists(join(root, `.pipeline/${P}/runs/TARS-1-20260101T000000Z/verdict.json`))).toBe(true);
+  });
+
+  it("nothing to do: a ticket with no v2 state", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-999" });
+    expect(plan.recordsToArchive).toBe(0);
+    expect(plan.runDirsToRemove).toEqual([]);
+    const before = await snapshot(root);
+    await executeReset(plan);
+    expect(await snapshot(root)).toEqual(before);
+  });
+
+  it("no v2 state at all: an empty plan, and executing it creates nothing", async () => {
+    const empty = await mkdtemp(join(tmpdir(), "reset-project-empty-"));
+    try {
+      const plan = await planReset({ root: empty, project: P });
+      expect(plan.runsLogExists).toBe(false);
+      expect(plan.recordsToArchive).toBe(0);
+      await executeReset(plan);
+      expect(await readdir(empty)).toEqual([]);
     } finally {
-      await rm(targetRepoPath, { recursive: true, force: true });
+      await rm(empty, { recursive: true, force: true });
     }
   });
 
-  it("returns no worktrees to remove when config is null (no targetRepo.path known)", async () => {
-    const plan = await planReset(repoRoot, "webtarsthree", "TARS-1465", null);
-    expect(plan.worktreesToRemove).toEqual([]);
+  it("a second reset appends to the archive, never overwriting", async () => {
+    await executeReset(await planReset({ root, project: P, ticket: "TARS-1", role: "research" }));
+    await executeReset(await planReset({ root, project: P, ticket: "TARS-2" }));
+    expect(await archiveLines(root)).toEqual([LOG[0], LOG[2], LOG[1]]);
   });
 
-  it("returns no worktrees to remove when config.targetRepo.path is unset", async () => {
-    const config = makeConfig(undefined);
-    const plan = await planReset(repoRoot, "webtarsthree", "TARS-1465", config);
-    expect(plan.worktreesToRemove).toEqual([]);
+  it("worktrees: role-scoped by name (research = <TICKET>-*-ground), only for a per-ticket reset", async () => {
+    const target = await mkdtemp(join(tmpdir(), "target-repo-test-"));
+    try {
+      const wt = join(target, ".claude", "worktrees");
+      for (const n of ["TARS-1-20261110T000000Z", "TARS-1-20261110T000000Z-ground", "TARS-2-20261110T000000Z"]) {
+        await mkdir(join(wt, n), { recursive: true });
+      }
+      const config = makeConfig(target);
+      expect((await planReset({ root, project: P, ticket: "TARS-1", role: "research", config })).worktreesToRemove).toEqual([
+        join(wt, "TARS-1-20261110T000000Z-ground"),
+      ]);
+      expect((await planReset({ root, project: P, ticket: "TARS-1", role: "dev", config })).worktreesToRemove).toEqual([
+        join(wt, "TARS-1-20261110T000000Z"),
+      ]);
+      const all = await planReset({ root, project: P, ticket: "TARS-1", config });
+      expect(all.worktreesToRemove).toEqual([join(wt, "TARS-1-20261110T000000Z"), join(wt, "TARS-1-20261110T000000Z-ground")]);
+      expect((await planReset({ root, project: P, config })).worktreesToRemove).toEqual([]);
+      await executeReset(all);
+      expect(await readdir(wt)).toEqual(["TARS-2-20261110T000000Z"]);
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
   });
 
-  it("a whole-project reset (no ticketKey) marks wholeProject true and skips per-ticket scanning entirely", async () => {
-    await mkdir(join(repoRoot, "runs"), { recursive: true });
-    await writeFile(join(repoRoot, "runs", "webtarsthree.jsonl"), '{"ticket":"TARS-1"}\n', "utf8");
-
-    const plan = await planReset(repoRoot, "webtarsthree", undefined, null);
-    expect(plan.wholeProject).toBe(true);
-    expect(plan.ticketKey).toBeNull();
-    expect(plan.runsLogPath).toBe(join(repoRoot, "runs", "webtarsthree.jsonl"));
-    expect(plan.runDirsToRemove).toEqual([]);
-    expect(plan.rawUsageFilesToRemove).toEqual([]);
-    expect(plan.worktreesToRemove).toEqual([]);
+  it("no worktree scan when config is null or targetRepo.path is unset", async () => {
+    expect((await planReset({ root, project: P, ticket: "TARS-1", config: null })).worktreesToRemove).toEqual([]);
+    expect((await planReset({ root, project: P, ticket: "TARS-1", config: makeConfig() })).worktreesToRemove).toEqual([]);
   });
 
-  it("a whole-project reset reports runsLogPath as null when the file doesn't exist", async () => {
-    const plan = await planReset(repoRoot, "webtarsthree", undefined, null);
-    expect(plan.runsLogPath).toBeNull();
+  it("rejects an unsafe project or ticket", async () => {
+    await expect(planReset({ root, project: "../x" })).rejects.toThrow();
+    await expect(planReset({ root, project: P, ticket: "../TARS-1" })).rejects.toThrow();
   });
 });
 
-describe("executeReset", () => {
-  let repoRoot: string;
-
+describe("describeResetPlan / describeResetSummary", () => {
+  let root: string;
   beforeEach(async () => {
-    repoRoot = await mkdtemp(join(tmpdir(), "reset-project-exec-test-"));
+    root = await mkdtemp(join(tmpdir(), "reset-describe-"));
+    await build(root);
   });
-
   afterEach(async () => {
-    await rm(repoRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   });
 
-  it("rewrites runs.jsonl removing only the target ticket's lines, preserving every other ticket's lines and their order", async () => {
-    await mkdir(join(repoRoot, "runs"), { recursive: true });
-    const lines = [
-      { ticket: "TARS-1364", outcome: "landed" },
-      { ticket: "TARS-1465", outcome: "landed" },
-      { ticket: "TARS-1389", outcome: "landed" },
-      { ticket: "TARS-1465", outcome: "bounced" },
-    ];
-    const runsLogPath = join(repoRoot, "runs", "webtarsthree.jsonl");
-    await writeFile(runsLogPath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf8");
-
-    const plan = await planReset(repoRoot, "webtarsthree", "TARS-1465", null);
-    await executeReset(plan);
-
-    const remaining = (await readFile(runsLogPath, "utf8"))
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l).ticket);
-    expect(remaining).toEqual(["TARS-1364", "TARS-1389"]);
+  it("names the role, counts, paths, and says v1 history is never touched", async () => {
+    const text = describeResetPlan(await planReset({ root, project: P, ticket: "TARS-1", role: "research" }));
+    expect(text).toContain("role: research");
+    expect(text).toContain("archive 2 record(s)");
+    expect(text).toContain("1 run dir(s)");
+    expect(text).toContain(join(root, RUN_DIRS[0]));
+    expect(text).toMatch(/v1 history.*never touched/);
   });
 
-  it("deletes every matching run dir, raw-usage file, and worktree named in the plan", async () => {
-    const runsDir = join(repoRoot, ".pipeline", "webtarsthree", "runs");
-    const rawUsageDir = join(repoRoot, ".pipeline", "webtarsthree", "raw-usage");
-    await mkdir(join(runsDir, "TARS-1465-20260917T212959Z"), { recursive: true });
-    await writeFile(join(runsDir, "TARS-1465-20260917T212959Z", "verdict.json"), "{}", "utf8");
-    await mkdir(rawUsageDir, { recursive: true });
-    await writeFile(join(rawUsageDir, "TARS-1465-2026-09-17T212906339Z.json"), "{}", "utf8");
-
-    const plan = await planReset(repoRoot, "webtarsthree", "TARS-1465", null);
-    await executeReset(plan);
-
-    await expect(readFile(join(runsDir, "TARS-1465-20260917T212959Z", "verdict.json"))).rejects.toThrow();
-    await expect(readFile(join(rawUsageDir, "TARS-1465-2026-09-17T212906339Z.json"))).rejects.toThrow();
-  });
-
-  it("never touches another ticket's run dir, raw-usage file, or runs.jsonl line", async () => {
-    const runsDir = join(repoRoot, ".pipeline", "webtarsthree", "runs");
-    await mkdir(join(runsDir, "TARS-1465-20260917T212959Z"), { recursive: true });
-    await mkdir(join(runsDir, "TARS-1389-20260902T024916Z"), { recursive: true });
-
-    const plan = await planReset(repoRoot, "webtarsthree", "TARS-1465", null);
-    await executeReset(plan);
-
-    // TARS-1389's dir must still exist -- readFile on a file inside it
-    // should not throw "no such directory".
-    const stillThere = await readdirSafe(join(runsDir, "TARS-1389-20260902T024916Z"));
-    expect(stillThere).not.toBeNull();
-  });
-
-  it("a whole-project reset deletes runs.jsonl entirely", async () => {
-    await mkdir(join(repoRoot, "runs"), { recursive: true });
-    const runsLogPath = join(repoRoot, "runs", "webtarsthree.jsonl");
-    await writeFile(runsLogPath, '{"ticket":"TARS-1"}\n', "utf8");
-
-    const plan = await planReset(repoRoot, "webtarsthree", undefined, null);
-    await executeReset(plan);
-
-    await expect(readFile(runsLogPath, "utf8")).rejects.toThrow();
-  });
-
-  it("a whole-project reset deletes .pipeline/<slug>/ entirely, including every ticket's run dirs", async () => {
-    const pipelineDir = join(repoRoot, ".pipeline", "webtarsthree");
-    await mkdir(join(pipelineDir, "runs", "TARS-1465-20260917T212959Z"), { recursive: true });
-    await mkdir(join(pipelineDir, "raw-usage"), { recursive: true });
-    await writeFile(join(pipelineDir, "raw-usage", "TARS-1465-x.json"), "{}", "utf8");
-
-    const plan = await planReset(repoRoot, "webtarsthree", undefined, null);
-    await executeReset(plan);
-
-    const stillThere = await readdirSafe(pipelineDir);
-    expect(stillThere).toBeNull();
-  });
-
-  it("a whole-project reset for one project's slug never touches another project's .pipeline/<slug>/ directory", async () => {
-    const otherPipelineDir = join(repoRoot, ".pipeline", "catalog-ui-management");
-    await mkdir(join(otherPipelineDir, "runs"), { recursive: true });
-
-    const plan = await planReset(repoRoot, "webtarsthree", undefined, null);
-    await executeReset(plan);
-
-    const stillThere = await readdirSafe(otherPipelineDir);
-    expect(stillThere).not.toBeNull();
-  });
-
-  it("a whole-project reset is a no-op on runs.jsonl when the file never existed (no error thrown)", async () => {
-    const plan = await planReset(repoRoot, "webtarsthree", undefined, null);
-    const summary = await executeReset(plan);
-    expect(summary.runsLogLinesRemoved).toBe(0);
-    expect(summary.wholeProjectLogDeleted).toBe(false);
-  });
-
-  it("removing a ticket that has zero matching lines leaves runs.jsonl untouched", async () => {
-    await mkdir(join(repoRoot, "runs"), { recursive: true });
-    const runsLogPath = join(repoRoot, "runs", "webtarsthree.jsonl");
-    const original = '{"ticket":"TARS-1389"}\n';
-    await writeFile(runsLogPath, original, "utf8");
-
-    const plan = await planReset(repoRoot, "webtarsthree", "TARS-9999", null);
-    await executeReset(plan);
-
-    expect(await readFile(runsLogPath, "utf8")).toBe(original);
-  });
-
-  it("a per-ticket reset archives the removed lines instead of deleting them, and returns a matching ResetSummary", async () => {
-    await mkdir(join(repoRoot, "runs"), { recursive: true });
-    const lines = [
-      { ticket: "TARS-1364", outcome: "landed" },
-      { ticket: "TARS-1465", outcome: "landed" },
-      { ticket: "TARS-1465", outcome: "bounced" },
-    ];
-    const runsLogPath = join(repoRoot, "runs", "webtarsthree.jsonl");
-    await writeFile(runsLogPath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf8");
-
-    const plan = await planReset(repoRoot, "webtarsthree", "TARS-1465", null);
-    const summary = await executeReset(plan);
-
-    expect(summary.runsLogLinesRemoved).toBe(2);
-    expect(summary.runsLogLinesArchived).toBe(2);
-    expect(summary.archivePath).toBe(join(repoRoot, "runs", "webtarsthree.reset-archive.jsonl"));
-
-    const archived = (await readFile(summary.archivePath, "utf8"))
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l).ticket);
-    expect(archived).toEqual(["TARS-1465", "TARS-1465"]);
-
-    // Live log still trimmed correctly -- archiving must not change that.
-    const remaining = (await readFile(runsLogPath, "utf8"))
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l).ticket);
-    expect(remaining).toEqual(["TARS-1364"]);
-  });
-
-  it("a whole-project reset archives the entire prior log before deleting it", async () => {
-    await mkdir(join(repoRoot, "runs"), { recursive: true });
-    const lines = [
-      { ticket: "TARS-1364", outcome: "landed" },
-      { ticket: "TARS-1465", outcome: "landed" },
-    ];
-    const runsLogPath = join(repoRoot, "runs", "webtarsthree.jsonl");
-    await writeFile(runsLogPath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf8");
-
-    const plan = await planReset(repoRoot, "webtarsthree", undefined, null);
-    const summary = await executeReset(plan);
-
-    expect(summary.runsLogLinesRemoved).toBe(2);
-    expect(summary.runsLogLinesArchived).toBe(2);
-    expect(summary.wholeProjectLogDeleted).toBe(true);
-    expect(summary.pipelineDirDeleted).toBe(true);
-
-    const archived = (await readFile(summary.archivePath, "utf8"))
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l).ticket);
-    expect(archived).toEqual(["TARS-1364", "TARS-1465"]);
-    await expect(readFile(runsLogPath, "utf8")).rejects.toThrow();
-  });
-
-  it("a second reset's archive lines append after the first's, never overwriting", async () => {
-    await mkdir(join(repoRoot, "runs"), { recursive: true });
-    const runsLogPath = join(repoRoot, "runs", "webtarsthree.jsonl");
-
-    await writeFile(runsLogPath, JSON.stringify({ ticket: "TARS-1465", outcome: "landed" }) + "\n", "utf8");
-    const plan1 = await planReset(repoRoot, "webtarsthree", "TARS-1465", null);
-    const summary1 = await executeReset(plan1);
-
-    await writeFile(runsLogPath, JSON.stringify({ ticket: "TARS-1465", outcome: "bounced" }) + "\n", "utf8");
-    const plan2 = await planReset(repoRoot, "webtarsthree", "TARS-1465", null);
-    const summary2 = await executeReset(plan2);
-
-    expect(summary1.archivePath).toBe(summary2.archivePath);
-    const archived = (await readFile(summary2.archivePath, "utf8"))
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l).outcome);
-    expect(archived).toEqual(["landed", "bounced"]);
-  });
-
-  it("a whole-project reset never archives another project's runs.jsonl, only this slug's", async () => {
-    await mkdir(join(repoRoot, "runs"), { recursive: true });
-    const runsLogPath = join(repoRoot, "runs", "webtarsthree.jsonl");
-    await writeFile(runsLogPath, JSON.stringify({ ticket: "TARS-1", outcome: "landed" }) + "\n", "utf8");
-    const otherLogPath = join(repoRoot, "runs", "catalog-ui-management.jsonl");
-    const otherOriginal = JSON.stringify({ ticket: "OTHER-1", outcome: "landed" }) + "\n";
-    await writeFile(otherLogPath, otherOriginal, "utf8");
-
-    const plan = await planReset(repoRoot, "webtarsthree", undefined, null);
-    await executeReset(plan);
-
-    expect(await readFile(otherLogPath, "utf8")).toBe(otherOriginal);
-    await expect(readFile(join(repoRoot, "runs", "catalog-ui-management.reset-archive.jsonl"))).rejects.toThrow();
-  });
-});
-
-describe("describeResetPlan", () => {
-  it("describes an empty per-ticket plan as nothing to delete in every category", () => {
-    const plan = {
-      ticketKey: "TARS-9999",
-      pipelineDir: "/repo/.pipeline/webtarsthree",
-      runsLogArchivePath: "/repo/runs/webtarsthree.reset-archive.jsonl",
-      runsLogPath: null,
-      runsLogLinesToRemove: 0,
-      runDirsToRemove: [],
-      rawUsageFilesToRemove: [],
-      worktreesToRemove: [],
-      wholeProject: false,
-    };
-    const text = describeResetPlan(plan);
-    expect(text).toContain("no matching lines");
+  it("an empty plan says nothing to do in every category", async () => {
+    const text = describeResetPlan(await planReset({ root, project: P, ticket: "TARS-999" }));
+    expect(text).toContain("no matching records");
     expect(text).toContain("no matching run dirs");
-    expect(text).toContain("no matching files");
     expect(text).toContain("none matching");
   });
 
-  it("describes a populated per-ticket plan with counts and paths", () => {
-    const plan = {
-      ticketKey: "TARS-1465",
-      pipelineDir: "/repo/.pipeline/webtarsthree",
-      runsLogArchivePath: "/repo/runs/webtarsthree.reset-archive.jsonl",
-      runsLogPath: "runs/webtarsthree.jsonl",
-      runsLogLinesToRemove: 9,
-      runDirsToRemove: ["/repo/.pipeline/webtarsthree/runs/TARS-1465-20260917T212959Z"],
-      rawUsageFilesToRemove: ["/repo/.pipeline/webtarsthree/raw-usage/TARS-1465-x.json"],
-      worktreesToRemove: [],
-      wholeProject: false,
-    };
-    const text = describeResetPlan(plan);
-    expect(text).toContain("9 line(s)");
-    expect(text).toContain("1 run dir(s)");
-    expect(text).toContain("1 raw-usage file(s)");
+  it("whole project lists session leftovers", async () => {
+    const text = describeResetPlan(await planReset({ root, project: P }));
+    expect(text).toContain("WHOLE PROJECT");
+    expect(text).toContain(`prune ${LEFTOVERS.length} session leftover(s)`);
   });
 
-  it("describes a whole-project plan distinctly from a per-ticket plan", () => {
-    const plan = {
-      ticketKey: null,
-      pipelineDir: "/repo/.pipeline/webtarsthree",
-      runsLogArchivePath: "/repo/runs/webtarsthree.reset-archive.jsonl",
-      runsLogPath: "runs/webtarsthree.jsonl",
-      runsLogLinesToRemove: 0,
-      runDirsToRemove: [],
-      rawUsageFilesToRemove: [],
-      worktreesToRemove: [],
-      wholeProject: true,
-    };
-    const text = describeResetPlan(plan);
-    expect(text).toContain("delete runs.jsonl entirely");
-    expect(text).toContain("delete .pipeline/<slug>/ entirely");
+  it("summary reports what happened", async () => {
+    const summary = await executeReset(await planReset({ root, project: P, ticket: "TARS-1" }));
+    const text = describeResetSummary(summary);
+    expect(text).toContain("5 record(s) archived to");
+    expect(text).toContain("3 run dir(s) deleted");
   });
 
-  it("shortens paths under the home directory to ~/... in a per-ticket plan", () => {
-    const plan = {
-      ticketKey: "TARS-1465",
-      pipelineDir: join(homedir(), "repos/dev-loop/.pipeline/webtarsthree"),
-      runsLogArchivePath: join(homedir(), "repos/dev-loop/runs/webtarsthree.reset-archive.jsonl"),
-      runsLogPath: join(homedir(), "repos/dev-loop/runs/webtarsthree.jsonl"),
-      runsLogLinesToRemove: 1,
-      runDirsToRemove: [join(homedir(), "repos/dev-loop/.pipeline/webtarsthree/runs/TARS-1465-x")],
-      rawUsageFilesToRemove: [join(homedir(), "repos/dev-loop/.pipeline/webtarsthree/raw-usage/TARS-1465-x.json")],
-      worktreesToRemove: [],
+  it("shortens paths under the home directory to ~/...", () => {
+    const plan: ResetPlan = {
+      project: P,
+      ticketKey: "TARS-1",
+      role: "all",
       wholeProject: false,
+      runsLogPath: join(homedir(), "x/runs/v2/proj.jsonl"),
+      runsLogExists: true,
+      runsLogArchivePath: join(homedir(), "x/runs/v2/proj.reset-archive.jsonl"),
+      recordsToArchive: 1,
+      runDirsToRemove: [join(homedir(), "x/.pipeline/v2/proj/dev-1/TARS-1/dev-20261110T000000Z")],
+      sessionLeftoversToRemove: [],
+      worktreesToRemove: [],
+      liveLocks: [],
+      root: join(homedir(), "x"),
+      worktreesDir: null,
     };
     const text = describeResetPlan(plan);
     expect(text).not.toContain(homedir());
-    expect(text).toContain("~/repos/dev-loop/runs/webtarsthree.jsonl");
-    expect(text).toContain("~/repos/dev-loop/.pipeline/webtarsthree/runs/TARS-1465-x");
-    expect(text).toContain("~/repos/dev-loop/.pipeline/webtarsthree/raw-usage/TARS-1465-x.json");
+    expect(text).toContain("~/x/runs/v2/proj.jsonl");
   });
 });
-
-describe("describeResetSummary", () => {
-  it("describes a populated per-ticket reset summary with counts and paths", () => {
-    const summary = {
-      runsLogLinesRemoved: 9,
-      runsLogLinesArchived: 9,
-      archivePath: "/repo/runs/webtarsthree.reset-archive.jsonl",
-      runDirsDeleted: ["/repo/.pipeline/webtarsthree/runs/TARS-1465-20260917T212959Z"],
-      rawUsageFilesDeleted: ["/repo/.pipeline/webtarsthree/raw-usage/TARS-1465-x.json"],
-      worktreesDeleted: [],
-      wholeProjectLogDeleted: false,
-      pipelineDirDeleted: false,
-    };
-    const text = describeResetSummary(summary);
-    expect(text).toContain("9 line(s)");
-    expect(text).toContain("archived to /repo/runs/webtarsthree.reset-archive.jsonl");
-    expect(text).toContain("1 run dir(s)");
-    expect(text).toContain("1 raw-usage file(s)");
-  });
-
-  it("describes an empty per-ticket reset summary as nothing deleted in every category", () => {
-    const summary = {
-      runsLogLinesRemoved: 0,
-      runsLogLinesArchived: 0,
-      archivePath: "/repo/runs/webtarsthree.reset-archive.jsonl",
-      runDirsDeleted: [],
-      rawUsageFilesDeleted: [],
-      worktreesDeleted: [],
-      wholeProjectLogDeleted: false,
-      pipelineDirDeleted: false,
-    };
-    const text = describeResetSummary(summary);
-    expect(text).toContain("no lines removed");
-    expect(text).toContain("no run dirs deleted");
-    expect(text).toContain("no raw-usage files deleted");
-    expect(text).toContain("no worktrees deleted");
-  });
-
-  it("describes a whole-project reset summary distinctly, naming both the log and pipeline dir as deleted", () => {
-    const summary = {
-      runsLogLinesRemoved: 12,
-      runsLogLinesArchived: 12,
-      archivePath: "/repo/runs/webtarsthree.reset-archive.jsonl",
-      runDirsDeleted: [],
-      rawUsageFilesDeleted: [],
-      worktreesDeleted: [],
-      wholeProjectLogDeleted: true,
-      pipelineDirDeleted: true,
-    };
-    const text = describeResetSummary(summary);
-    expect(text).toContain("runs.jsonl deleted");
-    expect(text).toContain(".pipeline/<slug>/ deleted");
-    expect(text).toContain("12 line(s)");
-  });
-
-  it("shortens paths under the home directory to ~/... in a per-ticket summary", () => {
-    const summary = {
-      runsLogLinesRemoved: 1,
-      runsLogLinesArchived: 1,
-      archivePath: join(homedir(), "repos/dev-loop/runs/webtarsthree.reset-archive.jsonl"),
-      runDirsDeleted: [join(homedir(), "repos/dev-loop/.pipeline/webtarsthree/runs/TARS-1465-x")],
-      rawUsageFilesDeleted: [join(homedir(), "repos/dev-loop/.pipeline/webtarsthree/raw-usage/TARS-1465-x.json")],
-      worktreesDeleted: [],
-      wholeProjectLogDeleted: false,
-      pipelineDirDeleted: false,
-    };
-    const text = describeResetSummary(summary);
-    expect(text).not.toContain(homedir());
-    expect(text).toContain("~/repos/dev-loop/runs/webtarsthree.reset-archive.jsonl");
-    expect(text).toContain("~/repos/dev-loop/.pipeline/webtarsthree/runs/TARS-1465-x");
-    expect(text).toContain("~/repos/dev-loop/.pipeline/webtarsthree/raw-usage/TARS-1465-x.json");
-  });
-});
-
-async function readdirSafe(dir: string): Promise<string[] | null> {
-  const { readdir } = await import("node:fs/promises");
-  try {
-    return await readdir(dir);
-  } catch {
-    return null;
-  }
-}

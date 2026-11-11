@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { recordAdoptedFlights, runWorkerIteration } from "../../src/worker/cycle.ts";
 import { findPendingHandoffs } from "../../src/worker/handoff.ts";
-import { appendIteration, readIterations } from "../../src/core/iteration-log.ts";
+import { appendIteration, findLandedPrUrlAcross, readIterations } from "../../src/core/iteration-log.ts";
 import type { IterationRecord, PhaseEntry } from "../../src/core/iteration-log.ts";
 import { buildPollJql } from "../../src/core/jql.ts";
 import { roleView } from "../../src/core/config.ts";
@@ -601,6 +603,29 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
 
     expect(runSkillCalls(h).map((e) => e[2])).toEqual(["TARS-4"]);
     expect(h.logs.some((m) => m.includes("TARS-3") && /PR still open/.test(m))).toBe(true);
+  });
+
+  it("landed guard over findLandedPrUrlAcross: a v1-only landed ticket (pre-cutover runs/<slug>.jsonl) and a v2-only one are both skipped", async () => {
+    h = await harness();
+    const root = h.dir;
+    await mkdir(join(root, "runs/v2"), { recursive: true });
+    await writeFile(
+      join(root, "runs/repo.jsonl"),
+      JSON.stringify({ ticket: "TARS-3", outcome: "landed", pr: "https://github.com/org/repo/pull/3", ended: "2026-11-01T00:00:00Z" }) + "\n",
+    );
+    await appendIteration(join(root, "runs/v2/repo.jsonl"), {
+      ticket: "TARS-4", session: "dev-1", loop_version: "2.0.0", started: "2026-11-02T00:00:00.000Z", ended: "2026-11-02T00:00:00.000Z",
+      outcome: "landed", phases: [phase({ role: "dev", skill: "ticket-to-pr", outcome: "landed", phase_reached: "pr", pr: "https://github.com/org/repo/pull/4" })],
+    });
+    h.deps.gate.findLandedPrUrl = (k) => findLandedPrUrlAcross("repo", k, root);
+    h.deps.gate.execGhPrView = async () => JSON.stringify({ state: "OPEN", mergedAt: null, baseRefName: "main" });
+    h.jira.dev = [devTicket("TARS-3"), devTicket("TARS-4"), devTicket("TARS-5")];
+
+    await runWorkerIteration(h.deps);
+
+    expect(runSkillCalls(h).map((e) => e[2])).toEqual(["TARS-5"]);
+    expect(h.logs.some((m) => m.includes("TARS-3") && m.includes("pull/3"))).toBe(true);
+    expect(h.logs.some((m) => m.includes("TARS-4") && m.includes("pull/4"))).toBe(true);
   });
 
   it("an invalid key in a poll result is skipped and logged, never interpolated or recorded", async () => {

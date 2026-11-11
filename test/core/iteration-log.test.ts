@@ -8,11 +8,14 @@ import {
   failedAttempts,
   findLandedPrUrlAcross,
   findLandedTicketsAcross,
+  findRecordedPrUrlAcross,
   hasLandedPhase,
+  hasLandedV1,
   lastSkipBlockers,
   readIterations,
   readIterationsDetailed,
   recentlyEnded,
+  resolveV1RunsLog,
   type IterationRecord,
   type PhaseEntry,
 } from "../../src/core/iteration-log.ts";
@@ -210,5 +213,67 @@ describe("landed lookups across v1/v2", () => {
     const root = await tmp();
     expect(await findLandedPrUrlAcross("proj", "TARS-1", root)).toBeNull();
     expect(await findLandedTicketsAcross("proj", root)).toEqual([]);
+  });
+});
+
+describe("v1 log layouts: post-cutover runs/v1/<role>/ first, else the pre-cutover live logs", () => {
+  async function write(root: string, rel: string, lines: object[]): Promise<void> {
+    const f = join(root, rel);
+    await mkdir(join(f, ".."), { recursive: true });
+    await writeFile(f, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  }
+  const landed = (ticket: string, pr: string | null) => ({ ticket, outcome: "landed", pr, ended: "2026-11-01T00:05:00Z" });
+
+  it("resolveV1RunsLog: null when neither layout exists", async () => {
+    const root = await tmp();
+    expect(await resolveV1RunsLog("dev", "proj", root)).toBeNull();
+    expect(await resolveV1RunsLog("research", "proj", root)).toBeNull();
+  });
+
+  it("resolveV1RunsLog: pre-cutover dev = runs/<slug>.jsonl, research = research-loop/runs/<slug>.jsonl", async () => {
+    const root = await tmp();
+    await write(root, "runs/proj.jsonl", [landed("TARS-1", "https://x/pull/1")]);
+    await write(root, "research-loop/runs/proj.jsonl", [landed("TARS-2", null)]);
+    expect(await resolveV1RunsLog("dev", "proj", root)).toEqual({ path: join(root, "runs/proj.jsonl"), layout: "pre-cutover" });
+    expect(await resolveV1RunsLog("research", "proj", root)).toEqual({
+      path: join(root, "research-loop/runs/proj.jsonl"),
+      layout: "pre-cutover",
+    });
+  });
+
+  it("resolveV1RunsLog: post-cutover wins when both exist", async () => {
+    const root = await tmp();
+    await write(root, "runs/proj.jsonl", [landed("TARS-1", "https://x/pull/old")]);
+    await write(root, "runs/v1/dev/proj.jsonl", [landed("TARS-1", "https://x/pull/new")]);
+    expect(await resolveV1RunsLog("dev", "proj", root)).toEqual({ path: join(root, "runs/v1/dev/proj.jsonl"), layout: "post-cutover" });
+    expect(await findLandedPrUrlAcross("proj", "TARS-1", root)).toBe("https://x/pull/new");
+  });
+
+  it("findLandedPrUrlAcross / findLandedTicketsAcross fall back to the pre-cutover dev log", async () => {
+    const root = await tmp();
+    await write(root, "runs/proj.jsonl", [landed("TARS-1", "https://x/pull/1")]);
+    expect(await findLandedPrUrlAcross("proj", "TARS-1", root)).toBe("https://x/pull/1");
+    expect((await findLandedTicketsAcross("proj", root)).map((t) => [t.ticket, t.source])).toEqual([["TARS-1", "v1"]]);
+  });
+
+  it("hasLandedV1 reads the role's resolved v1 log", async () => {
+    const root = await tmp();
+    await write(root, "research-loop/runs/proj.jsonl", [landed("TARS-2", null), { ticket: "TARS-3", outcome: "bounced", pr: null }]);
+    expect(await hasLandedV1("research", "proj", "TARS-2", root)).toBe(true);
+    expect(await hasLandedV1("research", "proj", "TARS-3", root)).toBe(false);
+    expect(await hasLandedV1("dev", "proj", "TARS-2", root)).toBe(false);
+  });
+
+  it("findRecordedPrUrlAcross: any recorded PR (landed or bounced), v2 first, else v1 dev", async () => {
+    const root = await tmp();
+    await write(root, "runs/proj.jsonl", [{ ticket: "TARS-5", outcome: "bounced", pr: "https://x/pull/5" }, landed("TARS-1", "https://x/pull/v1")]);
+    await mkdir(join(root, "runs/v2"), { recursive: true });
+    await writeFile(
+      join(root, "runs/v2/proj.jsonl"),
+      JSON.stringify(rec({ outcome: "bounced", phases: [phase({ outcome: "bounced", pr: "https://x/pull/v2" })] })) + "\n",
+    );
+    expect(await findRecordedPrUrlAcross("proj", "TARS-1", root)).toBe("https://x/pull/v2");
+    expect(await findRecordedPrUrlAcross("proj", "TARS-5", root)).toBe("https://x/pull/5");
+    expect(await findRecordedPrUrlAcross("proj", "TARS-9", root)).toBeNull();
   });
 });
