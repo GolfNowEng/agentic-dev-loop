@@ -1,48 +1,65 @@
 # dev-loop
 
-This is the **Terminal B / dev loop** repo of a local, two-terminal agentic
-Jira pipeline. The pipeline has two cooperating repos:
+A local agentic Jira pipeline in one repo with two phases, selected with
+`--phase research|dev`. The phases coordinate through Jira ticket state
+(labels), not through any direct connection:
 
-- **research-loop** ("Terminal A") refines raw Jira tickets down to a
-  well-specified "ready" state.
-- **dev-loop** (this repo, "Terminal B") picks up tickets that have reached
-  "ready" and turns them into pull requests.
+- **research** (formerly the separate `research-loop` repo, "Terminal A")
+  refines raw Jira tickets into tickets marked ready for dev.
+- **dev** ("Terminal B") picks up ready tickets and lands PRs from them.
 
-## Role: the executor
+Each phase runs as its own long-lived loop in its own terminal. See
+`CLAUDE.md` for working rules and `docs/` for how the pieces fit together.
 
-Per spec section 5.0/5.2, dev-loop operates as **the executor**:
+## Phase: research (the skeptic)
 
-- It trusts the refined ticket completely — the acceptance criteria are the
-  contract, and dev-loop does not renegotiate them.
-- For each acceptance criterion, it writes a failing test first (**RED**),
-  then implements just enough to make it pass (**GREEN**).
+Per spec sections 5.0/5.1. For each ticket it pulls from Jira, it:
+
+1. **Interprets** the ticket as written.
+2. **Grounds** that interpretation against the actual codebase, checking that
+   the ticket's assumptions match reality.
+3. **Attacks** the ticket's assumptions, looking for gaps, ambiguity, or claims
+   that don't hold up.
+4. **Writes** the refined ticket, incorporating what it learned.
+
+A passing verdict means the ticket is ready for the human review gate, not
+ready for dev directly. Only after human review does a ticket's label swap from
+`pipeline:research` to `pipeline:dev`, the label the dev phase polls for. The
+skill is `ticket-refine` with subagents `recon-agent`, `devils-advocate-agent`
+and `verifier-agent`. Until the research runner moves under `src/roles/research`,
+it runs from `research-loop/`, which still holds the skeptic `CLAUDE.md` and
+the research `pipeline.*.config.json` files.
+
+## Phase: dev (the executor)
+
+Per spec section 5.0/5.2:
+
+- It trusts the refined ticket completely: the acceptance criteria are the
+  contract, and it does not renegotiate them.
+- For each acceptance criterion, it writes a failing test first (**RED**), then
+  implements just enough to make it pass (**GREEN**).
 - Once all criteria are green, it runs the verification gates (build, lint,
   full test suite, etc.) before opening a PR.
-- dev-loop **never edits the spec**. If a ticket's spec is wrong, ambiguous,
-  or unimplementable as written, dev-loop bounces the ticket back with
-  concrete evidence (failing test output, contradiction, missing
-  information) rather than silently reinterpreting it.
+- It **never edits the spec**. If a ticket's spec is wrong, ambiguous, or
+  unimplementable as written, it bounces the ticket back with concrete evidence
+  rather than silently reinterpreting it.
 
-## Current status: structural scaffold only
+The skill is `ticket-to-pr` (`.claude/skills/ticket-to-pr/SKILL.md`) with the
+`qa-agent` subagent.
 
-This repo is currently a **structural scaffold**, not a working pipeline:
+## Current status
 
-- The loop-runner's pure functions — config loading, JQL query building,
-  verdict parsing, ceiling enforcement, and run logging — are implemented
-  and unit-tested.
-- The Jira client is real (`RealJiraClient`) and fully bound for the
-  `webtarsthree` project via `pipeline.webtarsthree.config.json`. Adding a
-  second project means adding a second `pipeline.<project>.config.json` —
-  see `docs/config.md`.
-- `ticket-to-pr` (see `.claude/skills/ticket-to-pr/SKILL.md`) and its
-  `qa-agent` subagent are fully authored.
-
-Not yet built: a loop-runner CLI entrypoint that actually spawns `claude -p`
-in a loop, and the live dashboard. See `docs/` for how the pieces fit
-together, and `CLAUDE.md` for this repo's role and working rules.
+- The loop-runner's pure functions (config loading, JQL query building,
+  verdict parsing, ceiling enforcement, run logging) live in `src/core/` and are
+  unit-tested; phase-specific code lives in `src/roles/<phase>/`.
+- The Jira client is real (`RealJiraClient`) and bound per project via
+  `pipeline.<project>.config.json`. Adding a project means adding a config; see
+  `docs/config.md`.
+- Both skills and all their subagents are fully authored.
+- Not yet built: the live dashboard.
 
 ## Running tests
 
 ```sh
-npm install && npm test
+npm install && npm test && npm run test:hooks
 ```
