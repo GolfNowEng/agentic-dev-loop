@@ -81,6 +81,22 @@ const JSON_QUOTED_PATTERN =
 const JSON_UNQUOTED_PATTERN =
   /("([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*)([^\s",{}[\]]+)/g;
 
+/**
+ * Research-loop's unquoted value classes (research 334ced5), written
+ * independently of dev's above. They differ only in NOT excluding `[`, so
+ * they redact a secret value that starts with `[` (`TOKEN=[abc...]`) which
+ * dev's classes leak; dev's classes plus dev's pass order in turn redact
+ * shapes research's leak (e.g. an env-style assignment in JSON-value
+ * position, redacted past its comma). Neither set contains the other
+ * (found by differential fuzzing during the 2.0.0 core unification), so
+ * redactSecrets() runs both passes: every secret either side redacted is
+ * still redacted. See docs/migration-ledger.md (redact).
+ */
+const ENV_UNQUOTED_BRACKET_PATTERN =
+  /((?:export\s+)?\b([A-Za-z][A-Za-z0-9_]*)\s*=\s*)([^\s;}\]{"]+)/g;
+const JSON_UNQUOTED_BRACKET_PATTERN =
+  /("([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*)([^\s,}\]{"]+)/g;
+
 const AWS_KEY_PATTERN = /AKIA[0-9A-Z]{16}/g;
 const JWT_PATTERN = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
 
@@ -169,10 +185,18 @@ export function redactSecrets(text: string): string {
 
   // Quoted variants run first so an already-redacted "REDACTED_SECRET"
   // can't be re-matched by an unquoted pattern (which excludes `"`).
+  // Pass 1: dev-loop's order and value classes.
   result = result.replace(ENV_QUOTED_PATTERN, redactQuoted);
   result = result.replace(JSON_QUOTED_PATTERN, redactQuoted);
   result = result.replace(ENV_UNQUOTED_PATTERN, redactUnquoted);
   result = result.replace(JSON_UNQUOTED_PATTERN, redactUnquoted);
+  // Pass 2: research-loop's order and value classes, over pass 1's output.
+  // An already-redacted value re-redacts to itself, so this only ever adds
+  // redactions; together the two passes redact the union of both sides.
+  result = result.replace(JSON_QUOTED_PATTERN, redactQuoted);
+  result = result.replace(ENV_QUOTED_PATTERN, redactQuoted);
+  result = result.replace(JSON_UNQUOTED_BRACKET_PATTERN, redactUnquoted);
+  result = result.replace(ENV_UNQUOTED_BRACKET_PATTERN, redactUnquoted);
 
   result = result.replace(AWS_KEY_PATTERN, "REDACTED_SECRET");
   result = result.replace(JWT_PATTERN, "REDACTED_SECRET");
@@ -192,7 +216,8 @@ export function redactSecrets(text: string): string {
  * contains anything redactSecrets would redact, false otherwise. This is
  * what the .claude/hooks/block-secret-comments.sh hook (via
  * scripts/check-secret-in-tool-input.ts) uses to decide whether to deny a
- * `gh pr create`/`gh pr edit` Bash call, so this is intentionally the
+ * `gh pr create`/`gh pr edit` Bash call (dev) or a Jira/Confluence write
+ * (research), so this is intentionally the
  * *same* detection logic as redactSecrets, not a second, drifting
  * reimplementation. Pure, defensive: never throws, and returns false
  * rather than throwing when there's nothing to check.

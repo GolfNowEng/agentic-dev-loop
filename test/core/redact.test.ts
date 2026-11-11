@@ -265,6 +265,72 @@ describe("redactSecrets", () => {
       "Server=myhost;Timeout=30",
     );
   });
+
+  // Cases from research-loop/test/redact.test.ts not already covered above.
+  it("redacts an export-prefixed env-style secret value containing a comma, in full", () => {
+    expect(redactSecrets("export TOKEN=abcdefgh,ijklmnop")).toBe(
+      "export TOKEN=REDACTED_SECRET",
+    );
+  });
+
+  it("redacts a quoted env-style secret value containing a comma", () => {
+    expect(redactSecrets('export TOKEN="abcdefgh,ijklmnop"')).toBe(
+      'export TOKEN="REDACTED_SECRET"',
+    );
+  });
+
+  it("redacts multiple secret-shaped vars on one line independently", () => {
+    expect(
+      redactSecrets("API_KEY=abc123secretvalue NEXT_TOKEN=def456anothersecretvalue"),
+    ).toBe("API_KEY=REDACTED_SECRET NEXT_TOKEN=REDACTED_SECRET");
+  });
+
+  it("redacts a mixed-case JSON secret key name", () => {
+    expect(redactSecrets('{"clientSecret":"zzz999anothersecretvalue"}')).toBe(
+      '{"clientSecret":"REDACTED_SECRET"}',
+    );
+  });
+
+  it("redacts embedded credentials in a bare URL with no matching var name", () => {
+    expect(redactSecrets("connecting to postgres://admin:s3cr3tpass@db.internal/app")).toBe(
+      "connecting to postgres://REDACTED_SECRET@db.internal/app",
+    );
+  });
+
+  it("does not touch a URL with no embedded credentials under a secret-shaped name", () => {
+    expect(redactSecrets("DATABASE_URL=postgres://localhost:5432/db")).toBe(
+      "DATABASE_URL=postgres://localhost:5432/db",
+    );
+  });
+});
+
+// dev's and research's redactSecrets() were written independently (dev
+// 17dc2b7, research 334ced5) and differential fuzzing showed each redacts
+// shapes the other leaks. The unified core redacts the union.
+describe("redactSecrets -- union of dev and research pattern sets", () => {
+  // research-only: its unquoted value class does not exclude `[`.
+  it("redacts an env-style secret value that starts with `[` (research)", () => {
+    expect(redactSecrets("TOKEN=[abcdefgh12345]")).toBe("TOKEN=REDACTED_SECRET]");
+  });
+
+  it("redacts an unquoted JSON secret value that starts with `[` (research)", () => {
+    expect(redactSecrets('{"token": [abcdefgh12345]}')).toBe('{"token": REDACTED_SECRET]}');
+  });
+
+  // dev-only: dev runs the env-style pass before the JSON pass, so an
+  // env-style assignment sitting in JSON-value position is redacted whole
+  // (comma included) instead of being cut at the comma.
+  it("redacts an env-style value in JSON-value position in full, past a comma (dev)", () => {
+    expect(redactSecrets('"password": SECRET=abcdefgh,ijklmnop')).toBe(
+      '"password": REDACTED_SECRET',
+    );
+  });
+
+  // dev-only: research's order leaves S3cretValZZ here; dev's redacts it.
+  it("redacts a later secret after a `[`-led value (dev)", () => {
+    const out = redactSecrets("x[PASSWORD=TOKEN[apiKey= S3cretValZZ 123x");
+    expect(out).not.toContain("S3cretValZZ");
+  });
 });
 
 describe("containsSecret", () => {
