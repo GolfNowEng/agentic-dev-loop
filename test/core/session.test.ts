@@ -71,7 +71,7 @@ describe("acquireSession", () => {
     expect(s.name).toBe("dev-1");
     expect((await readLock("dev-1")).pid).toBe(1001);
     const files = await fs.readdir(dir);
-    expect(files.some((f) => f.startsWith("dev-1.lock.stale-"))).toBe(true);
+    expect(files.some((f) => f.startsWith("dev-1.lock.adopted-"))).toBe(true);
   });
 
   it("honours --session name", async () => {

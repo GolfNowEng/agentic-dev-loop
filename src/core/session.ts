@@ -1,12 +1,21 @@
 // Worker session identity and lockfile (spec §6.2).
 //
-// One live worker per project: every `<dir>/*.lock` is scanned and any live
-// one refuses the new worker (LiveWorkerError). A lock whose process is gone
-// (or whose pid was reused — the start time no longer matches) is stale: it is
-// reclaimed by renaming it to `<lock>.stale-<ts>-<pid>` (only the process whose
-// rename succeeds proceeds) and its `inFlight` record is handed back so the
-// worker can resume the crashed run. Corrupt locks never throw; they are
-// reclaimed like stale ones with `inFlight: null`.
+// One live worker per project. Every acquire runs under a project-wide mutex
+// (`<dir>/.acquire`, published atomically with link(2)), so scan → reclaim →
+// create → verify never interleaves with another acquire. Inside it:
+//   - any live `<dir>/*.lock` refuses the new worker (LiveWorkerError);
+//   - every non-live lock (dead pid, reused pid, or corrupt) is renamed to
+//     `<name>.lock.stale-<ts>-<pid>-<rand>`;
+//   - the inFlight records of every unadopted `.lock.stale-*` file (from this
+//     acquire or from a reclaimer that died mid-way) are collected: one is
+//     adopted as `inFlight`, any others are returned as `orphanedInFlight`, and
+//     the files are renamed to `.lock.adopted-*` only once the new lock is
+//     published and verified, so an in-flight ticket is never dropped silently;
+//   - the new lock is written to a temp file and link(2)ed into place, so a lock
+//     is never observable half-written (a corrupt lock really is corrupt).
+//
+// Process start times are epoch seconds parsed from `ps -o lstart=` run with
+// LC_ALL=C and TZ=UTC, so two starters with different locales/zones agree.
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -24,7 +33,8 @@ export interface InFlight {
 
 interface LockBody {
   pid: number;
-  started: string;
+  /** Process start time, epoch seconds (see processStartTime). */
+  started: number;
   inFlight: InFlight | null;
 }
 
@@ -39,29 +49,47 @@ export class LiveWorkerError extends Error {
   }
 }
 
+/** Another process held the project's acquire mutex for longer than mutexTimeoutMs. */
+export class AcquireBusyError extends Error {
+  readonly holderPid: number;
+  constructor(holderPid: number, waitedMs: number) {
+    super(`another process (pid ${holderPid}) is acquiring a session for this project; gave up after ${waitedMs}ms`);
+    this.name = "AcquireBusyError";
+    this.holderPid = holderPid;
+  }
+}
+
 export interface AcquireOptions {
   /** The sessions directory (callers pass the resolved v2SessionsDir(slug)). Created if missing. */
   dir: string;
   /** --session <name>; auto-named when omitted. */
   requested?: string;
   pid: number;
-  /**
-   * Start time recorded in the lock, in the format isAlive compares against.
-   * Defaults to processStartTime(pid) (`ps -o lstart=`).
-   */
-  started?: string;
-  isAlive: (pid: number, startedAt: string) => boolean;
+  /** Start time of `pid`, epoch seconds. Defaults to processStartTime(pid). */
+  started?: number;
+  /** Liveness of a lock / mutex holder. Production passes isProcessAlive. */
+  isAlive: (pid: number, startedAt: number) => boolean;
   now: Date;
+  /** How long to wait for a live acquire-mutex holder. Default 5000ms. */
+  mutexTimeoutMs?: number;
+  /** Test-only seams. */
+  _hooks?: { beforePublish?: () => Promise<void> };
 }
 
 export interface Session {
   name: string;
+  /** The crashed run to resume, if any. */
   inFlight: InFlight | null;
+  /** Further in-flight records found in stale locks beyond the adopted one. Never dropped silently. */
+  orphanedInFlight: InFlight[];
   setInFlight: (f: InFlight | null) => Promise<void>;
   release: () => Promise<void>;
 }
 
 const LOCK_EXT = ".lock";
+const STALE_MARK = ".lock.stale-";
+const ADOPTED_MARK = ".lock.adopted-";
+const MUTEX = ".acquire";
 const ROLES: readonly string[] = ["research", "dev"] satisfies readonly Role[];
 
 // ---- liveness -------------------------------------------------------------
@@ -70,29 +98,57 @@ function isPid(pid: unknown): pid is number {
   return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0;
 }
 
-/** `ps -o lstart= -p <pid>`, trimmed; null if the process doesn't exist or ps fails. */
-export function processStartTime(pid: number): string | null {
+function isStarted(v: unknown): v is number {
+  return typeof v === "number" && Number.isSafeInteger(v) && v > 0;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const LSTART = /^(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat) ([A-Z][a-z]{2}) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/;
+
+/** Parse C-locale `ps -o lstart=` output ("Wed Nov 11 19:03:23 2026"), read as UTC, to epoch seconds. */
+export function parseLstart(s: string): number | null {
+  const m = LSTART.exec(s.trim());
+  if (!m) return null;
+  const month = MONTHS.indexOf(m[1]);
+  if (month < 0) return null;
+  const ms = Date.UTC(Number(m[6]), month, Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5]));
+  return Number.isFinite(ms) ? ms / 1000 : null;
+}
+
+/** Start time of `pid` as epoch seconds (`ps -o lstart=` under LC_ALL=C, TZ=UTC); null if absent/unparseable. */
+export function processStartTime(pid: number): number | null {
   if (!isPid(pid)) return null;
   try {
     const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return out === "" ? null : out;
+      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+    });
+    return parseLstart(out);
   } catch {
     return null;
   }
 }
 
-/** The real isAlive: the pid exists (EPERM counts as alive) AND its start time equals `startedAt`. */
-export function isProcessAlive(pid: number, startedAt: string): boolean {
+/**
+ * The real isAlive: `process.kill(pid, 0)` succeeds (EPERM counts as alive) AND
+ * the start time equals `startedAt`. If the pid exists but its start time can't
+ * be read, it is treated as ALIVE (fail closed: never reclaim a lock we can't
+ * prove is stale).
+ */
+export function isProcessAlive(
+  pid: number,
+  startedAt: number,
+  startTime: (pid: number) => number | null = processStartTime,
+): boolean {
   if (!isPid(pid)) return false;
   try {
     process.kill(pid, 0);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EPERM") return false;
   }
-  return processStartTime(pid) === startedAt;
+  const actual = startTime(pid);
+  return actual === null ? true : actual === startedAt;
 }
 
 // ---- naming ---------------------------------------------------------------
@@ -127,137 +183,214 @@ function validInFlight(v: unknown): v is InFlight {
   );
 }
 
-interface ScannedLock {
-  name: string;
-  path: string;
+interface Parsed {
   /** null when the pid could not be parsed (corrupt lock). */
   pid: number | null;
-  started: string;
+  /** null when absent/invalid. */
+  started: number | null;
   /** null when absent or when the lock is corrupt. */
   inFlight: InFlight | null;
 }
 
-function parseLock(name: string, path: string, raw: string): ScannedLock {
+function parseBody(raw: string): Parsed {
   let body: unknown;
   try {
     body = JSON.parse(raw);
   } catch {
-    return { name, path, pid: null, started: "", inFlight: null };
+    return { pid: null, started: null, inFlight: null };
   }
   const b = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
   const pid = isPid(b.pid) ? b.pid : null;
-  const started = typeof b.started === "string" ? b.started : "";
-  const wellFormed = pid !== null && typeof b.started === "string" && (b.inFlight === null || validInFlight(b.inFlight));
-  return { name, path, pid, started, inFlight: wellFormed && b.inFlight ? (b.inFlight as InFlight) : null };
+  const started = isStarted(b.started) ? b.started : null;
+  const wellFormed = pid !== null && started !== null && (b.inFlight === null || validInFlight(b.inFlight));
+  return { pid, started, inFlight: wellFormed && b.inFlight ? (b.inFlight as InFlight) : null };
 }
 
-async function scan(dir: string): Promise<ScannedLock[]> {
-  const out: ScannedLock[] = [];
-  for (const f of (await fs.readdir(dir)).sort()) {
-    if (!f.endsWith(LOCK_EXT)) continue;
-    const name = f.slice(0, -LOCK_EXT.length);
-    const path = join(dir, f);
-    let raw: string;
-    try {
-      raw = await fs.readFile(path, "utf8");
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue; // released/reclaimed meanwhile
-      throw e;
-    }
-    out.push(parseLock(name, path, raw));
-  }
-  return out;
+interface FileEntry extends Parsed {
+  file: string;
+  path: string;
 }
 
 function errCode(e: unknown): string | undefined {
   return (e as NodeJS.ErrnoException)?.code;
 }
 
+async function readEntry(dir: string, file: string): Promise<FileEntry | null> {
+  const path = join(dir, file);
+  try {
+    return { file, path, ...parseBody(await fs.readFile(path, "utf8")) };
+  } catch (e) {
+    if (errCode(e) === "ENOENT") return null;
+    throw e;
+  }
+}
+
+async function scanFiles(dir: string, keep: (f: string) => boolean): Promise<FileEntry[]> {
+  const out: FileEntry[] = [];
+  for (const f of (await fs.readdir(dir)).sort()) {
+    if (!keep(f)) continue;
+    const e = await readEntry(dir, f);
+    if (e) out.push(e);
+  }
+  return out;
+}
+
+const isLockFile = (f: string) => f.endsWith(LOCK_EXT) && !f.startsWith(".");
+const isStaleFile = (f: string) => f.includes(STALE_MARK);
+const lockName = (f: string) => f.slice(0, f.indexOf(LOCK_EXT));
+
+const rand = () => randomBytes(4).toString("hex");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Write `body` fully to a temp file, then link(2) it to `target`. Returns false on EEXIST. */
+async function publish(dir: string, target: string, body: unknown, beforeLink?: () => Promise<void>): Promise<boolean> {
+  const tmp = join(dir, `.tmp-${process.pid}-${rand()}`);
+  try {
+    await fs.writeFile(tmp, JSON.stringify(body) + "\n", { flag: "wx" });
+    if (beforeLink) await beforeLink();
+    await fs.link(tmp, target);
+    return true;
+  } catch (e) {
+    if (errCode(e) === "EEXIST") return false;
+    throw e;
+  } finally {
+    await fs.rm(tmp, { force: true });
+  }
+}
+
+// ---- acquire mutex --------------------------------------------------------
+
+interface Mutex {
+  stillOurs: () => Promise<boolean>;
+  release: () => Promise<void>;
+}
+
+async function takeMutex(
+  dir: string,
+  pid: number,
+  started: number,
+  isAlive: AcquireOptions["isAlive"],
+  timeoutMs: number,
+): Promise<Mutex> {
+  const path = join(dir, MUTEX);
+  const ours = async () => {
+    const e = await readEntry(dir, MUTEX);
+    return e !== null && e.pid === pid && e.started === started;
+  };
+  const deadline = Date.now() + timeoutMs;
+  let holder = 0;
+  for (let delay = 5; ; delay = Math.min(delay * 2, 50)) {
+    if (await publish(dir, path, { pid, started })) {
+      return {
+        stillOurs: ours,
+        release: async () => {
+          if (await ours()) await fs.rm(path, { force: true });
+        },
+      };
+    }
+    const h = await readEntry(dir, MUTEX);
+    if (h === null) continue; // released meanwhile
+    holder = h.pid ?? 0;
+    if (h.pid === null || h.started === null || !isAlive(h.pid, h.started)) {
+      // Stale mutex: move it aside, then confirm we moved the one we judged stale.
+      const asideFile = `${MUTEX}.stale-${pid}-${rand()}`;
+      const aside = join(dir, asideFile);
+      try {
+        await fs.rename(path, aside);
+      } catch (e) {
+        if (errCode(e) === "ENOENT") continue;
+        throw e;
+      }
+      const moved = await readEntry(dir, asideFile);
+      const same = moved !== null && moved.pid === h.pid && moved.started === h.started;
+      if (!same) {
+        // We raced and moved a fresh holder's mutex: put it back (if nobody took the slot meanwhile).
+        try {
+          await fs.link(aside, path);
+        } catch (e) {
+          if (errCode(e) !== "EEXIST") throw e;
+        }
+      }
+      await fs.rm(aside, { force: true });
+      continue;
+    }
+    if (Date.now() >= deadline) throw new AcquireBusyError(holder, timeoutMs);
+    await sleep(delay);
+  }
+}
+
 // ---- acquire --------------------------------------------------------------
+
+function sameFlight(a: InFlight, b: InFlight): boolean {
+  return a.ticket === b.ticket && a.role === b.role && a.runDir === b.runDir && a.since === b.since;
+}
 
 export async function acquireSession(opts: AcquireOptions): Promise<Session> {
   const { dir, pid, isAlive, now } = opts;
   if (opts.requested !== undefined) checkName(opts.requested);
   if (!isPid(pid)) throw new Error(`pid ${pid} must be a positive integer`);
   const started = opts.started ?? processStartTime(pid);
-  if (started === null) throw new Error(`cannot read the start time of pid ${pid} (ps -o lstart=)`);
+  if (!isStarted(started)) throw new Error(`cannot read the start time of pid ${pid} (ps -o lstart=)`);
   await fs.mkdir(dir, { recursive: true });
 
-  const live = (l: ScannedLock) => l.pid !== null && isAlive(l.pid, l.started);
-  const refuseIfLive = (locks: ScannedLock[], except?: string) => {
-    const hit = locks.find((l) => l.name !== except && live(l));
-    if (hit) throw new LiveWorkerError(hit.name, hit.pid!);
-  };
+  const mutex = await takeMutex(dir, pid, started, isAlive, opts.mutexTimeoutMs ?? 5000);
+  try {
+    const isOurs = (e: Parsed) => e.pid === pid && e.started === started;
+    const live = (e: Parsed) => e.pid !== null && isAlive(e.pid, e.started ?? 0);
+    const refuseIfLive = (locks: FileEntry[]) => {
+      const hit = locks.find((l) => !isOurs(l) && live(l));
+      if (hit) throw new LiveWorkerError(lockName(hit.file), hit.pid!);
+    };
 
-  // inFlight from locks this process reclaimed, kept across the EEXIST rescan.
-  let carried: InFlight | null = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const locks = await scan(dir);
-    refuseIfLive(locks);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const locks = await scanFiles(dir, isLockFile);
+      refuseIfLive(locks);
 
-    // Reclaim every stale lock; only the process whose rename succeeds proceeds.
-    const reclaimed: ScannedLock[] = [];
-    let lostRace = false;
-    for (const l of locks) {
+      // Every lock left is non-live (dead, reused pid, or corrupt): move it aside.
+      for (const l of locks) {
+        try {
+          await fs.rename(l.path, `${l.path}.stale-${runIdNow(now)}-${pid}-${rand()}`);
+        } catch (e) {
+          if (errCode(e) !== "ENOENT") throw e;
+        }
+      }
+
+      const name = opts.requested ?? autoSessionName(new Set());
+      const stale = await scanFiles(dir, isStaleFile);
+      const flights: InFlight[] = [];
+      const mine = stale.filter((s) => lockName(s.file) === name);
+      for (const s of [...mine, ...stale.filter((s) => !mine.includes(s))]) {
+        if (s.inFlight && !flights.some((f) => sameFlight(f, s.inFlight!))) flights.push(s.inFlight);
+      }
+      const [inFlight = null, ...orphanedInFlight] = flights;
+
+      const lockPath = join(dir, name + LOCK_EXT);
+      const body: LockBody = { pid, started, inFlight };
+      if (!(await publish(dir, lockPath, body, opts._hooks?.beforePublish))) continue; // rescan once
+
+      // Verify: the lock is ours, nothing else live appeared, and we still hold the mutex.
+      const self = await readEntry(dir, name + LOCK_EXT);
+      const ok = self !== null && isOurs(self) && (await mutex.stillOurs());
       try {
-        await fs.rename(l.path, `${l.path}.stale-${runIdNow(now)}-${pid}`);
-        reclaimed.push(l);
+        if (!ok) throw new Error(`session acquire lost a race on ${lockPath}; retry`);
+        refuseIfLive(await scanFiles(dir, isLockFile));
       } catch (e) {
-        if (errCode(e) !== "ENOENT") throw e;
-        lostRace = true;
+        if (self && isOurs(self)) await fs.rm(lockPath, { force: true });
+        throw e;
       }
-    }
-    if (lostRace) {
-      // Another process reclaimed first: wait briefly for its lock and name it.
-      for (let i = 0; i < 40; i++) {
-        const now2 = await scan(dir);
-        refuseIfLive(now2);
-        await sleep(25);
+
+      // Published and verified: the stale records are now owned by this session.
+      for (const s of stale) {
+        await fs.rename(s.path, s.path.replace(STALE_MARK, ADOPTED_MARK)).catch((e) => {
+          if (errCode(e) !== "ENOENT") throw e;
+        });
       }
-      continue; // the other reclaimer never showed up: rescan once
+      return makeSession(dir, name, lockPath, pid, started, inFlight, orphanedInFlight);
     }
-
-    // Every scanned lock was non-live and is now reclaimed, so no name is taken.
-    const name = opts.requested ?? autoSessionName(new Set());
-    const resume: InFlight | null =
-      reclaimed.find((l) => l.name === name && l.inFlight)?.inFlight ??
-      reclaimed.find((l) => l.inFlight)?.inFlight ??
-      carried;
-    carried = resume;
-    const lockPath = join(dir, name + LOCK_EXT);
-    const body: LockBody = { pid, started, inFlight: resume };
-
-    let fh: fs.FileHandle;
-    try {
-      fh = await fs.open(lockPath, "wx");
-    } catch (e) {
-      if (errCode(e) === "EEXIST") continue; // rescan once
-      throw e;
-    }
-    try {
-      await fh.writeFile(JSON.stringify(body) + "\n");
-    } finally {
-      await fh.close();
-    }
-
-    // Post-create check: if another worker slipped in alongside us, back off.
-    try {
-      refuseIfLive(await scan(dir), name);
-    } catch (e) {
-      await fs.rm(lockPath, { force: true });
-      throw e;
-    }
-
-    return makeSession(dir, name, lockPath, pid, started, resume);
+    throw new Error(`session acquire lost the race in ${dir} twice (lock appeared outside the acquire mutex); retry`);
+  } finally {
+    await mutex.release();
   }
-
-  // Two attempts lost a race; report whoever holds a live lock now.
-  const final = await scan(dir);
-  refuseIfLive(final);
-  const holder = final[0];
-  throw new LiveWorkerError(holder?.name ?? "unknown", holder?.pid ?? 0);
 }
 
 function makeSession(
@@ -265,27 +398,24 @@ function makeSession(
   name: string,
   lockPath: string,
   pid: number,
-  started: string,
+  started: number,
   inFlight: InFlight | null,
+  orphanedInFlight: InFlight[],
 ): Session {
   const ours = async (): Promise<boolean> => {
-    try {
-      const l = parseLock(name, lockPath, await fs.readFile(lockPath, "utf8"));
-      return l.pid === pid && l.started === started;
-    } catch (e) {
-      if (errCode(e) === "ENOENT") return false;
-      throw e;
-    }
+    const e = await readEntry(dir, name + LOCK_EXT);
+    return e !== null && e.pid === pid && e.started === started;
   };
 
   return {
     name,
     inFlight,
+    orphanedInFlight,
     async setInFlight(f) {
       if (f !== null && !validInFlight(f)) throw new Error(`invalid inFlight record ${JSON.stringify(f)}`);
       if (!(await ours())) throw new Error(`session lock ${lockPath} is no longer held by pid ${pid}`);
       const body: LockBody = { pid, started, inFlight: f };
-      const tmp = join(dir, `${name}${LOCK_EXT}.tmp-${pid}-${randomBytes(4).toString("hex")}`);
+      const tmp = join(dir, `.tmp-${pid}-${rand()}`);
       try {
         await fs.writeFile(tmp, JSON.stringify(body) + "\n", { flag: "wx" });
         await fs.rename(tmp, lockPath);

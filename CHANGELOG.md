@@ -21,7 +21,7 @@ detail and evidence: [docs/migration-ledger.md](docs/migration-ledger.md).
 
 ### Pipeline guards (behavior changes)
 
-- `[core]` `src/core/session.ts`: one live worker per project via `<sessions>/<name>.lock` (`LiveWorkerError` names the holder). A lock whose pid is dead or reused (`ps -o lstart=` start time differs) is reclaimed by rename, and its `inFlight` record is returned so a crashed run can resume. Corrupt locks are reclaimed with `inFlight: null` and never throw.
+- `[core]` `src/core/session.ts`: one live worker per project via `<sessions>/<name>.lock` (`LiveWorkerError` names the holder). Acquire runs under a project-wide `.acquire` mutex, and every lock is published atomically (temp file + link), so a half-written lock is never seen. Process start times are epoch seconds from `ps -o lstart=` under `LC_ALL=C TZ=UTC`, and a pid whose start time can't be read counts as alive. A dead or reused-pid lock is reclaimed and its `inFlight` adopted for resume; extra records come back as `orphanedInFlight` and are never dropped. Corrupt locks are reclaimed with `inFlight: null` and never throw.
 - `[core]` `src/core/paths.ts` is the single owner of on-disk paths: validated identifiers, containment checks (`UnsafePathError`), v2 layout (`runs/v2/`, `.pipeline/v2/`). The `--phase` runners and reset use its `legacy*` functions until Task 13/14.
 - `[core]` Every `claude -p` spawn gets `--max-budget-usd` (from
   `ceilings.maxCostPerRunUsd`), and a run past `runTimeoutMin` is killed with
