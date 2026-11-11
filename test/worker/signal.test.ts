@@ -37,3 +37,36 @@ describe("trackSession (SIGINT/SIGTERM)", () => {
     expect(logError).toHaveBeenCalledWith(expect.stringMatching(/interrupted/));
   });
 });
+
+describe("trackSession before the adopted flights are recorded", () => {
+  it("a signal with an adopted (unrecorded) inFlight keeps the lock untouched: no release, no rewrite", async () => {
+    const fake = makeSession("dev-1", FLIGHT);
+    const t = trackSession(fake as unknown as Session);
+
+    expect(t.canRelease()).toBe(false);
+    expect(await t.onSignal()).toBe("kept-unrecorded");
+    expect(fake.release).not.toHaveBeenCalled();
+    expect(fake.setInFlight).not.toHaveBeenCalled();
+    expect(fake.current).toEqual(FLIGHT);
+  });
+
+  it("unrecorded orphans also keep the lock, and are named in the error log", async () => {
+    const fake = makeSession("dev-1", null, [{ ...FLIGHT, ticket: "TARS-5" }]);
+    const logError = vi.fn();
+    const t = trackSession(fake as unknown as Session, logError);
+
+    expect(await t.onSignal()).toBe("kept-unrecorded");
+    expect(fake.release).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining("TARS-5"));
+  });
+
+  it("once the flights are recorded, an idle signal releases", async () => {
+    const fake = makeSession("dev-1", FLIGHT);
+    const t = trackSession(fake as unknown as Session);
+    t.markFlightsRecorded();
+
+    expect(t.canRelease()).toBe(true);
+    expect(await t.onSignal()).toBe("released");
+    expect(fake.release).toHaveBeenCalledTimes(1);
+  });
+});

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { runWorkerIteration } from "../../src/worker/cycle.ts";
+import { recordAdoptedFlights, runWorkerIteration } from "../../src/worker/cycle.ts";
 import { findPendingHandoffs } from "../../src/worker/handoff.ts";
 import { appendIteration, readIterations } from "../../src/core/iteration-log.ts";
 import type { IterationRecord, PhaseEntry } from "../../src/core/iteration-log.ts";
@@ -16,6 +16,7 @@ import {
   harness,
   makeSession,
   researchBounce,
+  researchVerdict,
   ticket,
   type Harness,
 } from "./helpers.ts";
@@ -833,6 +834,96 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       h.jira.dev = [devTicket("TARS-3")];
       await runWorkerIteration(h.deps);
       expect(h.jira.calls("assignTicket")).toEqual([]);
+    });
+  });
+  describe("fix round 2", () => {
+    const researchError = () => researchVerdict({ outcome: "error", failure_category: "agent_error", detail: "crashed in ground" });
+    const researchKilled = () => researchVerdict({ outcome: "killed", failure_category: "killed_ceiling", detail: "timeout" });
+
+    it("research error after a claim → resumed next iteration (no claim) → second failure → Blocked with comment; never polled again (Ruling 20)", async () => {
+      h = await harness({ script: { research: [{ verdictRaw: researchError() }, { verdictRaw: researchKilled() }] } });
+      h.jira.research = [ticket("TARS-1")]; // index lag: still returned
+
+      await runWorkerIteration(h.deps);
+      let recs = await records(h);
+      expect(recs[0]).toMatchObject({ ticket: "TARS-1", outcome: "error", resume: "research" });
+
+      h.clock.advance(5_000);
+      await runWorkerIteration(h.deps);
+      recs = await records(h);
+      expect(recs[1]).toMatchObject({ ticket: "TARS-1", outcome: "killed", resume: "research" });
+
+      for (let i = 0; i < 3; i++) {
+        h.clock.advance(11 * MIN);
+        await runWorkerIteration(h.deps);
+      }
+
+      expect(h.jira.calls("claimTicket")).toHaveLength(1);
+      expect(runSkillCalls(h).map((e) => [e[1], e[2]])).toEqual([
+        ["research", "TARS-1"],
+        ["research", "TARS-1"],
+      ]);
+      expect(h.jira.comments).toHaveLength(1);
+      expect(JSON.stringify(h.jira.comments[0].body)).toMatch(/2 failed research attempts/);
+      expect(h.jira.calls("transitionStatus").filter((e) => e[2] === "Blocked")).toEqual([["transitionStatus", "TARS-1", "Blocked", undefined]]);
+      expect((await records(h)).filter((r) => r.outcome === "blocked-attempts").map((r) => r.ticket)).toEqual(["TARS-1"]);
+    });
+
+    it("a dev error carries no resume: the dev poll re-finds it (dev label, status not Blocked/Code Review)", async () => {
+      h = await harness({ script: { dev: [{ verdictRaw: devError() }] } });
+      h.jira.dev = [devTicket("TARS-3")];
+
+      await runWorkerIteration(h.deps);
+
+      const [r] = await records(h);
+      expect(r.outcome).toBe("error");
+      expect(r.resume).toBeUndefined();
+    });
+
+    it("step-0 resume respects maxRunsPerDay for its role: research capped → no resume, paused", async () => {
+      h = await harness({ config: (c) => (c.ceilings.maxRunsPerDay = 1), deps: { roles: ["research"] } });
+      await appendIteration(
+        h.logPath,
+        rec({ ticket: "TARS-1", outcome: "error", resume: "research", started: "2026-11-11T11:00:00.000Z", ended: "2026-11-11T11:10:00.000Z", phases: [phase({ outcome: "error", started: "2026-11-11T11:00:00.000Z" })] }),
+      );
+
+      const result = await runWorkerIteration(h.deps);
+
+      expect(runSkillCalls(h)).toEqual([]);
+      expect(result.kind).toBe("paused");
+    });
+
+    it("the attempt cap acts only for roles this process runs: --phase research never Blocks for dev failures; --phase dev does", async () => {
+      h = await harness({ deps: { roles: ["research"] } });
+      const devErr = (ended: string) =>
+        rec({ ticket: "TARS-7", outcome: "error", started: ended, ended, phases: [phase({ role: "dev", skill: "ticket-to-pr", outcome: "error", started: ended })] });
+      await appendIteration(h.logPath, devErr("2026-11-11T01:00:00.000Z"));
+      await appendIteration(h.logPath, devErr("2026-11-11T02:00:00.000Z"));
+
+      await runWorkerIteration(h.deps);
+      expect(h.jira.comments).toEqual([]);
+      expect(h.jira.calls("transitionStatus")).toEqual([]);
+      expect((await records(h)).some((r) => r.outcome === "blocked-attempts")).toBe(false);
+
+      await runWorkerIteration(h.restart({ roles: ["dev"] }));
+      expect((await records(h)).filter((r) => r.outcome === "blocked-attempts").map((r) => r.ticket)).toEqual(["TARS-7"]);
+    });
+
+    it("recordAdoptedFlights records the adopted flights before the first iteration; the first iteration doesn't re-record them", async () => {
+      const f = { ticket: "TARS-1", role: "research" as const, runDir: v2RunDir("repo", "dev-1", "TARS-1", "research", "20261111T110000Z"), since: "2026-11-11T11:00:00.000Z" };
+      h = await harness({ session: makeSession("dev-1", f, [{ ...f, ticket: "TARS-5", runDir: v2RunDir("repo", "dev-1", "TARS-5", "research", "20261111T110000Z") }]) });
+
+      await recordAdoptedFlights(h.deps);
+      expect((await records(h)).map((r) => [r.ticket, r.resume])).toEqual([
+        ["TARS-1", "research"],
+        ["TARS-5", "research"],
+      ]);
+      expect(runSkillCalls(h)).toEqual([]);
+
+      await runWorkerIteration(h.deps);
+      const crash = (await records(h)).filter((r) => r.phases.some((p) => /in-flight/.test(p.detail)));
+      expect(crash).toHaveLength(2);
+      expect(runSkillCalls(h)[0].slice(1, 3)).toEqual(["research", "TARS-1"]);
     });
   });
 });
