@@ -10,6 +10,7 @@ import {
   parseLstart,
   LiveWorkerError,
   AcquireBusyError,
+  mutexClaimName,
   type InFlight,
 } from "../../src/core/session.ts";
 import { UnsafePathError } from "../../src/core/paths.ts";
@@ -346,6 +347,157 @@ describe("acquireSession: fix round 1 (mutex, atomic publish, adoption)", () => 
     const ok = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<Awaited<ReturnType<typeof acquireSession>>>[];
     expect(ok).toHaveLength(1);
     expect(ok[0].value.inFlight).toEqual(FLIGHT);
+  });
+});
+
+describe("acquireSession: fix round 2 (mutex ABA, bounded retry, same-process)", () => {
+  function gate() {
+    let open!: () => void;
+    const p = new Promise<void>((r) => (open = r));
+    return { p, open };
+  }
+  const DEAD_MUTEX = JSON.stringify({ pid: 666, started: 666, nonce: "dead-holder" });
+
+  it("ABA: a reclaimer that observed a stale mutex never removes the fresh one that replaced it", async () => {
+    await fs.writeFile(path.join(dir, ".acquire"), DEAD_MUTEX);
+    const isAlive = (pid: number) => pid !== 666;
+    const aObserved = gate();
+    const aGo = gate();
+    const aReclaimDone = gate();
+    const bAtPublish = gate();
+    const bGo = gate();
+
+    // A observes D (dead) and pauses right before its reclaim.
+    const A = acquireSession(
+      opts({
+        pid: 1001,
+        started: 1001,
+        isAlive,
+        _hooks: {
+          onStaleMutex: async () => {
+            aObserved.open();
+            await aGo.p;
+          },
+          afterStaleMutexReclaim: async () => aReclaimDone.open(),
+        },
+      }),
+    ).catch((e) => e);
+    await aObserved.p;
+
+    // B also observes D, reclaims it, takes the mutex, pauses before publishing dev-1.
+    const B = acquireSession(
+      opts({
+        pid: 1002,
+        started: 1002,
+        isAlive,
+        _hooks: {
+          beforePublish: async () => {
+            bAtPublish.open();
+            await bGo.p;
+          },
+        },
+      }),
+    ).catch((e) => e);
+    await bAtPublish.p;
+    const heldByB = JSON.parse(await fs.readFile(path.join(dir, ".acquire"), "utf8"));
+    expect(heldByB.pid).toBe(1002);
+
+    // A resumes its (now outdated) reclaim: B's fresh mutex must survive it.
+    aGo.open();
+    await aReclaimDone.p;
+    expect(JSON.parse(await fs.readFile(path.join(dir, ".acquire"), "utf8"))).toEqual(heldByB);
+
+    // A fresh starter C arrives while B still holds the mutex.
+    const C = acquireSession(opts({ pid: 1003, started: 1003, isAlive })).catch((e) => e);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(JSON.parse(await fs.readFile(path.join(dir, ".acquire"), "utf8"))).toEqual(heldByB);
+
+    bGo.open();
+    const [a, b, c] = await Promise.all([A, B, C]);
+    expect(b.name).toBe("dev-1");
+    for (const loser of [a, c]) {
+      expect(loser).toBeInstanceOf(LiveWorkerError);
+      expect(loser.liveSession).toBe("dev-1");
+      expect(loser.pid).toBe(1002);
+    }
+    expect((await fs.readdir(dir)).filter((f) => f.endsWith(".lock"))).toEqual(["dev-1.lock"]);
+    expect((await readLock("dev-1")).pid).toBe(1002);
+    await expect(fs.stat(path.join(dir, ".acquire"))).rejects.toThrow();
+  });
+
+  it("the mutex body carries a nonce", async () => {
+    let seen: Record<string, unknown> | undefined;
+    await acquireSession(
+      opts({
+        _hooks: {
+          beforePublish: async () => {
+            seen = JSON.parse(await fs.readFile(path.join(dir, ".acquire"), "utf8"));
+          },
+        },
+      }),
+    );
+    expect(seen).toMatchObject({ pid: 1001, started: 1001 });
+    expect(typeof seen!.nonce).toBe("string");
+    expect((seen!.nonce as string).length).toBeGreaterThanOrEqual(16);
+  });
+
+  it("releasing never deletes a mutex that is not ours", async () => {
+    // B's mutex replaced ours (e.g. a reclaim misjudged us dead): our release must leave it alone.
+    const other = JSON.stringify({ pid: 2002, started: 2002, nonce: "someone-else" });
+    await acquireSession(
+      opts({
+        isAlive: (p) => p === 2002,
+        _hooks: {
+          beforePublish: async () => {
+            await fs.writeFile(path.join(dir, ".acquire"), other);
+          },
+        },
+      }),
+    ).catch(() => undefined);
+    expect(await fs.readFile(path.join(dir, ".acquire"), "utf8")).toBe(other);
+  });
+
+  it("bounded retry: a live mutex holder ends in AcquireBusyError on a fake clock", async () => {
+    await fs.writeFile(path.join(dir, ".acquire"), JSON.stringify({ pid: 777, started: 777, nonce: "n" }));
+    let t = 0;
+    const sleeps: number[] = [];
+    const clock = { now: () => t, sleep: async (ms: number) => void (sleeps.push(ms), (t += ms)) };
+    const err = await acquireSession(opts({ isAlive: (p) => p === 777, mutexTimeoutMs: 1000, _hooks: { clock } })).catch((e) => e);
+    expect(err).toBeInstanceOf(AcquireBusyError);
+    expect(err.holderPid).toBe(777);
+    expect(t).toBeGreaterThanOrEqual(1000);
+    expect(sleeps.length).toBeLessThan(500);
+    expect(Math.max(...sleeps)).toBeLessThanOrEqual(50);
+    expect(Math.min(...sleeps)).toBeGreaterThan(0);
+  });
+
+  it("bounded retry: a stale mutex whose reclaim claim is stuck ends in AcquireBusyError (fail closed)", async () => {
+    await fs.writeFile(path.join(dir, ".acquire"), DEAD_MUTEX);
+    // a reclaimer that crashed mid-reclaim left its claim behind
+    await fs.writeFile(path.join(dir, mutexClaimName(DEAD_MUTEX)), JSON.stringify({ pid: 888, started: 888, nonce: "x" }));
+    let t = 0;
+    const clock = { now: () => t, sleep: async (ms: number) => void (t += ms) };
+    const err = await acquireSession(opts({ mutexTimeoutMs: 500, _hooks: { clock } })).catch((e) => e);
+    expect(err).toBeInstanceOf(AcquireBusyError);
+    expect(err.message).toContain(mutexClaimName(DEAD_MUTEX));
+    expect(t).toBeGreaterThanOrEqual(500);
+    expect(await fs.readFile(path.join(dir, ".acquire"), "utf8")).toBe(DEAD_MUTEX);
+  });
+
+  it("same-process double acquire refuses, naming our own session, and leaves our lock intact", async () => {
+    const isAlive = (p: number) => p === 1001;
+    const first = await acquireSession(opts({ isAlive }));
+    await first.setInFlight(FLIGHT);
+    for (const requested of [undefined, "alice"]) {
+      const err = await acquireSession(opts({ requested, isAlive })).catch((e) => e);
+      expect(err).toBeInstanceOf(LiveWorkerError);
+      expect(err.liveSession).toBe("dev-1");
+      expect(err.pid).toBe(1001);
+    }
+    expect(await readLock("dev-1")).toEqual({ pid: 1001, started: 1001, inFlight: FLIGHT });
+    const files = await fs.readdir(dir);
+    expect(files.filter((f) => f.includes(".stale-") || f.includes(".adopted-"))).toEqual([]);
+    expect(files.filter((f) => f.endsWith(".lock"))).toEqual(["dev-1.lock"]);
   });
 });
 
