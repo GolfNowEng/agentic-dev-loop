@@ -1,8 +1,9 @@
-// Shared types for the dev-loop pipeline (Terminal B / executor).
+// Shared types for both pipeline roles (research/skeptic and dev/executor).
 //
-// These types describe the data shapes the loop runner passes between its
-// pure functions (jql, verdict, ceilings, runs-log) and its injected
-// dependencies (JiraClient, run-skill callback). No behavior lives here.
+// These types describe the data shapes the loop runners pass between their
+// pure functions (jql, verdict, ceilings, runs-log) and their injected
+// dependencies (JiraClient, run-skill callback). No behavior lives here
+// beyond the CURRENT_LOG_VERSION constant.
 
 /**
  * Closed enum of failure categories a run can be tagged with. This must
@@ -36,33 +37,46 @@ export type PhaseReached = "intake" | "plan" | "red" | "green" | "verify" | "pr"
 export type RunPhase = PhaseReached;
 
 /**
- * One line of runs.jsonl - the append-only run log. Field-for-field match
- * to the schema in the pipeline spec.
+ * Current v1 log schema version (from research-loop), stamped on every new
+ * research RunLogLine. An absent `log_version` means "1.0" (every line
+ * before the field existed, and every dev-loop v1 line) -- there is no
+ * backfill; absence is the implicit old value.
+ */
+export const CURRENT_LOG_VERSION = "1.1";
+
+/**
+ * One line of a v1 runs.jsonl -- the append-only run log. The superset of
+ * both roles' v1 schemas. Read-only: v2 reads these lines (reset, landed
+ * guards, reconcile) but never edits one in place.
  */
 export interface RunLogLine {
-  ticket: string;
-  skill: string;
+  readonly ticket: string;
+  readonly skill: string;
   /** Git SHA of the skill at run time. */
-  skill_version: string;
-  model: string;
+  readonly skill_version: string;
+  readonly model: string;
   /** ISO-8601 UTC timestamp, e.g. "2026-08-16T14:02:11Z". */
-  started: string;
+  readonly started: string;
   /** ISO-8601 UTC timestamp, e.g. "2026-08-16T14:19:40Z". */
-  ended: string;
-  outcome: RunOutcome;
-  phase_reached: RunPhase;
-  red_confirmed: boolean;
-  verify_loops: number;
-  retries: number;
-  failure_category: FailureCategory | null;
+  readonly ended: string;
+  readonly outcome: RunOutcome;
+  readonly phase_reached: PhaseReached;
+  readonly red_confirmed: boolean;
+  readonly verify_loops: number;
+  readonly retries: number;
+  readonly failure_category: FailureCategory | null;
   /** One line, human-written by the skill. */
-  detail: string;
-  pr: string | null;
-  cost_usd: number;
-  tokens: {
-    in: number;
-    out: number;
+  readonly detail: string;
+  readonly pr: string | null;
+  readonly cost_usd: number;
+  readonly tokens: {
+    readonly in: number;
+    readonly out: number;
   };
+  /** Schema version this line was written under. Absent means "1.0". */
+  readonly log_version?: string;
+  /** Shadow-mode size telemetry (research), present only when the skill reported one. */
+  readonly size_trajectory?: SizeTrajectory;
 }
 
 /**
