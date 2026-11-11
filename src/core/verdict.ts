@@ -4,8 +4,9 @@
 // must be represented as outcome "error" / failure_category "agent_error",
 // not as an exception that takes down the loop.
 //
-// Two shape profiles, because the two skills write different schemas:
-//   - "refine" (default; ticket-refine): only outcome/phase_reached/
+// Two shape profiles, because the two skills write different schemas. The
+// profile is required; a call that omits it at runtime gets "executor":
+//   - "refine" (ticket-refine): only outcome/phase_reached/
 //     failure_category/detail are required, and outcome may be "ready".
 //   - "executor" (ticket-to-pr): additionally requires every executor field
 //     (red_confirmed, verify_loops, retries, skill_version, model, pr,
@@ -127,12 +128,11 @@ export function agentErrorVerdict(detail: string): ExecutorVerdict {
  * returns a Verdict with outcome "error" and failure_category
  * "agent_error" instead of throwing.
  */
-export function parseVerdict(raw: string | null | undefined): Verdict;
 export function parseVerdict(raw: string | null | undefined, profile: "refine"): Verdict;
 export function parseVerdict(raw: string | null | undefined, profile: "executor"): ExecutorVerdict;
 export function parseVerdict(
   raw: string | null | undefined,
-  profile: VerdictProfile = "refine",
+  profile: VerdictProfile,
 ): Verdict {
   if (raw === null || raw === undefined) {
     return agentErrorVerdict("verdict.json was missing");
@@ -145,9 +145,11 @@ export function parseVerdict(
     return agentErrorVerdict("verdict.json contained malformed JSON");
   }
 
+  // Fail closed: anything but an explicit "refine" (including a missing
+  // profile from an untyped caller) gets the strict executor check.
   if (
     !isValidVerdictShape(parsed) ||
-    (profile === "executor" && !isValidExecutorShape(parsed))
+    (profile !== "refine" && !isValidExecutorShape(parsed))
   ) {
     return agentErrorVerdict(
       "verdict.json did not match the expected Verdict shape",
@@ -176,12 +178,11 @@ export function parseVerdict(
  * unreadable file, or malformed JSON all resolve to an "error" /
  * "agent_error" Verdict rather than rejecting.
  */
-export async function readVerdictFile(path: string): Promise<Verdict>;
 export async function readVerdictFile(path: string, profile: "refine"): Promise<Verdict>;
 export async function readVerdictFile(path: string, profile: "executor"): Promise<ExecutorVerdict>;
 export async function readVerdictFile(
   path: string,
-  profile: VerdictProfile = "refine",
+  profile: VerdictProfile,
 ): Promise<Verdict> {
   let raw: string;
   try {
@@ -190,7 +191,7 @@ export async function readVerdictFile(
     const message = err instanceof Error ? err.message : String(err);
     return agentErrorVerdict(`verdict.json could not be read: ${message}`);
   }
-  return profile === "executor" ? parseVerdict(raw, "executor") : parseVerdict(raw);
+  return profile === "refine" ? parseVerdict(raw, "refine") : parseVerdict(raw, "executor");
 }
 
 /**

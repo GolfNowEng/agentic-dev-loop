@@ -148,14 +148,16 @@ const CODE_REVIEW_FIELD_PATHS: Array<[string, keyof CodeReviewFieldsConfig]> = [
  * missing sub-field) is listed too, since the dev role cannot transition a
  * landed PR to Code Review without it.
  */
-export function findPlaceholders(config: Config, role: ConfigRole = "research"): string[] {
+export function findPlaceholders(config: Config, role: ConfigRole): string[] {
   const missing = PLACEHOLDER_PATHS.filter(([, get]) => get(config) === "___").map(
     ([path]) => path,
   );
   const crf = config.jira.codeReviewFields;
   for (const [path, key] of CODE_REVIEW_FIELD_PATHS) {
     const value = crf?.[key];
-    if (value === "___" || (role === "dev" && value === undefined)) missing.push(path);
+    // Fail closed: anything but an explicit "research" (including a missing
+    // role from an untyped caller) gets the dev check.
+    if (value === "___" || (role !== "research" && value === undefined)) missing.push(path);
   }
   return missing;
 }
@@ -164,7 +166,7 @@ export function findPlaceholders(config: Config, role: ConfigRole = "research"):
  * Throws a clear error naming every field still set to "___" (or, for
  * `role: "dev"`, missing a required dev-only key), if any.
  */
-export function assertNoPlaceholders(config: Config, role: ConfigRole = "research"): void {
+export function assertNoPlaceholders(config: Config, role: ConfigRole): void {
   const missing = findPlaceholders(config, role);
   if (missing.length > 0) {
     throw new Error(
