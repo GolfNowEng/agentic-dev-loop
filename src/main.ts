@@ -433,7 +433,7 @@ async function main(): Promise<void> {
     const runDirName = await findNewestRunDir(runsBaseDir, ticketKey, before);
     let verdict;
     if (runDirName) {
-      verdict = await readVerdictFile(join(runsBaseDir, runDirName, "verdict.json"));
+      verdict = await readVerdictFile(join(runsBaseDir, runDirName, "verdict.json"), "executor");
     } else {
       verdict = agentErrorVerdict("no run directory appeared for this ticket");
     }

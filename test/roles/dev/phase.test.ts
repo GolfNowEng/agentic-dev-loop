@@ -3,7 +3,7 @@ import { runLoopIteration } from "../../../src/roles/dev/phase.ts";
 import { buildQaNotesAdf, buildBounceCommentAdf } from "../../../src/roles/dev/code-review.ts";import type { RunSkillFn, LoopIterationDeps, LoopIterationResult } from "../../../src/roles/dev/phase.ts";
 import type { JiraClient, JiraTicket } from "../../../src/core/jira-client.ts";
 import type { GitHubClient } from "../../../src/core/github-client.ts";
-import type { Config, Verdict } from "../../../src/core/types.ts";
+import type { Config, ExecutorVerdict } from "../../../src/core/types.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -69,7 +69,7 @@ function makeMockGitHubClient(overrides: Partial<GitHubClient> = {}): GitHubClie
   };
 }
 
-function makeVerdict(overrides: Partial<Verdict> = {}): Verdict {
+function makeVerdict(overrides: Partial<ExecutorVerdict> = {}): ExecutorVerdict {
   return {
     outcome: "landed",
     phase_reached: "pr",
@@ -1101,7 +1101,7 @@ describe("buildQaNotesAdf", () => {
 
   it("with qa_notes absent: falls back to the existing PR-link stub, unchanged -- regression guard for verdicts that predate this field or a bounce with no notes to give", () => {
     const verdict = makeVerdict({ pr: "https://github.com/org/repo/pull/42", verify_loops: 2 });
-    delete (verdict as Partial<Verdict>).qa_notes;
+    delete (verdict as Partial<ExecutorVerdict>).qa_notes;
 
     const adf = buildQaNotesAdf(verdict) as {
       type: string;

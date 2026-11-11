@@ -7,7 +7,7 @@
 
 import type { JiraClient } from "../../core/jira-client.ts";
 import type { GitHubClient } from "../../core/github-client.ts";
-import type { Config, RunLogLine, Verdict } from "../../core/types.ts";
+import type { Config, ExecutorVerdict, RunLogLine } from "../../core/types.ts";
 import { buildDevJql, buildRefineJql, excludeKeysFromJql } from "../../core/jql.ts";
 import { checkCeilings, hasReachedMaxRunsPerDay } from "../../core/ceilings.ts";
 import { appendRunLog } from "../../core/runs-log.ts";
@@ -26,7 +26,7 @@ import type { ExecGhPrViewFn } from "./reconcile.ts";
  * runaway agent could under-report it and defeat the ceiling entirely.
  */
 export type RunSkillFn = (ticketKey: string) => Promise<{
-  verdict: Verdict;
+  verdict: ExecutorVerdict;
   started: string;
   ended: string;
   costUsd: number;
@@ -343,7 +343,7 @@ export async function runLoopIteration(
  */
 export function buildRunLogLine(
   ticket: string,
-  verdict: Verdict,
+  verdict: ExecutorVerdict,
   started: string,
   ended: string,
   costUsd: number,

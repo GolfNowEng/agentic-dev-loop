@@ -30,7 +30,10 @@ export type RunOutcome = "landed" | "bounced" | "error" | "killed";
 /**
  * The TDD phase the run reached before it stopped (successfully or not).
  */
-export type RunPhase = "intake" | "plan" | "red" | "green" | "verify" | "pr";
+export type PhaseReached = "intake" | "plan" | "red" | "green" | "verify" | "pr";
+
+/** dev-loop's original name for PhaseReached; kept as an alias. */
+export type RunPhase = PhaseReached;
 
 /**
  * One line of runs.jsonl - the append-only run log. Field-for-field match
@@ -63,18 +66,90 @@ export interface RunLogLine {
 }
 
 /**
- * What a skill's verdict.json contains. This is the raw signal the skill
- * hands back to the loop runner; the loop runner derives a RunLogLine from
- * it -- it no longer derives any epic-or-label-move decision at all
- * (decideEpicMove was deleted; no loop moves anything epic-or-label-shaped
- * on a landed dev-loop verdict).
+ * The full set of outcomes a Verdict's `outcome` field may hold: RunOutcome
+ * plus "ready", ticket-refine's own passing-verdict word (a refined ticket,
+ * not a PR). The research role normalizes "ready" to "landed" before writing
+ * a RunLogLine; the executor profile of parseVerdict rejects it outright.
+ */
+export type VerdictOutcome = RunOutcome | "ready";
+
+/** T-shirt-sized trajectory signal verifier-agent reports at Step 4. */
+export type TShirtSize = "S" | "M" | "L" | "XL";
+
+/** How a ticket's size changed across self-heal/re-pickup cycles within a run. */
+export type SizeDelta = "grew" | "shrank" | "unchanged";
+
+/**
+ * Shadow-mode size signal (research role), carried into verdict.json and
+ * runs.jsonl. Pure telemetry: nothing reads or acts on it yet.
+ */
+export interface SizeTrajectory {
+  step4_tshirt: TShirtSize;
+  delta: SizeDelta;
+  /** Mechanically computed score, clamped to [0, 10]. */
+  final_score: number;
+}
+
+/**
+ * What a skill's verdict.json contains -- the superset of both roles'
+ * schemas. Only outcome/phase_reached/failure_category/detail are required
+ * of every skill (ticket-refine omits the executor fields). The loop runner
+ * derives a RunLogLine from it; it derives no epic-or-label-move decision.
+ * See ExecutorVerdict for the shape ticket-to-pr must always produce.
  */
 export interface Verdict {
-  outcome: RunOutcome;
-  phase_reached: RunPhase;
+  outcome: VerdictOutcome;
+  phase_reached: PhaseReached;
   failure_category: FailureCategory | null;
   /** One line, human-written by the skill. */
   detail: string;
+  red_confirmed?: boolean;
+  verify_loops?: number;
+  retries?: number;
+  skill_version?: string;
+  model?: string;
+  pr?: string | null;
+  cost_usd?: number;
+  tokens?: {
+    in: number;
+    out: number;
+  };
+  /**
+   * Optional hint from the skill about which loop produced this verdict
+   * ("refine" vs "dev"). Currently unread by the loop runner (it derives
+   * loopKind from its own invocation context) -- kept only for schema shape.
+   */
+  loop?: "refine" | "dev";
+  /**
+   * Optional sequential manual-testing steps for a human QA reviewer --
+   * e.g. "Navigate to `/rotten-tomatoes/critics?query=...`", "Expected:
+   * the Self-Service badge appears next to the critic's name". Rendered
+   * into Jira's QA Notes field (see roles/dev/code-review.ts's
+   * buildQaNotesAdf) as a bold "Manual testing steps:" header + ordered
+   * list. The PR body's "## QA Notes" carries this same list. Absent/empty
+   * on older verdicts or bounced runs; the dev role falls back to the
+   * PR-link stub in that case.
+   */
+  qa_notes?: string[];
+  /** Schema version this verdict was written under. Absent means "1.0". */
+  log_version?: string;
+  /**
+   * Shadow-mode size telemetry. Parsed independently by
+   * parseSizeTrajectory in verdict.ts -- a malformed value must never flip
+   * `outcome` to "error"; it is dropped at the parse boundary instead.
+   */
+  size_trajectory?: SizeTrajectory;
+}
+
+/**
+ * The verdict shape ticket-to-pr (the executor role) always writes, and
+ * what parseVerdict(raw, "executor") guarantees: a RunOutcome (never
+ * "ready") plus every executor field present. The dev role reads these
+ * unconditionally -- e.g. `verdict.pr !== null` decides the bounce branch,
+ * so a missing `pr` must be an agent_error, never silently `undefined`.
+ */
+export interface ExecutorVerdict extends Verdict {
+  outcome: RunOutcome;
   red_confirmed: boolean;
   verify_loops: number;
   retries: number;
@@ -86,25 +161,6 @@ export interface Verdict {
     in: number;
     out: number;
   };
-  /**
-   * Optional hint from the skill about which loop produced this verdict
-   * ("refine" vs "dev"). Currently unread by this repo's own code (the
-   * loop runner derives loopKind from its own invocation context, not
-   * from this field) -- kept only for verdict.json schema shape.
-   */
-  loop?: "refine" | "dev";
-  /**
-   * Optional sequential manual-testing steps for a human QA reviewer --
-   * e.g. "Navigate to `/rotten-tomatoes/critics?query=...`", "Expected:
-   * the Self-Service badge appears next to the critic's name". Rendered
-   * into Jira's QA Notes field (see loop-runner.ts's buildQaNotesAdf) as a
-   * bold "Manual testing steps:" header + ordered list, matching the
-   * retired interactive qa-notes/push-branch skills' ADF shape. Distinct
-   * from nothing else: the PR body's "## QA Notes" carries this same list
-   * (push-branch format). Absent/empty on older verdicts or bounced runs;
-   * loop-runner falls back to the PR-link stub in that case.
-   */
-  qa_notes?: string[];
 }
 
 /** Claim-status transition pair, e.g. { from: "Ready", to: "In Progress" }. */
