@@ -58,7 +58,8 @@ import { snapshotRunDirs, findNewestRunDir } from "./core/run-dirs.ts";
 import { redactSensitive } from "./core/redact.ts";
 import { decideNextAction, type PollResultKind } from "./core/poll-loop.ts";
 import { PROJECT_SLUG, legacyRunsLog, legacyRunDirs, resolveRepoPath, v2RunsLog, v2SessionsDir } from "./core/paths.ts";
-import { acquireSession, isProcessAlive, type InFlight, type Session } from "./core/session.ts";
+import { acquireSession, isProcessAlive, type Session } from "./core/session.ts";
+import { trackSession } from "./worker/signal.ts";
 import { findLandedPrUrlAcross } from "./core/iteration-log.ts";
 import type { RunSkillFn, RunSkillResult } from "./core/run-skill.ts";
 import { spawnClaudeRun, startProgressTail } from "./core/spawn-claude.ts";
@@ -417,11 +418,11 @@ async function main(): Promise<void> {
     isAlive: isProcessAlive,
     now: new Date(),
   });
-  const tracked = trackInFlight(session);
+  const tracked = trackSession(session, logError);
   const onSignal = (sig: NodeJS.Signals) => {
-    // Mid-phase, keep the lock (and its inFlight) for the next start to
-    // resume: a dead pid's lock is reclaimed. Otherwise release it.
-    void (tracked.busy() ? Promise.resolve() : session.release()).finally(() => process.exit(sig === "SIGINT" ? 130 : 143));
+    // Mid-phase: keep the lock, its inFlight marked interrupted (the next start
+    // resumes it without counting an attempt). Otherwise release the lock.
+    void tracked.onSignal().finally(() => process.exit(sig === "SIGINT" ? 130 : 143));
   };
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
@@ -444,23 +445,8 @@ async function main(): Promise<void> {
   try {
     await runPhaseLoop(ctx, tracked.session, assigneeAccountId);
   } finally {
-    if (!tracked.busy()) await session.release();
+    if (tracked.current() === null) await session.release();
   }
-}
-
-/** Wraps setInFlight so main knows whether a phase is mid-run (keep the lock on a signal). */
-function trackInFlight(session: Session): { session: Session; busy: () => boolean } {
-  let current: InFlight | null = session.inFlight;
-  return {
-    session: {
-      ...session,
-      setInFlight: async (f) => {
-        await session.setInFlight(f);
-        current = f;
-      },
-    },
-    busy: () => current !== null,
-  };
 }
 
 main().catch((err) => {

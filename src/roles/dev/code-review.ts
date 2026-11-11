@@ -73,7 +73,7 @@ function qaNoteStepContent(step: string): Array<Record<string, unknown>> {
 
 /**
  * Build the Jira comment ADF posted on a genuine bounce (see
- * runLoopIteration's Blocked branch), so a human reading the ticket sees
+ * runDevPhase's Blocked branch in phase.ts), so a human reading the ticket sees
  * why it's blocked without having to go find this repo's local
  * runs.jsonl -- the same evidence already lands in the run log, this is
  * just the copy that reaches Jira. Bold "failure_category" label followed

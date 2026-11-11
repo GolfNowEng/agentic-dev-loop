@@ -17,6 +17,8 @@ import { TICKET_KEY } from "./paths.ts";
  */
 export interface JiraTicket {
   key: string;
+  /** Numeric issue id as a string, when the search returned one (used to exclude a ticket whose key fails TICKET_KEY). */
+  id?: string;
   status: string;
   /** Jira accountId of the current assignee, or null if unassigned. */
   assignee: string | null;
@@ -266,6 +268,7 @@ export function assigneeAccountIdFromEnv(env: NodeJS.ProcessEnv = process.env): 
 
 interface JiraSearchResponse {
   issues: Array<{
+    id?: string | number;
     key: string;
     fields: {
       status: { name: string };
@@ -380,6 +383,7 @@ export class RealJiraClient implements JiraClient {
 
     return {
       key: issue.key,
+      ...(issue.id !== undefined ? { id: String(issue.id) } : {}),
       status: issue.fields.status.name,
       labels: issue.fields.labels ?? [],
       assignee: issue.fields.assignee?.accountId ?? null,
@@ -397,6 +401,7 @@ export class RealJiraClient implements JiraClient {
     const data = (await response.json()) as JiraSearchResponse;
     return data.issues.map((issue) => ({
       key: issue.key,
+      ...(issue.id !== undefined ? { id: String(issue.id) } : {}),
       status: issue.fields.status.name,
       labels: issue.fields.labels ?? [],
       assignee: issue.fields.assignee?.accountId ?? null,

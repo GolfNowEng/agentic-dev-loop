@@ -29,6 +29,8 @@ export interface InFlight {
   role: Role;
   runDir: string;
   since: string;
+  /** Set on SIGINT/SIGTERM mid-phase: the next start resumes it without counting a failed attempt. */
+  interrupted?: boolean;
 }
 
 interface LockBody {
@@ -191,7 +193,8 @@ function validInFlight(v: unknown): v is InFlight {
     typeof f.role === "string" &&
     ROLES.includes(f.role) &&
     typeof f.runDir === "string" &&
-    typeof f.since === "string"
+    typeof f.since === "string" &&
+    (f.interrupted === undefined || typeof f.interrupted === "boolean")
   );
 }
 

@@ -10,9 +10,9 @@
  * "completed", skipped if already closed) and removes the handoff label
  * (pipeline:dev) from the Jira ticket, leaving only the repo label. That is
  * the only Jira write this pass makes: it never changes status or assignee,
- * and a failed label removal is swallowed (runLoopIteration's landed-ticket
- * guard is the backstop). Called once per iteration from main.ts's poll
- * loop, before runLoopIteration.
+ * and a failed label removal is swallowed (the worker cycle's dev landed
+ * guard, src/worker/cycle-steps.ts, is the backstop). Called once per
+ * iteration from main.ts's `--phase dev` loop, before runWorkerIteration.
  */
 
 import type { JiraClient } from "../../core/jira-client.ts";
@@ -163,9 +163,8 @@ export async function reconcileMergedTickets(deps: ReconcileDeps): Promise<Recon
         await githubClient.closeIssue(issue.number, "completed");
       }
 
-      // Never blocks or fails the reconcile: the landed-ticket guard in
-      // runLoopIteration keeps a ticket that still carries the label from
-      // being re-run.
+      // Never blocks or fails the reconcile: the worker cycle's dev landed
+      // guard keeps a ticket that still carries the label from being re-run.
       try {
         await jiraClient.removeLabel(ticket, view.triggerLabel);
       } catch {

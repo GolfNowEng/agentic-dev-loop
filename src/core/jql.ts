@@ -53,7 +53,32 @@ export function excludeKeysFromJql(jql: string, keys: string[]): string {
       throw new Error(`excludeKeysFromJql: not a Jira ticket key: ${JSON.stringify(k)}`);
     }
   }
-  const clause = `key not in (${keys.map((k) => `"${k}"`).join(",")})`;
+  return andBeforeOrderBy(jql, `key not in (${keys.map((k) => `"${k}"`).join(",")})`);
+}
+
+/** A Jira issue id (the numeric `id` the search API returns alongside `key`). */
+const ISSUE_ID = /^\d+$/;
+
+/**
+ * Append `AND id not in (...)`, before any ORDER BY. For a polled ticket whose
+ * key fails TICKET_KEY (so it can't go through excludeKeysFromJql) but whose
+ * numeric id is valid. Throws on anything but a decimal id.
+ */
+export function excludeIdsFromJql(jql: string, ids: string[]): string {
+  if (ids.length === 0) return jql;
+  for (const id of ids) {
+    if (typeof id !== "string" || !ISSUE_ID.test(id)) {
+      throw new Error(`excludeIdsFromJql: not a Jira issue id: ${JSON.stringify(id)}`);
+    }
+  }
+  return andBeforeOrderBy(jql, `id not in (${ids.join(",")})`);
+}
+
+export function isIssueId(id: unknown): id is string {
+  return typeof id === "string" && ISSUE_ID.test(id);
+}
+
+function andBeforeOrderBy(jql: string, clause: string): string {
   const orderBy = /\s+order\s+by\s/i.exec(jql);
   if (!orderBy) return `${jql} AND ${clause}`;
   return `${jql.slice(0, orderBy.index)} AND ${clause}${jql.slice(orderBy.index)}`;

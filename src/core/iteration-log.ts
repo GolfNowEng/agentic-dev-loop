@@ -41,7 +41,11 @@ export type IterationOutcome =
   | "claim-error"
   | "handoff-pending"
   | "skipped-pr-exists"
-  | "blocked-attempts";
+  | "blocked-attempts"
+  /** Step 1 completed a pending research -> dev label handoff (phases: []). */
+  | "handoff-done"
+  /** A phase run stopped by SIGINT/SIGTERM; not a failed attempt (phases: [], resume set). */
+  | "interrupted";
 
 export interface IterationRecord {
   ticket: string;
@@ -52,6 +56,13 @@ export interface IterationRecord {
   outcome: IterationOutcome;
   phases: PhaseEntry[];
   blocked_by?: string[];
+  /**
+   * Set when this ticket has a phase run of this role to resume (a crashed or
+   * interrupted in-flight run, or a claim whose phase never started). The
+   * ticket's latest record carrying it means "pending"; any later record
+   * resolves it. Only a process that runs this role resumes it.
+   */
+  resume?: Role;
   detail?: string;
   jira_sync_error?: string;
 }

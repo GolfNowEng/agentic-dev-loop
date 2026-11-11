@@ -1,6 +1,6 @@
 // Pure decision logic for what main.ts's for(;;) poll loop does next, given
-// a runLoopIteration() result kind. Pulled out the same way ceilings.ts was
-// pulled out of loop-runner.ts, so it's unit-testable without spawning a
+// the kind of the last iteration's result (main.ts maps runWorkerIteration's
+// idle/did/paused onto these), so it's unit-testable without spawning a
 // real process -- main.ts itself stays untested wiring.
 
 import type { LoopConfig } from "./types.ts";
@@ -34,7 +34,7 @@ export type PollResultKind =
   | "paused-ceiling";
 
 /**
- * Decide what the poll loop does after one runLoopIteration() call.
+ * Decide what the poll loop does after one worker iteration.
  *
  * "ran"/"processed" sleeps for `postRunDelaySec`, not zero -- an immediate
  * re-poll can still match a ticket whose status was *just* transitioned

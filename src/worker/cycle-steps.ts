@@ -7,7 +7,7 @@ import type { JiraTicket } from "../core/jira-client.ts";
 import type { Role } from "../core/types.ts";
 import type { PhaseEntry } from "../core/iteration-log.ts";
 import { hasLandedPhase, lastSkipBlockers } from "../core/iteration-log.ts";
-import { buildPollJql, excludeKeysFromJql } from "../core/jql.ts";
+import { buildPollJql, excludeIdsFromJql, excludeKeysFromJql, isIssueId } from "../core/jql.ts";
 import { gateTicket } from "../core/blocker-gate.ts";
 import { checkCeilings } from "../core/ceilings.ts";
 import { TICKET_KEY, runIdNow, v2RunDir } from "../core/paths.ts";
@@ -29,7 +29,10 @@ const AUTH_ERROR = /->\s*(401|403)\b/;
 /** Poll; an auth failure pauses the worker, any other poll failure ends the iteration idle (retried next poll). */
 async function poll(ctx: Ctx, role: Role): Promise<JiraTicket | null | "error"> {
   const view = role === "research" ? ctx.research : ctx.dev;
-  const jql = excludeKeysFromJql(buildPollJql(view, { assigneeAccountId: ctx.deps.assigneeAccountId }), [...ctx.exclude]);
+  const jql = excludeIdsFromJql(
+    excludeKeysFromJql(buildPollJql(view, { assigneeAccountId: ctx.deps.assigneeAccountId }), [...ctx.exclude]),
+    [...ctx.state.badIds],
+  );
   try {
     return await ctx.deps.jira.pollOldestMatching(jql);
   } catch (err) {
@@ -79,17 +82,32 @@ async function gate(ctx: Ctx, key: string): Promise<boolean> {
   return false;
 }
 
-/** A polled key that fails TICKET_KEY: logged once per process; the role's poll stops this iteration (it can't be excluded by key). */
-function badKey(ctx: Ctx, key: unknown): void {
-  const k = String(key).slice(0, 60);
+/**
+ * A polled ticket whose key fails TICKET_KEY: logged once per process and
+ * excluded from every later poll by its numeric issue id. True = excluded, so
+ * the caller re-polls; false = the id is unusable too, and the role's poll
+ * stops for this iteration (nothing safe to exclude it by).
+ */
+function badKey(ctx: Ctx, t: JiraTicket): boolean {
+  const k = String(t.key).slice(0, 60);
   if (!ctx.state.badKeys.has(k)) {
     ctx.state.badKeys.add(k);
-    ctx.log(`[worker] invalid ticket key from the poll, skipped: ${JSON.stringify(k)}`);
+    ctx.log(`[worker] invalid ticket key from the poll, skipped: ${JSON.stringify(k)} (id ${JSON.stringify(String(t.id).slice(0, 20))})`);
   }
+  if (!isIssueId(t.id)) return false;
+  ctx.state.badIds.add(t.id);
+  ctx.skips++;
+  return true;
+}
+
+/** A dev candidate; `polled` = it came from the dev poll (so its assignee is known). */
+export interface DevCandidate {
+  ticket: JiraTicket;
+  polled: boolean;
 }
 
 /** Step 3's candidate: step-1 handoffs first, then the dev poll; landed guard + gate. No claim. */
-export async function nextDevCandidate(ctx: Ctx): Promise<JiraTicket | null> {
+export async function nextDevCandidate(ctx: Ctx): Promise<DevCandidate | null> {
   const queue = ctx.handedOff.filter((k) => !ctx.exclude.has(k));
   for (;;) {
     if (ctx.skips >= MAX_SKIPS) return null;
@@ -104,7 +122,7 @@ export async function nextDevCandidate(ctx: Ctx): Promise<JiraTicket | null> {
       t = p;
     }
     if (typeof t.key !== "string" || !TICKET_KEY.test(t.key)) {
-      badKey(ctx, t.key);
+      if (badKey(ctx, t)) continue;
       return null;
     }
     const landed = await landedSkipReason(ctx, t.key);
@@ -113,7 +131,7 @@ export async function nextDevCandidate(ctx: Ctx): Promise<JiraTicket | null> {
       continue;
     }
     if (!(await gate(ctx, t.key))) continue;
-    return t;
+    return { ticket: t, polled: handed === undefined };
   }
 }
 
@@ -124,7 +142,7 @@ export async function nextResearchCandidate(ctx: Ctx): Promise<JiraTicket | null
     const t = await poll(ctx, "research");
     if (t === "error" || t === null) return null;
     if (typeof t.key !== "string" || !TICKET_KEY.test(t.key)) {
-      badKey(ctx, t.key);
+      if (badKey(ctx, t)) continue;
       return null;
     }
     if (hasLandedPhase(ctx.records, t.key, "research") || (await ctx.deps.hasLandedResearchV1?.(t.key))) {
@@ -163,18 +181,25 @@ export const MIN_DEV_BUDGET_USD = 1;
 
 // ---- running a phase ----
 
-export interface PhaseRun {
-  entry: PhaseEntry;
-  /** setInFlight(null) failed: the session lock is gone. Append the record, then pause. */
-  fatal?: string;
-}
+export type PhaseRun =
+  | {
+      entry: PhaseEntry;
+      /** setInFlight(null) failed: the session lock is gone. Append the record, then pause. */
+      fatal?: string;
+    }
+  /** setInFlight(role) failed before the run: the phase never started. The caller records what is needed, then pauses. */
+  | { entry: null; fatal: string };
 
-/** setInFlight(role) -> run the phase -> setInFlight(null). A failure to set in-flight before the run throws (nothing to lose yet). */
+/** setInFlight(role) -> run the phase -> setInFlight(null). Never throws for a lost session lock. */
 export async function runPhase(ctx: Ctx, role: Role, ticket: JiraTicket, maxBudgetUsd: number): Promise<PhaseRun> {
   const { deps } = ctx;
   const since = nowIso(ctx);
   const runDir = v2RunDir(deps.slug, deps.session.name, ticket.key, role, runIdNow(deps.now()));
-  await deps.session.setInFlight({ ticket: ticket.key, role, runDir, since });
+  try {
+    await deps.session.setInFlight({ ticket: ticket.key, role, runDir, since });
+  } catch (err) {
+    return { entry: null, fatal: `could not record the in-flight ${role} run for ${ticket.key} in the session lock: ${errorMessage(err)}` };
+  }
   ctx.log(`[worker] ${ticket.key}: ${role} phase starting (budget $${maxBudgetUsd})`);
   const entry =
     role === "research"

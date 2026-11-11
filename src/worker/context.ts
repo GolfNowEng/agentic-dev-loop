@@ -54,10 +54,12 @@ export type WorkerIterationResult =
 
 /** Process-lifetime state, keyed by the session handle (one per process). */
 export interface WorkerState {
-  /** In-flight runs still to recover: the adopted one first, then orphans. */
-  recover: InFlight[];
+  /** In-flight runs adopted from the lock, recorded to the log on the first iteration: the adopted one first, then orphans. */
+  flights: InFlight[];
   /** Untrusted poll keys already logged as invalid. */
   badKeys: Set<string>;
+  /** Issue ids of polled tickets with an invalid key: excluded from every poll by id. */
+  badIds: Set<string>;
 }
 
 const STATES = new WeakMap<object, WorkerState>();
@@ -65,8 +67,8 @@ const STATES = new WeakMap<object, WorkerState>();
 export function workerState(deps: WorkerDeps): { state: WorkerState; first: boolean } {
   let state = STATES.get(deps.session);
   if (state) return { state, first: false };
-  const recover = [...(deps.session.inFlight ? [deps.session.inFlight] : []), ...deps.session.orphanedInFlight];
-  state = { recover, badKeys: new Set() };
+  const flights = [...(deps.session.inFlight ? [deps.session.inFlight] : []), ...deps.session.orphanedInFlight];
+  state = { flights, badKeys: new Set(), badIds: new Set() };
   STATES.set(deps.session, state);
   return { state, first: true };
 }
@@ -114,7 +116,7 @@ export async function append(
   started: string,
   outcome: IterationOutcome,
   phases: PhaseEntry[],
-  extra: Partial<Pick<IterationRecord, "blocked_by" | "detail" | "jira_sync_error">> = {},
+  extra: Partial<Pick<IterationRecord, "blocked_by" | "detail" | "jira_sync_error" | "resume">> = {},
 ): Promise<IterationRecord> {
   const rec: IterationRecord = {
     ticket,

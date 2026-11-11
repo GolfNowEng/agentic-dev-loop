@@ -780,7 +780,9 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       await runWorkerIteration(h.deps);
 
       expect(runSkillCalls(h).map((e) => e[2])).toEqual(["TARS-3", "TARS-3"]);
-      expect(h.jira.polls[1]).toMatch(/id not in \(555\)/);
+      const researchPolls = h.jira.polls.filter((q) => !q.includes(`"${DEV_LABEL}"`));
+      expect(researchPolls[0]).not.toMatch(/id not in/);
+      expect(researchPolls[1]).toMatch(/id not in \(555\)/);
       expect(h.logs.filter((m) => /invalid ticket key/i.test(m))).toHaveLength(1);
     });
 

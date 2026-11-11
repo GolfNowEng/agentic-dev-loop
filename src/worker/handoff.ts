@@ -9,7 +9,8 @@ import { append, latestRecord, nowIso, type Ctx } from "./context.ts";
 /**
  * Tickets whose latest research entry landed without a completed handoff
  * (`handoff` "failed", "skipped-ceiling", or absent: a research-only
- * `--phase research` run), with no dev entry in any later record. First-seen
+ * `--phase research` run), with no dev entry and no "handoff-done" record
+ * after it. First-seen
  * order. Records are ordered by `ended` (file order breaks ties).
  */
 export function findPendingHandoffs(records: IterationRecord[]): string[] {
@@ -19,7 +20,7 @@ export function findPendingHandoffs(records: IterationRecord[]): string[] {
     const research = r.phases.filter((p) => p.role === "research").at(-1);
     const hasDev = r.phases.some((p) => p.role === "dev");
     if (research) state.set(r.ticket, research.outcome === "landed" && research.handoff !== "done" && !hasDev);
-    else if (hasDev) state.set(r.ticket, false);
+    else if (hasDev || r.outcome === "handoff-done") state.set(r.ticket, false);
   }
   const out: string[] = [];
   const seen = new Set<string>();
@@ -32,8 +33,10 @@ export function findPendingHandoffs(records: IterationRecord[]): string[] {
 }
 
 /**
- * Step 1: retry every pending handoff's label swap. A success makes the
- * ticket a dev candidate this iteration (ctx.handedOff). A failure appends one
+ * Step 1: retry every pending handoff's label swap. A success appends one
+ * phase-less "handoff-done" record (so it is never swapped again, even if
+ * dev can't run it yet) and makes the ticket a dev candidate this iteration
+ * (ctx.handedOff). A failure appends one
  * phase-less "handoff-pending" record only when the ticket's previous record
  * isn't already handoff-pending (no log growth while Jira is down); it is
  * retried next iteration and never pauses.
@@ -44,6 +47,7 @@ export async function completePendingHandoffs(ctx: Ctx): Promise<void> {
     try {
       await ctx.deps.jira.swapLabel(key, research.triggerLabel, research.handoffLabel);
       ctx.log(`[worker] ${key}: pending handoff completed (${research.triggerLabel} -> ${research.handoffLabel})`);
+      await append(ctx, key, nowIso(ctx), "handoff-done", [], { detail: `label handoff ${research.triggerLabel} -> ${research.handoffLabel} completed` });
       ctx.handedOff.push(key);
     } catch (err) {
       const message = errorMessage(err);

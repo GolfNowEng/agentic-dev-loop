@@ -193,25 +193,41 @@ Readers skip blank, truncated and malformed lines.
 at most one ticket and writes one record per ticket iteration; an idle
 iteration writes nothing. The steps run in this order:
 
-0. **Recover** (first iteration of a process). The session lock's `inFlight`
-   comes first, then each `orphanedInFlight`, one per iteration (each orphan
-   is logged at startup). The lost run is always recorded as an `error` phase
-   (`agent_error`, "in-flight ... lost"), so it counts toward
-   `maxAttemptsPerTicket`. Research is re-run without a claim. For dev, an
-   open PR (`findOpenPrUrl`) means self-heal: Code Review with the PR-link QA
-   stub, outcome `skipped-pr-exists`, no rebuild. Otherwise dev is re-run.
+0. **Recover** (`recover.ts`). On a process's first iteration, every
+   in-flight record the session adopted (its `inFlight`, then each
+   `orphanedInFlight`, each logged) is written to the log with
+   `resume: <role>` before anything else runs:
+   - A crashed run is outcome `error` with one `error` phase (`agent_error`),
+     which counts toward `maxAttemptsPerTicket`.
+   - A run stopped by SIGINT/SIGTERM (main marks the lock's flight
+     `interrupted: true`) is outcome `interrupted` with no phase, so it is not
+     an attempt.
+   - A dev flight with an open PR (`findOpenPrUrl`) in a dev-running process
+     is self-healed instead: Code Review with the PR-link QA stub,
+     `skipped-pr-exists` with a `landed` dev phase carrying the PR (this
+     resets attempts and teaches the landed lookup), no rebuild.
+
+   Then, every iteration, one ticket whose latest record has `resume` set to
+   a role this process runs, and that is below the attempt cap, is re-run
+   without a claim. Its new record resolves it. The resume lives in the log,
+   not the lock, because every `--phase` process of a project shares the
+   session dir: a `--phase dev` start can adopt a `--phase research` crash
+   and must leave it for a research process. A claim whose research phase
+   never started (the session lock couldn't be written) is recorded the same
+   way and pauses the worker.
 1. **Pending handoffs** (`handoff.ts`). For every ticket whose latest research
    entry landed without `handoff: "done"` and that has no later dev entry,
-   the label swap is retried. A failure writes one phase-less
-   `handoff-pending` record, and only when the ticket's previous record isn't
-   already one. It never pauses.
+   the label swap is retried. A success writes one phase-less `handoff-done`
+   record (no swap repeats). A failure writes one phase-less `handoff-pending`
+   record, and only when the ticket's previous record isn't already one. It
+   never pauses.
 2. **Exclude**. Every poll excludes `recentlyEnded` (10 min, read from the
    log, so the exclusion survives restarts) and tickets at
    `maxAttemptsPerTicket` failed attempts of a role (`attempts.ts`). A ticket
    that has just reached the cap gets a comment, the bounced status and one
    `blocked-attempts` record.
 3. **Dev first** (no claim). The candidates are step 1's handoffs, then the
-   dev poll. The landed guard (recorded PR merged/open/unreadable) and the
+   dev poll; a polled unassigned ticket is assigned (non-fatal), as in v1. The landed guard (recorded PR merged/open/unreadable) and the
    blocker gate apply.
 4. **Research**. Research polls, skips anything with a landed research entry
    (v2, or the v1 research log), gates, then claims. A ticket that loses the
@@ -231,8 +247,10 @@ Budgets (`--max-budget-usd`): research gets
 iteration gets `min(dev.maxCostPerRunUsd, maxCostPerTicketUsd − research
 cost)`. A dev-only iteration gets `min(dev.maxCostPerRunUsd,
 maxCostPerTicketUsd)`. `maxRunsPerDay` is counted per role. `paused` means a
-ceiling breach, a Jira 401/403 on the poll, a lost session lock, or every
-enabled role at its daily cap. A per-ticket failure never pauses or throws.
+ceiling breach, a Jira 401/403 on the poll, a lost session lock (any phase
+already run is recorded first), or every enabled role at its daily cap. A
+polled ticket whose key fails the ticket-key regex is logged once and
+excluded from later polls by its numeric issue id (`id not in (...)`). A per-ticket failure never pauses or throws.
 Jira comments built by `src/` end with a `— <session>` paragraph, and GitHub
 comments end with a `— <session>` line.
 
