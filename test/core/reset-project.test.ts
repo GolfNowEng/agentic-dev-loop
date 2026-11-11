@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -24,11 +24,11 @@ function makeConfig(targetRepoPath?: string): Config {
   });
 }
 
-function phase(role: "research" | "dev", outcome = "landed") {
+function phase(role: "research" | "dev", outcome = "landed", pr: string | null = null) {
   return {
     role, skill: role === "dev" ? "ticket-to-pr" : "ticket-refine", skill_version: "s", model: "m",
     started: "2026-11-10T00:00:00.000Z", ended: "2026-11-10T00:01:00.000Z", outcome, phase_reached: "pr",
-    cost_usd: 1, tokens: { in: 1, out: 1 }, failure_category: null, detail: "d", pr: null, run_dir: "d",
+    cost_usd: 1, tokens: { in: 1, out: 1 }, failure_category: null, detail: "d", pr, run_dir: "d",
   };
 }
 function rec(ticket: string, phases: object[], extra: object = {}): string {
@@ -176,13 +176,15 @@ describe("planReset / executeReset (v2 layout)", () => {
     expect(await liveLines(root)).toEqual([LOG[1], LOG[3], LOG[4], LOG[5], LOG[6]]);
   });
 
-  it("--role dev leaves research-* dirs; archives records with a dev phase or a dev resume", async () => {
+  it("--role dev leaves research-* dirs; archives records with a dev phase or a dev resume, refusing one whose research landed", async () => {
     const plan = await planReset({ root, project: P, ticket: "TARS-1", role: "dev" });
     expect(plan.runDirsToRemove).toEqual([RUN_DIRS[1], RUN_DIRS[2]].map((d) => join(root, d)));
+    expect(plan.refusedRecords).toEqual([{ ticket: "TARS-1", reason: "other role landed: research landed" }]);
     await executeReset(plan);
     expect(await exists(join(root, RUN_DIRS[0]))).toBe(true);
     expect(await exists(join(root, RUN_DIRS[3]))).toBe(true);
-    expect(await archiveLines(root)).toEqual([LOG[2], LOG[3], LOG[4]]);
+    expect(await archiveLines(root)).toEqual([LOG[3], LOG[4]]);
+    expect(await liveLines(root)).toContain(LOG[2]);
   });
 
   it("whole project, role all: archives every line, removes every run dir, prunes only session leftovers", async () => {
@@ -301,6 +303,121 @@ describe("planReset / executeReset (v2 layout)", () => {
   });
 });
 
+describe("cross-role safety: a role-scoped reset never drops the other role's landed phase by default", () => {
+  let root: string;
+  const PR = "https://github.com/org/proj/pull/7";
+  const BOTH = rec("TARS-1", [phase("research"), phase("dev", "landed", PR)]);
+  const RESEARCH_LANDED_DEV_ERROR = rec("TARS-1", [phase("research"), phase("dev", "error")]);
+  const RESEARCH_ONLY = rec("TARS-1", [phase("research")]);
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "reset-cross-role-"));
+    await put(root, `runs/v2/${P}.jsonl`, [RESEARCH_ONLY, BOTH, RESEARCH_LANDED_DEV_ERROR].join("\n") + "\n");
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("--role research refuses [research, dev landed PR] by default and keeps it in the live log", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", role: "research" });
+    expect(plan.refusedRecords).toEqual([{ ticket: "TARS-1", reason: `other role landed: dev ${PR}` }]);
+    expect(plan.recordsToArchive).toBe(2);
+    expect(describeResetPlan(plan)).toContain(`REFUSED (other role landed: dev ${PR})`);
+    await executeReset(plan);
+    expect(await liveLines(root)).toEqual([BOTH]);
+    expect(await archiveLines(root)).toEqual([RESEARCH_ONLY, RESEARCH_LANDED_DEV_ERROR]);
+  });
+
+  it("--role research --include-cross-role archives it too", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", role: "research", includeCrossRole: true });
+    expect(plan.refusedRecords).toEqual([]);
+    await executeReset(plan);
+    expect(await archiveLines(root)).toEqual([RESEARCH_ONLY, BOTH, RESEARCH_LANDED_DEV_ERROR]);
+  });
+
+  it("--role dev refuses [research landed, dev error] (and the dev-landed one) by default", async () => {
+    const plan = await planReset({ root, project: P, role: "dev" });
+    expect(plan.refusedRecords.map((r) => r.reason)).toEqual(["other role landed: research landed", "other role landed: research landed"]);
+    expect(plan.recordsToArchive).toBe(0);
+    await executeReset(plan);
+    expect(await liveLines(root)).toEqual([RESEARCH_ONLY, BOTH, RESEARCH_LANDED_DEV_ERROR]);
+  });
+
+  it("--role all is unaffected", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1" });
+    expect(plan.refusedRecords).toEqual([]);
+    expect(plan.recordsToArchive).toBe(3);
+  });
+});
+
+describe("symlinks are never followed", () => {
+  let root: string;
+  let outside: string;
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "reset-symlink-"));
+    outside = await mkdtemp(join(tmpdir(), "reset-outside-"));
+    await put(outside, "TARS-1/dev-20261110T000000Z/keep.txt", "precious");
+    await put(outside, "dev-20261110T000000Z/keep.txt", "precious");
+    await mkdir(join(root, `.pipeline/v2/${P}/dev-2`), { recursive: true });
+    await symlink(outside, join(root, `.pipeline/v2/${P}/dev-1`));
+    await symlink(outside, join(root, `.pipeline/v2/${P}/dev-2/TARS-1`));
+    await put(root, `.pipeline/v2/${P}/dev-3/TARS-1/research-20261110T000000Z/usage.json`, "{}");
+    await symlink(join(outside, "dev-20261110T000000Z"), join(root, `.pipeline/v2/${P}/dev-3/TARS-1/dev-20261110T000000Z`));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  });
+
+  it("skips a symlinked session, ticket or run dir with a WARNING, and never deletes outside", async () => {
+    for (const ticket of ["TARS-1", undefined]) {
+      const plan = await planReset({ root, project: P, ticket });
+      expect(plan.runDirsToRemove).toEqual([join(root, `.pipeline/v2/${P}/dev-3/TARS-1/research-20261110T000000Z`)]);
+      expect(plan.warnings.filter((w) => /symlink/.test(w))).toHaveLength(3);
+      expect(describeResetPlan(plan)).toMatch(/WARNING: skipped symlink/);
+      await executeReset(plan);
+    }
+    expect(await readFile(join(outside, "TARS-1/dev-20261110T000000Z/keep.txt"), "utf8")).toBe("precious");
+    expect(await readFile(join(outside, "dev-20261110T000000Z/keep.txt"), "utf8")).toBe("precious");
+  });
+});
+
+describe("live worker guard", () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "reset-live-"));
+    await put(root, `runs/v2/${P}.jsonl`, rec("TARS-1", [phase("dev")]) + "\n");
+    await put(root, `${SESSIONS}/dev-1.lock`, JSON.stringify({ pid: 4242, started: 1000, inFlight: null }));
+    await put(root, `${SESSIONS}/dev-2.lock`, JSON.stringify({ pid: 4343, started: 2000, inFlight: null }));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  const isAlive = (pid: number, started: number) => pid === 4242 && started === 1000;
+
+  it("lists only locks whose holder is alive (pid + start time)", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", isAlive });
+    expect(plan.liveWorkerLocks).toEqual([join(root, SESSIONS, "dev-1.lock")]);
+    expect(plan.liveLocks).toHaveLength(2);
+  });
+
+  it("executeReset refuses while a live worker holds a lock, touching nothing", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", isAlive });
+    await expect(executeReset(plan)).rejects.toThrow(/live worker.*--ignore-live-worker/);
+    expect(await liveLines(root)).toHaveLength(1);
+  });
+
+  it("--ignore-live-worker proceeds", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", isAlive, ignoreLiveWorker: true });
+    expect((await executeReset(plan)).recordsArchived).toBe(1);
+  });
+
+  it("dead locks don't block", async () => {
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", isAlive: () => false });
+    expect(plan.liveWorkerLocks).toEqual([]);
+    expect((await executeReset(plan)).recordsArchived).toBe(1);
+  });
+});
+
 describe("describeResetPlan / describeResetSummary", () => {
   let root: string;
   beforeEach(async () => {
@@ -354,6 +471,11 @@ describe("describeResetPlan / describeResetSummary", () => {
       sessionLeftoversToRemove: [],
       worktreesToRemove: [],
       liveLocks: [],
+      liveWorkerLocks: [],
+      ignoreLiveWorker: false,
+      includeCrossRole: false,
+      refusedRecords: [],
+      warnings: [],
       root: join(homedir(), "x"),
       worktreesDir: null,
     };

@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { mkdtemp, mkdir, rm, writeFile, readFile, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { processStartTime } from "../../src/core/session.ts";
 
 const run = promisify(execFile);
 const CLI = resolve(import.meta.dirname, "../../src/core/reset-cli.ts");
@@ -101,6 +102,35 @@ describe("reset-cli", () => {
     expect(await readFile(join(root, "research-loop/runs/proj.jsonl"), "utf8")).toBe(v1line("TARS-1", "landed", null) + "\n");
     expect(await exists(join(root, ".pipeline/v1/research/proj/runs/TARS-1-x/verdict.json"))).toBe(true);
     expect(await exists(join(root, ".pipeline/proj/runs/TARS-1-x/verdict.json"))).toBe(true);
+  });
+
+  it("a live worker lock (this test process) blocks a real reset unless --ignore-live-worker; dry-run only warns", async () => {
+    const log = v2rec("TARS-1", "dev", null) + "\n";
+    await put(root, "runs/v2/proj.jsonl", log);
+    await put(root, ".pipeline/v2/proj/sessions/dev-1.lock", JSON.stringify({ pid: process.pid, started: processStartTime(process.pid), inFlight: null }));
+
+    const dry = await cli("--ticket", "TARS-1", "--dry-run");
+    expect(dry.stdout).toMatch(/WARNING: session lock/);
+
+    await expect(cli("--ticket", "TARS-1")).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("--ignore-live-worker") });
+    expect(await readFile(join(root, "runs/v2/proj.jsonl"), "utf8")).toBe(log);
+
+    await cli("--ticket", "TARS-1", "--ignore-live-worker");
+    expect(await readFile(join(root, "runs/v2/proj.reset-archive.jsonl"), "utf8")).toBe(log);
+  });
+
+  it("--include-cross-role archives a record whose other role landed; without it the plan shows REFUSED", async () => {
+    const both = JSON.stringify({
+      ...JSON.parse(v2rec("TARS-1", "research", null)),
+      phases: [JSON.parse(v2rec("TARS-1", "research", null)).phases[0], JSON.parse(v2rec("TARS-1", "dev", "https://github.com/o/r/pull/9")).phases[0]],
+    });
+    await put(root, "runs/v2/proj.jsonl", both + "\n");
+    const dry = await cli("--ticket", "TARS-1", "--role", "research", "--dry-run");
+    expect(dry.stdout).toContain("REFUSED (other role landed: dev https://github.com/o/r/pull/9)");
+    await cli("--ticket", "TARS-1", "--role", "research");
+    expect(await readFile(join(root, "runs/v2/proj.jsonl"), "utf8")).toBe(both + "\n");
+    await cli("--ticket", "TARS-1", "--role", "research", "--include-cross-role");
+    expect(await readFile(join(root, "runs/v2/proj.reset-archive.jsonl"), "utf8")).toBe(both + "\n");
   });
 
   it("rejects an unknown --role", async () => {
