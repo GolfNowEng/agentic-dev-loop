@@ -28,42 +28,42 @@ const validVerdictJson = JSON.stringify({
 
 describe("parseVerdict", () => {
   it("parses a well-formed verdict.json string", () => {
-    const verdict = parseVerdict(validVerdictJson);
+    const verdict = parseVerdict(validVerdictJson, "executor");
     expect(verdict.outcome).toBe("landed");
     expect(verdict.phase_reached).toBe("pr");
     expect(verdict.failure_category).toBeNull();
   });
 
   it("never throws on missing input (null)", () => {
-    expect(() => parseVerdict(null)).not.toThrow();
+    expect(() => parseVerdict(null, "executor")).not.toThrow();
   });
 
   it("never throws on missing input (undefined)", () => {
-    expect(() => parseVerdict(undefined)).not.toThrow();
+    expect(() => parseVerdict(undefined, "executor")).not.toThrow();
   });
 
   it("treats missing input as outcome error / failure_category agent_error", () => {
-    const verdict = parseVerdict(null);
+    const verdict = parseVerdict(null, "executor");
     expect(verdict.outcome).toBe("error");
     expect(verdict.failure_category).toBe("agent_error");
   });
 
   it("never throws on malformed JSON", () => {
-    expect(() => parseVerdict("{not valid json")).not.toThrow();
+    expect(() => parseVerdict("{not valid json", "executor")).not.toThrow();
   });
 
   it("treats malformed JSON as outcome error / failure_category agent_error", () => {
-    const verdict = parseVerdict("{not valid json");
+    const verdict = parseVerdict("{not valid json", "executor");
     expect(verdict.outcome).toBe("error");
     expect(verdict.failure_category).toBe("agent_error");
   });
 
   it("never throws on valid JSON with the wrong shape", () => {
-    expect(() => parseVerdict(JSON.stringify({ foo: "bar" }))).not.toThrow();
+    expect(() => parseVerdict(JSON.stringify({ foo: "bar" }), "executor")).not.toThrow();
   });
 
   it("treats wrong-shape JSON as outcome error / failure_category agent_error", () => {
-    const verdict = parseVerdict(JSON.stringify({ foo: "bar" }));
+    const verdict = parseVerdict(JSON.stringify({ foo: "bar" }), "executor");
     expect(verdict.outcome).toBe("error");
     expect(verdict.failure_category).toBe("agent_error");
   });
@@ -78,7 +78,7 @@ describe("parseVerdict: qa_notes (optional manual-testing-steps field)", () => {
         "Expected: the Self-Service badge appears next to the critic's name",
       ],
     });
-    const verdict = parseVerdict(json);
+    const verdict = parseVerdict(json, "executor");
     expect(verdict.outcome).toBe("landed");
     expect(verdict.qa_notes).toEqual([
       "Navigate to `/rotten-tomatoes/critics?query=tina+kakad`",
@@ -87,7 +87,7 @@ describe("parseVerdict: qa_notes (optional manual-testing-steps field)", () => {
   });
 
   it("accepts a verdict with qa_notes absent -- back-compat with verdicts written before this field existed", () => {
-    const verdict = parseVerdict(validVerdictJson);
+    const verdict = parseVerdict(validVerdictJson, "executor");
     expect(verdict.outcome).toBe("landed");
     expect(verdict.qa_notes).toBeUndefined();
   });
@@ -108,7 +108,7 @@ describe("readVerdictFile", () => {
     const path = join(dir, "verdict.json");
     await writeFile(path, validVerdictJson, "utf8");
     try {
-      const verdict = await readVerdictFile(path);
+      const verdict = await readVerdictFile(path, "executor");
       expect(verdict.outcome).toBe("landed");
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -119,8 +119,8 @@ describe("readVerdictFile", () => {
     const dir = await mkdtemp(join(tmpdir(), "verdict-test-"));
     const path = join(dir, "does-not-exist.json");
     try {
-      await expect(readVerdictFile(path)).resolves.toBeDefined();
-      const verdict = await readVerdictFile(path);
+      await expect(readVerdictFile(path, "executor")).resolves.toBeDefined();
+      const verdict = await readVerdictFile(path, "executor");
       expect(verdict.outcome).toBe("error");
       expect(verdict.failure_category).toBe("agent_error");
     } finally {
@@ -133,7 +133,7 @@ describe("readVerdictFile", () => {
     const path = join(dir, "verdict.json");
     await writeFile(path, "{not valid json", "utf8");
     try {
-      const verdict = await readVerdictFile(path);
+      const verdict = await readVerdictFile(path, "executor");
       expect(verdict.outcome).toBe("error");
       expect(verdict.failure_category).toBe("agent_error");
     } finally {
@@ -144,7 +144,7 @@ describe("readVerdictFile", () => {
 
 // research-loop's verdict schema (ticket-refine): only outcome/phase_reached/
 // failure_category/detail are required, and "ready" is a valid outcome. This
-// is the default ("refine") profile.
+// is the "refine" profile.
 const minimalRefineVerdict = {
   outcome: "ready",
   phase_reached: "verify",
@@ -152,21 +152,21 @@ const minimalRefineVerdict = {
   detail: "Refined ticket written.",
 };
 
-describe("parseVerdict: default (refine) profile", () => {
+describe("parseVerdict: refine profile", () => {
   it("parses a verdict carrying only the four required fields", () => {
-    const verdict = parseVerdict(JSON.stringify({ ...minimalRefineVerdict, outcome: "landed" }));
+    const verdict = parseVerdict(JSON.stringify({ ...minimalRefineVerdict, outcome: "landed" }), "refine");
     expect(verdict.outcome).toBe("landed");
     expect(verdict.failure_category).toBeNull();
   });
 
   it("parses outcome \"ready\" -- ticket-refine's own passing verdict", () => {
-    const verdict = parseVerdict(JSON.stringify(minimalRefineVerdict));
+    const verdict = parseVerdict(JSON.stringify(minimalRefineVerdict), "refine");
     expect(verdict.outcome).toBe("ready");
   });
 
   it("keeps a well-formed size_trajectory", () => {
     const traj = { step4_tshirt: "M", delta: "unchanged", final_score: 4.5 };
-    const verdict = parseVerdict(JSON.stringify({ ...minimalRefineVerdict, size_trajectory: traj }));
+    const verdict = parseVerdict(JSON.stringify({ ...minimalRefineVerdict, size_trajectory: traj }), "refine");
     expect(verdict.size_trajectory).toEqual(traj);
   });
 
@@ -176,6 +176,7 @@ describe("parseVerdict: default (refine) profile", () => {
         ...minimalRefineVerdict,
         size_trajectory: { step4_tshirt: "NOT_VALID", delta: "grew", final_score: 999 },
       }),
+      "refine",
     );
     expect(verdict.outcome).toBe("ready");
     expect(verdict.size_trajectory).toBeUndefined();
@@ -214,13 +215,24 @@ describe("parseVerdict: executor profile", () => {
     const path = join(dir, "verdict.json");
     await writeFile(path, JSON.stringify(minimalRefineVerdict), "utf8");
     try {
-      expect((await readVerdictFile(path)).outcome).toBe("ready");
+      expect((await readVerdictFile(path, "refine")).outcome).toBe("ready");
       const strict = await readVerdictFile(path, "executor");
       expect(strict.outcome).toBe("error");
       expect(strict.failure_category).toBe("agent_error");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// The profile is a required argument (tsc enforces it in src/). A call that
+// omits it anyway (an untyped caller) must fail closed: strict, not lenient.
+describe("parseVerdict: profile is required", () => {
+  it("a missing profile at runtime gets the strict executor check, never the lenient refine one", () => {
+    const raw = JSON.stringify(minimalRefineVerdict);
+    const verdict = (parseVerdict as (r: string) => ReturnType<typeof parseVerdict>)(raw);
+    expect(verdict.outcome).toBe("error");
+    expect(verdict.failure_category).toBe("agent_error");
   });
 });
 
@@ -304,7 +316,7 @@ describe("parseSizeTrajectory", () => {
       detail: "Refined ticket written.",
       size_trajectory: { step4_tshirt: "NOT_VALID", delta: "grew", final_score: 999 },
     });
-    const verdict = parseVerdict(raw);
+    const verdict = parseVerdict(raw, "refine");
     expect(verdict.outcome).toBe("ready");
   });
 });

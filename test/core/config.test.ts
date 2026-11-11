@@ -228,14 +228,14 @@ describe("loadLoopConfig", () => {
 
 describe("findPlaceholders / assertNoPlaceholders", () => {
   it("returns an empty array when no fields are placeholders", () => {
-    expect(findPlaceholders(makeConfig())).toEqual([]);
+    expect(findPlaceholders(makeConfig(), "dev")).toEqual([]);
   });
 
   it("lists every field still set to the placeholder value", () => {
     const config = makeConfig({
       jira: { ...makeConfig().jira, triggerLabel: "___", handoffLabel: "___" },
     });
-    const missing = findPlaceholders(config);
+    const missing = findPlaceholders(config, "dev");
     expect(missing).toContain("jira.triggerLabel");
     expect(missing).toContain("jira.handoffLabel");
   });
@@ -244,7 +244,7 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
     const config = makeConfig({
       jira: { ...makeConfig().jira, repoLabel: "___" },
     });
-    const missing = findPlaceholders(config);
+    const missing = findPlaceholders(config, "dev");
     expect(missing).toContain("jira.repoLabel");
   });
 
@@ -255,24 +255,24 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
         codeReviewFields: { piiField: "___", piiNoImpactOptionId: "___", qaNotesField: "___" },
       },
     });
-    const missing = findPlaceholders(config);
+    const missing = findPlaceholders(config, "dev");
     expect(missing).toContain("jira.codeReviewFields.piiField");
     expect(missing).toContain("jira.codeReviewFields.piiNoImpactOptionId");
     expect(missing).toContain("jira.codeReviewFields.qaNotesField");
   });
 
   it("assertNoPlaceholders does not throw on a fully-bound config", () => {
-    expect(() => assertNoPlaceholders(makeConfig())).not.toThrow();
+    expect(() => assertNoPlaceholders(makeConfig(), "dev")).not.toThrow();
   });
 
   it("assertNoPlaceholders throws naming every missing field", () => {
     const config = makeConfig({ autoPromoteLabel: "___" });
-    expect(() => assertNoPlaceholders(config)).toThrow(/autoPromoteLabel/);
+    expect(() => assertNoPlaceholders(config, "dev")).toThrow(/autoPromoteLabel/);
   });
 
   it("lists github.repo when it's still set to the placeholder value", () => {
     const config = makeConfig({ github: { repo: "___" } });
-    const missing = findPlaceholders(config);
+    const missing = findPlaceholders(config, "dev");
     expect(missing).toContain("github.repo");
   });
   // research-loop's config has no jira.codeReviewFields (dev-only key).
@@ -283,9 +283,8 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
       return { ...config, jira };
     }
 
-    it("is fully bound for the research role (the default)", () => {
-      expect(findPlaceholders(researchConfig())).toEqual([]);
-      expect(() => assertNoPlaceholders(researchConfig())).not.toThrow();
+    it("is fully bound for the research role", () => {
+      expect(findPlaceholders(researchConfig(), "research")).toEqual([]);
       expect(() => assertNoPlaceholders(researchConfig(), "research")).not.toThrow();
     });
 
@@ -298,6 +297,15 @@ describe("findPlaceholders / assertNoPlaceholders", () => {
       ]);
       expect(() => assertNoPlaceholders(researchConfig(), "dev")).toThrow(/codeReviewFields/);
     });
+  });
+
+  // The role is a required argument (tsc enforces it in src/). A call that
+  // omits it anyway (an untyped caller) must fail closed: the dev check.
+  it("a missing role at runtime gets the strict dev check, never the lenient research one", () => {
+    const config = makeConfig();
+    const { codeReviewFields: _crf, ...jira } = config.jira;
+    const untyped = findPlaceholders as (c: Config) => string[];
+    expect(untyped({ ...config, jira })).toContain("jira.codeReviewFields.piiField");
   });
 
   it("a fully-bound dev config passes the dev-role check", () => {
