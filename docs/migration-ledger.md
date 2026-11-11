@@ -8,3 +8,4 @@ difference, becomes a parameter / role setting / moves under `roles/`;
 | file | divergence | class | evidence (commit/changelog entry) |
 |---|---|---|---|
 | claude-usage | none (src and tests identical modulo import path) | no divergence | `diff research-loop/src/claude-usage.ts src/core/claude-usage.ts` empty; shared history 18aa955/88d3938 |
+| run-dirs | none (src and tests identical modulo import path) | no divergence | `diff research-loop/src/run-dirs.ts src/core/run-dirs.ts` empty; shared history 18aa955/88d3938 |
