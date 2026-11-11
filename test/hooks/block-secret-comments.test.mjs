@@ -1,46 +1,35 @@
 // End-to-end test of .claude/hooks/block-secret-comments.sh, driven via
 // real piped stdin JSON the same shape Claude Code sends a PreToolUse
-// hook for a Bash tool call. Run standalone with:
+// hook. The hook is the merge of dev-loop's (Bash `gh pr create/edit`)
+// and research-loop's (`mcp__atlassian__*` writes) versions, so this file
+// carries every case from both repos' tests. Run with:
+//   npm run test:hooks        (all hook tests)
 //   node test/hooks/block-secret-comments.test.mjs
-// (not wired into npm test/vitest -- this drives an actual child
-// process/bash script, not an in-process unit.)
 
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import { writeFileSync, unlinkSync, renameSync, mkdtempSync, symlinkSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  REPO_ROOT,
+  BROKEN_CHECKER,
+  runHook,
+  withTempLayout,
+  withNoJqPath,
+  check,
+  finish,
+} from "./_helpers.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = join(__dirname, "..", "..");
-const HOOK_PATH = join(REPO_ROOT, ".claude", "hooks", "block-secret-comments.sh");
+const HOOK = "block-secret-comments.sh";
+const SECRET = "CLIENT_SECRET=abcdefghijklmnop";
+const run = (stdin, opts) => runHook(HOOK, stdin, opts);
+const bash = (command) => JSON.stringify({ tool_name: "Bash", tool_input: { command } });
+const mcp = (tool_name, tool_input) => JSON.stringify({ tool_name, tool_input });
 
-let failures = 0;
+// ---------------------------------------------------------------------------
+// Bash shape (from dev-loop's test)
+// ---------------------------------------------------------------------------
 
-function runHook(stdinJson, env = {}) {
-  return spawnSync("bash", [HOOK_PATH], {
-    input: stdinJson,
-    encoding: "utf8",
-    env: { ...process.env, CLAUDE_PROJECT_DIR: REPO_ROOT, ...env },
-  });
-}
-
-function check(name, condition, detail) {
-  if (condition) {
-    console.log(`ok - ${name}`);
-  } else {
-    failures += 1;
-    console.error(`FAIL - ${name}${detail ? `: ${detail}` : ""}`);
-  }
-}
-
-// --- Case 1: secret-shaped gh pr create body is denied ---
 {
-  const stdin = JSON.stringify({
-    tool_name: "Bash",
-    tool_input: { command: 'gh pr create --title "TARS-1" --body "CLIENT_SECRET=abcdefghijklmnop found hardcoded"' },
-  });
-  const result = runHook(stdin);
+  const result = run(bash(`gh pr create --title "TARS-1" --body "${SECRET} found hardcoded"`));
   check("secret-shaped gh pr create: exit code is 2", result.status === 2, `got ${result.status}`);
   check("secret-shaped gh pr create: stderr is non-empty", result.stderr.trim().length > 0);
   check(
@@ -50,146 +39,164 @@ function check(name, condition, detail) {
   );
 }
 
-// --- Case 2: clean gh pr create body is allowed ---
 {
-  const stdin = JSON.stringify({
-    tool_name: "Bash",
-    tool_input: { command: 'gh pr create --title "TARS-1" --body "## Changes\n- clean change"' },
-  });
-  const result = runHook(stdin);
+  const result = run(bash("gh pr edit 123 --body 'SIGNING_KEY=abcdefghijklmnop'"));
+  check("secret-shaped gh pr edit: exit code is 2", result.status === 2, `got ${result.status}`);
+}
+
+{
+  const result = run(bash('gh pr create --title "TARS-1" --body "## Changes\n- clean change"'));
   check("clean gh pr create: exit code is 0", result.status === 0, `got ${result.status}, stderr: ${result.stderr}`);
 }
 
-// --- Case 3: unrelated Bash command (e.g. npm test) is allowed without invoking the checker at all ---
 {
-  const stdin = JSON.stringify({
-    tool_name: "Bash",
-    tool_input: { command: "npm test" },
-  });
-  const result = runHook(stdin);
+  const result = run(bash("npm test"));
   check("unrelated Bash command: exit code is 0", result.status === 0, `got ${result.status}`);
 }
 
-// --- Case 4: gh pr view (not create/edit) is allowed even with secret-shaped text present ---
 {
-  const stdin = JSON.stringify({
-    tool_name: "Bash",
-    tool_input: { command: "gh pr view 42 # CLIENT_SECRET=abcdefghijklmnop" },
-  });
-  const result = runHook(stdin);
+  const result = run(bash(`gh pr view 42 # ${SECRET}`));
   check("gh pr view: exit code is 0", result.status === 0, `got ${result.status}`);
 }
 
-// --- Case 5: simulated checker crash fails closed (exit 2), with a distinct reason ---
+// gh pr create split across lines (the reason the pre-filter is three
+// independent word checks, not one `.*` regex).
 {
-  const brokenCheckerPath = join(REPO_ROOT, "scripts", "__test_broken_checker__.ts");
-  writeFileSync(brokenCheckerPath, "throw new Error('simulated checker crash');\n");
-  const realCheckerPath = join(REPO_ROOT, "scripts", "check-secret-in-tool-input.ts");
-  const backupPath = join(REPO_ROOT, "scripts", "__check-secret-in-tool-input.ts.bak");
-  try {
-    renameSync(realCheckerPath, backupPath);
-    try {
-      renameSync(brokenCheckerPath, realCheckerPath);
-      const stdin = JSON.stringify({
-        tool_name: "Bash",
-        tool_input: { command: "gh pr create --body irrelevant" },
-      });
-      const result = runHook(stdin);
-      check("checker-failure: exit code is 2 (fail closed)", result.status === 2, `got ${result.status}`);
-      check(
-        "checker-failure: stderr reason is distinguishable from the secret-found reason",
-        result.stderr.includes("could not verify"),
-        result.stderr,
-      );
-    } finally {
-      renameSync(realCheckerPath, brokenCheckerPath);
-      renameSync(backupPath, realCheckerPath);
-    }
-  } finally {
-    try {
-      unlinkSync(brokenCheckerPath);
-    } catch {
-      // already cleaned up above
-    }
-  }
+  const result = run(bash(`gh pr \\\n  create --body "${SECRET}"`));
+  check("multi-line gh pr create with a secret: exit code is 2", result.status === 2, `got ${result.status}`);
 }
 
-// --- Case 6: CLAUDE_PROJECT_DIR unset/empty fails closed (exit 2), not exit 1 ---
-// Under `set -u`, an unguarded `$CLAUDE_PROJECT_DIR` reference would abort
-// the script with exit 1 if the var were ever unset -- and Claude Code
-// treats a hook exiting 1 as non-blocking (lets the tool call proceed),
-// which would be a fail-OPEN on exactly the command class this hook
-// exists to guard. The fix is `${CLAUDE_PROJECT_DIR:-}` so `set -u`
-// doesn't abort, and the existing "checker file missing" branch handles
-// the rest by denying with exit 2.
+// CLAUDE_PROJECT_DIR unset/empty must never be a fail-OPEN exit 1 under
+// `set -u`. The checker is now located relative to the hook script itself,
+// so an empty CLAUDE_PROJECT_DIR changes nothing: a secret still denies and
+// a clean write is still allowed.
 {
-  const stdin = JSON.stringify({
-    tool_name: "Bash",
-    tool_input: { command: 'gh pr create --title "TARS-1" --body "CLIENT_SECRET=abcdefghijklmnop"' },
-  });
-  // runHook()'s helper sets CLAUDE_PROJECT_DIR: REPO_ROOT before spreading
-  // the env override in -- since object spread lets later keys win, this
-  // override actually takes effect (verified: it is not clobbered back to
-  // REPO_ROOT).
-  const result = runHook(stdin, { CLAUDE_PROJECT_DIR: "" });
+  const result = run(bash(`gh pr create --title "TARS-1" --body "${SECRET}"`), { env: { CLAUDE_PROJECT_DIR: "" } });
   check(
-    "CLAUDE_PROJECT_DIR unset: exit code is 2 (fail closed), not 1 (fail open)",
+    "CLAUDE_PROJECT_DIR empty, secret: exit code is 2 (fail closed), not 1 (fail open)",
     result.status === 2,
     `got ${result.status}, stderr: ${result.stderr}`,
   );
+  check("CLAUDE_PROJECT_DIR empty, secret: stderr is non-empty", result.stderr.trim().length > 0, result.stderr);
+  const clean = run(bash('gh pr create --title "TARS-1" --body "clean"'), { env: { CLAUDE_PROJECT_DIR: "" } });
   check(
-    "CLAUDE_PROJECT_DIR unset: stderr is non-empty",
-    result.stderr.trim().length > 0,
+    "CLAUDE_PROJECT_DIR empty, clean: exit code is 0 (checker found without it)",
+    clean.status === 0,
+    `got ${clean.status}, stderr: ${clean.stderr}`,
+  );
+}
+{
+  const result = runHook(HOOK, bash(`gh pr create --body "${SECRET}"`), { env: { CLAUDE_PROJECT_DIR: undefined } });
+  check("CLAUDE_PROJECT_DIR unset, secret: exit code is 2", result.status === 2, `got ${result.status}`);
+}
+
+// jq missing from PATH fails closed with a message distinct from malformed JSON.
+withNoJqPath((dir) => {
+  const result = run(bash('gh pr create --title "TARS-1" --body "irrelevant"'), { env: { PATH: dir } });
+  check("jq missing from PATH: exit code is 2 (fail closed)", result.status === 2, `got ${result.status}, stderr: ${result.stderr}`);
+  check(
+    "jq missing from PATH: stderr mentions jq/not found, not malformed JSON",
+    /jq/i.test(result.stderr) && /not found/i.test(result.stderr) && !/malformed JSON/i.test(result.stderr),
+    result.stderr,
+  );
+});
+
+{
+  const result = run("{not valid json");
+  check("malformed stdin JSON: exit code is 2", result.status === 2, `got ${result.status}`);
+  check("malformed stdin JSON: stderr says malformed JSON", /malformed JSON/i.test(result.stderr), result.stderr);
+}
+
+// ---------------------------------------------------------------------------
+// mcp__atlassian__* shape (from research-loop's test)
+// ---------------------------------------------------------------------------
+
+{
+  const result = run(mcp("mcp__atlassian__addCommentToJiraIssue", { commentBody: `${SECRET} was found hardcoded` }));
+  check("secret-shaped MCP input: exit code is 2", result.status === 2, `got ${result.status}`);
+  check("secret-shaped MCP input: stderr is non-empty", result.stderr.trim().length > 0);
+  check(
+    "secret-shaped MCP input: stderr does not contain the actual secret value",
+    !result.stderr.includes("abcdefghijklmnop"),
     result.stderr,
   );
 }
 
-// --- Case 7: jq missing from PATH fails closed (exit 2) with a message
-// distinguishable from the malformed-JSON case ---
-// Builds a PATH pointing at a temp dir containing symlinks to every binary
-// the script needs (bash, cat, grep, printf, node) EXCEPT jq, so `command
-// -v jq` reliably fails inside the hook's own process without breaking
-// anything else the script does before reaching the jq check.
 {
-  const noJqDir = mkdtempSync(join(tmpdir(), "no-jq-path-"));
-  const binsToLink = {
-    bash: "/bin/bash",
-    cat: "/bin/cat",
-    grep: "/usr/bin/grep",
-    node: process.execPath,
-  };
-  try {
-    for (const [name, target] of Object.entries(binsToLink)) {
-      try {
-        symlinkSync(target, join(noJqDir, name));
-      } catch {
-        // best-effort -- if a given real binary path doesn't exist on this
-        // host, skip it rather than fail the whole test setup.
-      }
-    }
-    const stdin = JSON.stringify({
-      tool_name: "Bash",
-      tool_input: { command: 'gh pr create --title "TARS-1" --body "irrelevant"' },
-    });
-    const result = runHook(stdin, { PATH: noJqDir });
-    check(
-      "jq missing from PATH: exit code is 2 (fail closed, unchanged behavior)",
-      result.status === 2,
-      `got ${result.status}, stderr: ${result.stderr}`,
-    );
-    check(
-      "jq missing from PATH: stderr mentions jq/not found, not malformed JSON",
-      /jq/i.test(result.stderr) && /not found/i.test(result.stderr) && !/malformed JSON/i.test(result.stderr),
-      result.stderr,
-    );
-  } finally {
-    rmSync(noJqDir, { recursive: true, force: true });
+  const result = run(mcp("mcp__atlassian__addCommentToJiraIssue", { commentBody: "Ground confirmed the fix works as expected." }));
+  check("clean MCP input: exit code is 0", result.status === 0, `got ${result.status}, stderr: ${result.stderr}`);
+}
+
+{
+  const result = run(
+    mcp("mcp__atlassian__editJiraIssue", {
+      issueIdOrKey: "TARS-1",
+      fields: { description: `Found ${SECRET} hardcoded in config.py` },
+    }),
+  );
+  check("secret nested in MCP tool_input.fields: exit code is 2", result.status === 2, `got ${result.status}`);
+}
+
+// Table-driven: every tool name in the merged mcp__atlassian__(...) matcher
+// denies a seeded fake secret. Names come from .claude/settings.json itself,
+// so a tool added to the matcher is covered without editing this file.
+{
+  const settings = JSON.parse(readFileSync(join(REPO_ROOT, ".claude", "settings.json"), "utf8"));
+  const matcher = (settings.hooks?.PreToolUse ?? []).map((e) => e.matcher).find((m) => m?.startsWith("mcp__atlassian__"));
+  const names = /^mcp__atlassian__\((.+)\)$/.exec(matcher ?? "")?.[1]?.split("|") ?? [];
+  check("settings.json has an mcp__atlassian__(...) matcher with tool names", names.length > 0, String(matcher));
+  for (const name of names) {
+    const tool = `mcp__atlassian__${name}`;
+    const result = run(mcp(tool, { cloudId: "x", body: `note: ${SECRET}`, commentBody: `note: ${SECRET}` }));
+    check(`table: ${tool} with a seeded secret: exit code is 2`, result.status === 2, `got ${result.status}`);
+    const clean = run(mcp(tool, { cloudId: "x", body: "clean", commentBody: "clean" }));
+    check(`table: ${tool} clean: exit code is 0`, clean.status === 0, `got ${clean.status}, stderr: ${clean.stderr}`);
   }
 }
 
-if (failures > 0) {
-  console.error(`\n${failures} check(s) failed.`);
-  process.exit(1);
-} else {
-  console.log("\nAll checks passed.");
+// ---------------------------------------------------------------------------
+// Checker failure modes (both shapes) -- each must fail closed with the
+// distinct "could not verify" reason. Run against a throwaway copy of the
+// hook so the real scripts/ directory is never renamed or overwritten.
+// ---------------------------------------------------------------------------
+
+for (const [label, stdin] of [
+  ["Bash", bash("gh pr create --body irrelevant")],
+  ["MCP", mcp("mcp__atlassian__addCommentToJiraIssue", { commentBody: "irrelevant" })],
+]) {
+  withTempLayout(HOOK, { "check-secret-in-tool-input.ts": BROKEN_CHECKER }, (path, root) => {
+    const result = runHook(HOOK, stdin, { path, env: { CLAUDE_PROJECT_DIR: root } });
+    check(`${label} checker crash: exit code is 2 (fail closed)`, result.status === 2, `got ${result.status}`);
+    check(`${label} checker crash: stderr says could not verify`, result.stderr.includes("could not verify"), result.stderr);
+  });
+
+  withTempLayout(HOOK, {}, (path, root) => {
+    const result = runHook(HOOK, stdin, { path, env: { CLAUDE_PROJECT_DIR: root } });
+    check(`${label} checker file missing: exit code is 2 (fail closed)`, result.status === 2, `got ${result.status}`);
+    check(`${label} checker file missing: stderr says could not verify`, result.stderr.includes("could not verify"), result.stderr);
+  });
+
+  // The real checker copied without the module it imports (src/core/redact.ts).
+  const realChecker = readFileSync(join(REPO_ROOT, "scripts", "check-secret-in-tool-input.ts"), "utf8");
+  withTempLayout(HOOK, { "check-secret-in-tool-input.ts": realChecker }, (path, root) => {
+    const result = runHook(HOOK, stdin, { path, env: { CLAUDE_PROJECT_DIR: root } });
+    check(`${label} checker's imported module missing: exit code is 2 (fail closed)`, result.status === 2, `got ${result.status}`);
+  });
 }
+
+// ---------------------------------------------------------------------------
+// Reached through research-loop/.claude (symlink to ../.claude) with
+// CLAUDE_PROJECT_DIR=research-loop/, as a v1 `--phase research` spawn does.
+// ---------------------------------------------------------------------------
+
+{
+  const viaResearch = { viaResearch: true };
+  const a = run(mcp("mcp__atlassian__addCommentToJiraIssue", { commentBody: SECRET }), viaResearch);
+  check("via research-loop/.claude: MCP secret: exit code is 2", a.status === 2, `got ${a.status}, stderr: ${a.stderr}`);
+  const b = run(bash(`gh pr create --body "${SECRET}"`), viaResearch);
+  check("via research-loop/.claude: gh pr secret: exit code is 2", b.status === 2, `got ${b.status}, stderr: ${b.stderr}`);
+  const c = run(mcp("mcp__atlassian__addCommentToJiraIssue", { commentBody: "clean" }), viaResearch);
+  check("via research-loop/.claude: clean MCP: exit code is 0 (checker resolved)", c.status === 0, `got ${c.status}, stderr: ${c.stderr}`);
+}
+
+finish();
