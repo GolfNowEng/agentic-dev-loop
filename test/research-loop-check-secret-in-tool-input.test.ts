@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { symlinkSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decideExitCode } from "../scripts/check-secret-in-tool-input.ts";
+import { decideExitCode } from "../research-loop/scripts/check-secret-in-tool-input.ts";
 
 describe("decideExitCode", () => {
   it("exits 0 for clean tool_input.commentBody", () => {
@@ -178,7 +178,7 @@ describe("check-secret-in-tool-input.ts invoked as a real subprocess through a s
     tmpDir = mkdtempSync(join(tmpdir(), "check-secret-symlink-test-"));
     const symlinkPath = join(tmpDir, "check-secret-in-tool-input.ts");
     symlinkSync(
-      new URL("../scripts/check-secret-in-tool-input.ts", import.meta.url).pathname,
+      new URL("../research-loop/scripts/check-secret-in-tool-input.ts", import.meta.url).pathname,
       symlinkPath,
     );
 
