@@ -1,83 +1,83 @@
 // Ceiling enforcement: max runs/day, max cost/run, run timeout.
 //
 // On breach the loop must PAUSE, never silently continue. This module is
-// pure - it takes counts/costs/durations plus the configured limits and
-// returns a signal; it does not know how to actually stop the loop (that's
-// loop-runner's job).
+// pure and role-agnostic: it takes counts/costs/durations plus explicit
+// limits and returns a signal. It does not know how to stop the loop (that
+// is the role's job), and it attaches no failure category -- the dev role
+// sets "killed_ceiling" itself on a breach.
 
-import type { CeilingsConfig, FailureCategory } from "./types.ts";
+/** Which ceiling was breached. */
+export type CeilingBreachReason = "maxRunsPerDay" | "maxCostPerRunUsd" | "runTimeoutMin";
 
 /**
- * Result of a ceiling check. When shouldPause is true, the caller (the
- * loop runner) must stop iterating and require a manual restart - it must
- * never treat this as a per-ticket skip.
+ * Result of a ceiling check. On `breached: true` the caller must stop
+ * iterating and require a manual restart -- never treat it as a per-ticket
+ * skip. `reason` names the first ceiling breached (runs/day, then cost,
+ * then timeout); `detail` explains every ceiling breached, joined by "; ".
  */
-export interface CeilingCheckResult {
-  shouldPause: boolean;
-  /** Human-readable reason for the pause, or null if no breach. */
-  reason: string | null;
-  /** Failure category to attach to the run that triggered the breach, if any. */
-  failureCategory: FailureCategory | null;
+export type CeilingCheckResult =
+  | { breached: false }
+  | { breached: true; reason: CeilingBreachReason; detail: string };
+
+export interface CeilingLimits {
+  maxRunsPerDay: number;
+  maxCostPerRunUsd: number;
+  runTimeoutMin: number;
 }
 
-/**
- * Everything needed to evaluate whether any ceiling has been breached for
- * the run that just finished (or is finishing).
- */
 export interface CeilingCheckInput {
-  /** How many runs have started today (including the current one). */
+  /** Runs counted against today's ceiling (including the current one, post-run). */
   runsToday: number;
-  /** Cost in USD of the run being evaluated. */
-  runCostUsd: number;
-  /** Wall-clock duration in minutes of the run being evaluated. */
-  runDurationMin: number;
-  config: CeilingsConfig;
+  /** Cost in USD of the run being evaluated; null before a run (not checked). */
+  runCostUsd: number | null;
+  /** Wall-clock minutes of the run being evaluated; null before a run (not checked). */
+  runDurationMin: number | null;
+  limits: CeilingLimits;
 }
 
 /**
- * Evaluate all three ceilings (runs/day, cost/run, run timeout) against a
- * single run's stats. Returns a "should pause" signal rather than
- * throwing - ceiling breaches are an expected, handled condition, not an
- * exceptional one.
+ * Evaluate all three ceilings. Pass nulls for cost/duration to check only
+ * the runs/day ceiling before starting a run. Never throws on a breach --
+ * a breach is an expected, handled condition.
  */
 export function checkCeilings(input: CeilingCheckInput): CeilingCheckResult {
-  const { runsToday, runCostUsd, runDurationMin, config } = input;
-  const reasons: string[] = [];
+  const { runsToday, runCostUsd, runDurationMin, limits } = input;
+  const breaches: Array<{ reason: CeilingBreachReason; detail: string }> = [];
 
-  if (hasReachedMaxRunsPerDay(runsToday, config)) {
-    reasons.push(
-      `runsToday (${runsToday}) reached the maxRunsPerDay ceiling (${config.maxRunsPerDay})`,
-    );
+  if (runsToday >= limits.maxRunsPerDay) {
+    breaches.push({
+      reason: "maxRunsPerDay",
+      detail: `runsToday (${runsToday}) reached the maxRunsPerDay ceiling (${limits.maxRunsPerDay})`,
+    });
   }
-  if (runCostUsd > config.maxCostPerRunUsd) {
-    reasons.push(
-      `runCostUsd (${runCostUsd}) exceeded the maxCostPerRunUsd ceiling (${config.maxCostPerRunUsd})`,
-    );
+  if (runCostUsd !== null && runCostUsd > limits.maxCostPerRunUsd) {
+    breaches.push({
+      reason: "maxCostPerRunUsd",
+      detail: `runCostUsd (${runCostUsd}) exceeded the maxCostPerRunUsd ceiling (${limits.maxCostPerRunUsd})`,
+    });
   }
-  if (runDurationMin > config.runTimeoutMin) {
-    reasons.push(
-      `runDurationMin (${runDurationMin}) exceeded the runTimeoutMin ceiling (${config.runTimeoutMin})`,
-    );
+  if (runDurationMin !== null && runDurationMin > limits.runTimeoutMin) {
+    breaches.push({
+      reason: "runTimeoutMin",
+      detail: `runDurationMin (${runDurationMin}) exceeded the runTimeoutMin ceiling (${limits.runTimeoutMin})`,
+    });
   }
 
-  if (reasons.length === 0) {
-    return { shouldPause: false, reason: null, failureCategory: null };
-  }
-
+  if (breaches.length === 0) return { breached: false };
   return {
-    shouldPause: true,
-    reason: reasons.join("; "),
-    failureCategory: "killed_ceiling",
+    breached: true,
+    reason: breaches[0].reason,
+    detail: breaches.map((b) => b.detail).join("; "),
   };
 }
 
 /**
- * Convenience check for just the runs/day ceiling, used by the loop before
- * even starting a new run (so it can pause before spawning the skill).
+ * Convenience assertion form (from research-loop): throws on a breach, for
+ * callers that want pause-by-exception rather than inspecting a result.
  */
-export function hasReachedMaxRunsPerDay(
-  runsToday: number,
-  config: CeilingsConfig,
-): boolean {
-  return runsToday >= config.maxRunsPerDay;
+export function assertWithinCeilings(input: CeilingCheckInput): void {
+  const result = checkCeilings(input);
+  if (result.breached) {
+    throw new Error(result.detail);
+  }
 }

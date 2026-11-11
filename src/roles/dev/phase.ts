@@ -7,9 +7,9 @@
 
 import type { JiraClient } from "../../core/jira-client.ts";
 import type { GitHubClient } from "../../core/github-client.ts";
-import type { Config, ExecutorVerdict, RunLogLine } from "../../core/types.ts";
+import type { Config, ExecutorVerdict, FailureCategory, RunLogLine } from "../../core/types.ts";
 import { buildDevJql, buildRefineJql, excludeKeysFromJql } from "../../core/jql.ts";
-import { checkCeilings, hasReachedMaxRunsPerDay } from "../../core/ceilings.ts";
+import { checkCeilings } from "../../core/ceilings.ts";
 import { appendRunLog } from "../../core/runs-log.ts";
 import { buildQaNotesAdf, buildBounceCommentAdf, buildCodeReviewFields } from "./code-review.ts";
 import { findLandedPrUrl } from "./reconcile.ts";
@@ -52,6 +52,8 @@ export type LoopIterationResult =
   | {
       kind: "paused";
       reason: string;
+      /** Always "killed_ceiling": the only pause this iteration produces is a ceiling breach. */
+      failureCategory: Extract<FailureCategory, "killed_ceiling">;
       ticket?: string;
       logLine?: RunLogLine;
       jiraSyncError?: string;
@@ -162,11 +164,14 @@ export async function runLoopIteration(
     deps;
 
   // Ceiling check before even starting a new run.
-  if (hasReachedMaxRunsPerDay(runsToday, config.ceilings)) {
-    return {
-      kind: "paused",
-      reason: `runsToday (${runsToday}) reached the maxRunsPerDay ceiling (${config.ceilings.maxRunsPerDay})`,
-    };
+  const preCheck = checkCeilings({
+    runsToday,
+    runCostUsd: null,
+    runDurationMin: null,
+    limits: config.ceilings,
+  });
+  if (preCheck.breached) {
+    return { kind: "paused", reason: preCheck.detail, failureCategory: "killed_ceiling" };
   }
 
   const baseJql =
@@ -319,13 +324,14 @@ export async function runLoopIteration(
     runsToday: runsToday + 1,
     runCostUsd: costUsd,
     runDurationMin,
-    config: config.ceilings,
+    limits: config.ceilings,
   });
 
-  if (ceilingResult.shouldPause) {
+  if (ceilingResult.breached) {
     return {
       kind: "paused",
-      reason: ceilingResult.reason ?? "ceiling breach",
+      reason: ceilingResult.detail,
+      failureCategory: "killed_ceiling",
       ticket: ticket.key,
       logLine,
       jiraSyncError,

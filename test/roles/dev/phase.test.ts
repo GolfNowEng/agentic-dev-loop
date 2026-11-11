@@ -312,7 +312,10 @@ describe("runLoopIteration", () => {
 
       expect(result.kind).toBe("paused");
       if (result.kind === "paused") {
-        expect(result.reason).toBeTruthy();
+        expect(result.reason).toContain("maxRunsPerDay");
+        expect(result.failureCategory).toBe("killed_ceiling");
+        // Pre-run pause: no run happened, so nothing to log.
+        expect(result.logLine).toBeUndefined();
       }
     });
   });
@@ -337,6 +340,10 @@ describe("runLoopIteration", () => {
       const result = await runLoopIteration(deps);
 
       expect(result.kind).toBe("paused");
+      if (result.kind === "paused") {
+        expect(result.reason).toContain("maxCostPerRunUsd");
+        expect(result.failureCategory).toBe("killed_ceiling");
+      }
     });
   });
 
@@ -364,6 +371,10 @@ describe("runLoopIteration", () => {
       const result = await runLoopIteration(deps);
 
       expect(result.kind).toBe("paused");
+      if (result.kind === "paused") {
+        expect(result.reason).toContain("maxCostPerRunUsd");
+        expect(result.failureCategory).toBe("killed_ceiling");
+      }
     });
   });
 
@@ -464,6 +475,10 @@ describe("runLoopIteration", () => {
       const result = await runLoopIteration(deps);
 
       expect(result.kind).toBe("paused");
+      if (result.kind === "paused") {
+        expect(result.reason).toContain("runTimeoutMin");
+        expect(result.failureCategory).toBe("killed_ceiling");
+      }
     });
   });
 
