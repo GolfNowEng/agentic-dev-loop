@@ -10,7 +10,8 @@
  * `timeoutMin` is sent SIGTERM, then SIGKILL 30 s later.
  *
  * `spawnClaudeRun` never throws. A spawn failure (spawn() throwing, the
- * child's 'error' event, a nonzero exit) comes back as `spawnError`; a
+ * child's 'error' event, a nonzero exit) comes back as `spawnError` -- with
+ * the parsed usage whenever the child printed any stdout; a
  * timeout kill comes back as `killedTimeout: true`, which the caller maps to
  * outcome "killed" / failure_category "killed_ceiling"
  * (`killedTimeoutVerdict`).
@@ -29,6 +30,13 @@ import type { ExecutorVerdict } from "./types.ts";
 /** Grace period between SIGTERM and SIGKILL on a timeout kill. */
 export const KILL_GRACE_MS = 30_000;
 
+/**
+ * After SIGKILL, how long to wait for the child's 'exit'/'close' before
+ * settling anyway. 'close' waits for stdio to close, which a grandchild
+ * still holding the pipe can delay forever; the run must still return.
+ */
+export const POST_KILL_GRACE_MS = 5_000;
+
 export interface SpawnClaudeOpts {
   prompt: string;
   model: string;
@@ -40,6 +48,12 @@ export interface SpawnClaudeOpts {
   ticketKey: string;
   rawUsagePath: string;
   env: NodeJS.ProcessEnv;
+  /**
+   * Absolute CLAUDE.md paths (or picomatch globs) the child must not load,
+   * passed as `--settings {"claudeMdExcludes": [...]}` (a Claude Code
+   * setting, verified in 2.1.322). Omitted or empty: no --settings flag.
+   */
+  excludeClaudeMd?: string[];
 }
 
 export interface SpawnClaudeResult {
@@ -251,6 +265,9 @@ function buildArgs(opts: SpawnClaudeOpts): string[] {
     opts.allowedTools,
     "--max-budget-usd",
     String(opts.maxBudgetUsd),
+    ...(opts.excludeClaudeMd && opts.excludeClaudeMd.length > 0
+      ? ["--settings", JSON.stringify({ claudeMdExcludes: opts.excludeClaudeMd })]
+      : []),
     ...(opts.stream
       ? ["--output-format", "stream-json", "--verbose"]
       : ["--output-format", "json"]),
@@ -270,6 +287,7 @@ function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promi
     let killedTimeout = false;
     let termTimer: ReturnType<typeof setTimeout> | undefined;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let postKillTimer: ReturnType<typeof setTimeout> | undefined;
 
     // Non-streaming: the whole stdout. Streaming: the result line, else the last line.
     let stdout = "";
@@ -282,6 +300,7 @@ function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promi
       settled = true;
       if (termTimer !== undefined) deps.clearTimeout(termTimer);
       if (killTimer !== undefined) deps.clearTimeout(killTimer);
+      if (postKillTimer !== undefined) deps.clearTimeout(postKillTimer);
       resolve(outcome);
     };
 
@@ -329,11 +348,24 @@ function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promi
         killTimer = undefined;
         deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: no exit ${KILL_GRACE_MS / 1000}s after SIGTERM, sending SIGKILL`);
         child.kill("SIGKILL");
+        postKillTimer = deps.setTimeout(() => {
+          postKillTimer = undefined;
+          deps.logError(
+            `[${deps.logPrefix}] ${opts.ticketKey}: no exit/close ${POST_KILL_GRACE_MS / 1000}s after SIGKILL, giving up on the child`,
+          );
+          settle({ stdout: collected(), killedTimeout: true });
+        }, POST_KILL_GRACE_MS);
       }, KILL_GRACE_MS);
     }, opts.timeoutMin * 60_000);
 
     child.on("error", (err: Error) => {
       settle({ stdout: collected(), spawnError: err.message, killedTimeout });
+    });
+    // After a timeout kill, 'exit' is enough: 'close' can wait forever on a
+    // grandchild that inherited the stdio pipes. Without a kill, keep
+    // waiting for 'close' so no buffered stdout is lost.
+    child.on("exit", () => {
+      if (killedTimeout) settle({ stdout: collected(), killedTimeout: true });
     });
     child.on("close", (code: number | null) => {
       if (killedTimeout) {
@@ -361,7 +393,9 @@ function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promi
  * before it is parsed -- extractUsage() deliberately returns zeros on a
  * parse failure rather than throwing, so without this the real cost/token
  * numbers would be gone forever the moment this function returns. It is
- * skipped only on a spawn failure, as in v1.
+ * skipped only when there is no stdout at all. (v1 also skipped it on a
+ * nonzero exit; with --max-budget-usd that would zero the cost of exactly
+ * the runs that hit the cap.)
  */
 export async function spawnClaudeRun(
   opts: SpawnClaudeOpts,
@@ -383,6 +417,11 @@ export async function spawnClaudeRun(
 
   if (outcome.spawnError !== undefined) {
     deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: spawn failed: ${outcome.spawnError}`);
+  }
+
+  // Nothing was ever printed (spawn() threw, ENOENT, or a crash before any
+  // output): no raw usage to persist, zero usage.
+  if (outcome.spawnError !== undefined && outcome.stdout.length === 0) {
     return {
       stdout: outcome.stdout,
       usage: { costUsd: 0, tokens: { in: 0, out: 0 } },
@@ -408,11 +447,15 @@ export async function spawnClaudeRun(
     usageRaw = null;
   }
 
+  // A nonzero exit that still printed a result (e.g. the --max-budget-usd
+  // cap) keeps its real cost, so the ceilings and runs.jsonl never
+  // undercount the most expensive runs; spawnError is still reported.
   return {
     stdout: outcome.stdout,
     usage: extractUsage(usageRaw),
     started,
     ended,
+    ...(outcome.spawnError !== undefined ? { spawnError: outcome.spawnError } : {}),
     killedTimeout: outcome.killedTimeout,
   };
 }

@@ -55,6 +55,11 @@ import { ALLOWED_TOOLS as DEV_ALLOWED_TOOLS } from "./roles/dev/tools.ts";
 import { runLoopIteration as runResearchIteration } from "./roles/research/phase.ts";
 import type { RunSkillFn as ResearchRunSkillFn, RunSkillResult } from "./roles/research/phase.ts";
 import { ALLOWED_TOOLS as RESEARCH_ALLOWED_TOOLS } from "./roles/research/tools.ts";
+import {
+  assertResearchRoot,
+  researchClaudeMdExcludes,
+  REFINE_SKILL_MD_PATH,
+} from "./roles/research/startup.ts";
 
 type Phase = "research" | "dev";
 
@@ -68,8 +73,6 @@ const SKILL_NAME: Record<Phase, string> = { research: "ticket-refine", dev: "tic
  */
 const PHASE_ROOT: Record<Phase, string> = { research: "research-loop", dev: "." };
 
-/** ticket-refine's SKILL.md (relative to the research root), for skill_version. */
-const REFINE_SKILL_MD_PATH = ".claude/skills/ticket-refine/SKILL.md";
 
 /**
  * Reads a flag's value in either `--name value` (space-separated) or
@@ -190,6 +193,8 @@ interface PhaseContext {
   runsLogPath: string;
   runsBaseDir: string;
   rawUsageDir: string;
+  /** CLAUDE.md files the spawned claude must not load (research: dev's root CLAUDE.md). */
+  excludeClaudeMd: string[];
 }
 
 function rawUsagePathFor(ctx: PhaseContext, ticketKey: string, started: string): string {
@@ -244,6 +249,7 @@ async function runResearchPhase(ctx: PhaseContext): Promise<void> {
         model: MODEL,
         allowedTools: RESEARCH_ALLOWED_TOOLS,
         addDir: null,
+        excludeClaudeMd: ctx.excludeClaudeMd,
         timeoutMin: config.ceilings.runTimeoutMin,
         maxBudgetUsd: config.ceilings.maxCostPerRunUsd,
         stream,
@@ -516,6 +522,14 @@ async function main(): Promise<void> {
 
   // --config is relative to the caller's cwd, so resolve it before chdir.
   const absConfigPath = configPath !== undefined ? resolve(configPath) : undefined;
+  const repoRoot = process.cwd();
+  // Fail loudly, before any Jira/GitHub I/O, if the research root no longer
+  // has the skill claude -p needs (e.g. .claude/ moved but PHASE_ROOT didn't).
+  if (phase === "research") assertResearchRoot(PHASE_ROOT.research);
+  // v1 research ran from its own repo and loaded only research-loop/CLAUDE.md;
+  // here the parent dev CLAUDE.md would load too, so exclude it.
+  const excludeClaudeMd =
+    phase === "research" ? researchClaudeMdExcludes(repoRoot, PHASE_ROOT.research) : [];
   process.chdir(PHASE_ROOT[phase]);
 
   const resolvedConfigPath = absConfigPath ?? (await resolveProjectConfigPath(project));
@@ -546,6 +560,7 @@ async function main(): Promise<void> {
     runsLogPath: join("runs", `${slug}.jsonl`),
     runsBaseDir: join(".pipeline", slug, "runs"),
     rawUsageDir,
+    excludeClaudeMd,
   };
 
   if (phase === "research") {
