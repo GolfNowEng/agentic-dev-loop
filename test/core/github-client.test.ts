@@ -5,6 +5,7 @@ import {
   realExecGhFindMergedPr,
   realExecGhPrView,
   realDefaultBranch,
+  containsTicketToken,
 } from "../../src/core/github-client.ts";
 
 describe("StubGitHubClient", () => {
@@ -272,13 +273,25 @@ describe("realExecGhFindMergedPr (moved from roles/dev/reconcile.ts)", () => {
   });
 });
 
+describe("containsTicketToken", () => {
+  it("matches whole tokens only", () => {
+    expect(containsTicketToken("feature/TARS-1-x", "TARS-1")).toBe(true);
+    expect(containsTicketToken("feature/TARS-12-x", "TARS-1")).toBe(false);
+  });
+
+  it("treats regex metacharacters in the key literally", () => {
+    expect(containsTicketToken("feature/TARSX1", "TARS.1")).toBe(false);
+    expect(containsTicketToken("a(b", "(")).toBe(true);
+  });
+});
+
 describe("realExecGhPrView (moved from roles/dev/reconcile.ts)", () => {
-  it("runs gh pr view <url> --json state,mergedAt and returns stdout", async () => {
+  it("runs gh pr view <url> --json state,mergedAt,baseRefName and returns stdout", async () => {
     const exec = vi.fn(async () => '{"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z"}');
     const out = await realExecGhPrView(exec)("https://github.com/org/repo/pull/9");
 
     expect(out).toBe('{"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z"}');
-    expect(exec).toHaveBeenCalledWith(["pr", "view", "https://github.com/org/repo/pull/9", "--json", "state,mergedAt"]);
+    expect(exec).toHaveBeenCalledWith(["pr", "view", "https://github.com/org/repo/pull/9", "--json", "state,mergedAt,baseRefName"]);
   });
 });
 

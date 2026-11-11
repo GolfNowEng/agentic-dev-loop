@@ -8,6 +8,7 @@ const REPO = "org/repo";
 function deps(o: Partial<BlockerGateDeps> = {}): BlockerGateDeps {
   return {
     repo: REPO,
+    projectKey: "TARS",
     findLandedPrUrl: vi.fn(async () => null),
     execGhPrView: vi.fn<ExecGhPrViewFn>(async () => JSON.stringify({ state: "OPEN", mergedAt: null })),
     execGhFindMergedPr: vi.fn<ExecGhFindMergedPrFn>(async () => null),
@@ -42,9 +43,66 @@ describe("isBlockerCleared", () => {
   it("recorded PR has mergedAt (search finds nothing) -> cleared", async () => {
     const d = deps({
       findLandedPrUrl: vi.fn(async () => "https://github.com/org/repo/pull/9"),
-      execGhPrView: vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-01T00:00:00Z" })),
+      execGhPrView: vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-01T00:00:00Z", baseRefName: "main" })),
     });
     expect((await isBlockerCleared("TARS-1", d)).cleared).toBe(true);
+  });
+
+  it("recorded PR URL matching the repo case-insensitively still counts", async () => {
+    const d = deps({
+      findLandedPrUrl: vi.fn(async () => "https://github.com/Org/Repo/pull/9"),
+      execGhPrView: vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-01T00:00:00Z", baseRefName: "main" })),
+    });
+    expect((await isBlockerCleared("TARS-1", d)).cleared).toBe(true);
+  });
+
+  it("a recorded PR from another repo is ignored even if merged (falls through to the search)", async () => {
+    const d = deps({
+      findLandedPrUrl: vi.fn(async () => "https://github.com/other/repo/pull/1"),
+      execGhPrView: vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-01T00:00:00Z", baseRefName: "main" })),
+    });
+    const r = await isBlockerCleared("TARS-1", d);
+    expect(r.cleared).toBe(false);
+    expect(r.reason).toContain("needs a human");
+    expect(d.execGhPrView).not.toHaveBeenCalled();
+    expect(d.execGhFindMergedPr).toHaveBeenCalled();
+  });
+
+  it("a recorded value that is not a PR URL (e.g. starts with -) never reaches gh", async () => {
+    const d = deps({ findLandedPrUrl: vi.fn(async () => "--repo=evil/x") });
+    const r = await isBlockerCleared("TARS-1", d);
+    expect(r.cleared).toBe(false);
+    expect(d.execGhPrView).not.toHaveBeenCalled();
+  });
+
+  it("a recorded PR merged into a non-default base is not cleared", async () => {
+    const d = deps({
+      findLandedPrUrl: vi.fn(async () => "https://github.com/org/repo/pull/9"),
+      execGhPrView: vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-01T00:00:00Z", baseRefName: "release/x" })),
+    });
+    const r = await isBlockerCleared("TARS-1", d);
+    expect(r.cleared).toBe(false);
+    expect(r.reason).toContain("needs a human");
+  });
+
+  it("a recorded merged PR with no baseRefName in gh's output is not cleared", async () => {
+    const d = deps({
+      findLandedPrUrl: vi.fn(async () => "https://github.com/org/repo/pull/9"),
+      execGhPrView: vi.fn(async () => JSON.stringify({ state: "MERGED", mergedAt: "2026-01-01T00:00:00Z" })),
+    });
+    expect((await isBlockerCleared("TARS-1", d)).cleared).toBe(false);
+  });
+
+  it("an invalid blocker key is not cleared, gh is not called, and the key is not echoed raw", async () => {
+    const d = deps();
+    const bad = "TARS-1\nInjected line " + "y".repeat(300);
+    const r = await isBlockerCleared(bad, d);
+    expect(r.cleared).toBe(false);
+    expect(r.reason).toMatch(/^blocker ".*" check failed: invalid key$/);
+    expect(r.reason).not.toContain("\n");
+    expect(r.reason.length).toBeLessThan(120);
+    expect(d.execGhFindMergedPr).not.toHaveBeenCalled();
+    expect(d.findLandedPrUrl).not.toHaveBeenCalled();
   });
 
   it("open PR -> not cleared, reason names the PR", async () => {
@@ -110,11 +168,18 @@ describe("isBlockerCleared", () => {
   it("a cached merged result skips the gh call on the second check", async () => {
     const d = deps({ execGhFindMergedPr: vi.fn(async () => merged("https://github.com/org/repo/pull/5")) });
     expect((await isBlockerCleared("TARS-1", d)).cleared).toBe(true);
-    expect(d.mergedCache.get("TARS-1")).toBe("https://github.com/org/repo/pull/5");
+    expect(d.mergedCache.get("org/repo#TARS-1")).toBe("https://github.com/org/repo/pull/5");
+    expect(d.mergedCache.has("TARS-1")).toBe(false);
     const second = await isBlockerCleared("TARS-1", d);
     expect(second.cleared).toBe(true);
     expect(d.execGhFindMergedPr).toHaveBeenCalledTimes(1);
     expect(d.findLandedPrUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("a cache entry for another repo does not clear the blocker here", async () => {
+    const d = deps({ mergedCache: new Map([["other/repo#TARS-1", "https://github.com/other/repo/pull/1"]]) });
+    expect((await isBlockerCleared("TARS-1", d)).cleared).toBe(false);
+    expect(d.execGhFindMergedPr).toHaveBeenCalled();
   });
 
   it("failures and not-cleared results are never cached", async () => {
