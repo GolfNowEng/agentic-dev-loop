@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { runLoopIteration } from "../src/loop-runner.ts";
-import type { RunSkillFn, RunSkillResult, RunLoopIterationDeps, LoopIterationResult } from "../src/loop-runner.ts";
-import type { JiraClient, JiraTicket } from "../src/jira-client.ts";
-import type { Config } from "../src/types.ts";
-import { readRunLog, appendRunLog } from "../src/runs-log.ts";
+import { runLoopIteration } from "../../../src/roles/research/phase.ts";
+import type { RunSkillFn, RunSkillResult, RunLoopIterationDeps, LoopIterationResult } from "../../../src/roles/research/phase.ts";
+import type { JiraClient, JiraTicket } from "../../../src/core/jira-client.ts";
+import type { Config } from "../../../src/core/types.ts";
+import { readRunLog, appendRunLog } from "../../../src/core/runs-log.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -47,9 +47,11 @@ function makeTicket(overrides: Partial<JiraTicket> = {}): JiraTicket {
 function makeMockJiraClient(overrides: Partial<JiraClient> = {}): JiraClient {
   return {
     pollOldestMatching: vi.fn(async () => makeTicket()),
-    claim: vi.fn(async () => true),
+    pollAllMatching: vi.fn(async () => []),
+    claimTicket: vi.fn(async () => true),
     transitionStatus: vi.fn(async () => undefined),
     swapLabel: vi.fn(async () => undefined),
+    removeLabel: vi.fn(async () => undefined),
     assignTicket: vi.fn(async () => undefined),
     addComment: vi.fn(async () => undefined),
     closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
@@ -140,7 +142,7 @@ describe("runLoopIteration", () => {
 
       expect(result.action).toBe("empty-queue");
       expect(result.skippedLanded).toEqual(["PROJ-142"]);
-      expect(jiraClient.claim).not.toHaveBeenCalled();
+      expect(jiraClient.claimTicket).not.toHaveBeenCalled();
       expect(runSkill).not.toHaveBeenCalled();
     });
 
@@ -171,10 +173,10 @@ describe("runLoopIteration", () => {
     });
   });
 
-  it("claim-race: when claim() fails, the loop skips the ticket and does not throw", async () => {
+  it("claim-race: when claimTicket() fails, the loop skips the ticket and does not throw", async () => {
     const jiraClient = makeMockJiraClient({
       pollOldestMatching: vi.fn(async () => makeTicket({ key: "PROJ-142" })),
-      claim: vi.fn(async () => false), // simulates another process racing the transition
+      claimTicket: vi.fn(async () => false), // simulates another process racing the transition
     });
     const runSkill: RunSkillFn = vi.fn(async () => makeRunSkillResult());
 
@@ -192,10 +194,10 @@ describe("runLoopIteration", () => {
     expect(lines).toHaveLength(0);
   });
 
-  it("claim-error: when claim() throws (e.g. a Jira transition screen's required field), the loop skips the ticket and does not crash the process", async () => {
+  it("claim-error: when claimTicket() throws (e.g. a Jira transition screen's required field), the loop skips the ticket and does not crash the process", async () => {
     const jiraClient = makeMockJiraClient({
       pollOldestMatching: vi.fn(async () => makeTicket({ key: "PROJ-142" })),
-      claim: vi.fn(async () => {
+      claimTicket: vi.fn(async () => {
         throw new Error('400 Bad Request: "Field \'Story Points\' is required."');
       }),
     });
@@ -547,6 +549,32 @@ describe("runLoopIteration", () => {
     const lines = await readRunLog(runsLogPath);
     expect(lines).toHaveLength(1);
     expect(lines[0].outcome).toBe("landed");
+  });
+
+  // core/remote-close.ts (and reset-cli) close a PR only when runs.jsonl has
+  // a line with a non-null `pr`. The research role never opens a PR, so its
+  // run-log line must carry `pr: null` no matter what verdict.json says --
+  // enforced here, not left to ticket-refine's schema happening to omit it.
+  it("always logs pr: null, even when verdict.json carries a pr value", async () => {
+    const jiraClient = makeMockJiraClient();
+    const runSkill: RunSkillFn = vi.fn(async () =>
+      makeRunSkillResult({
+        verdictRaw: JSON.stringify({
+          outcome: "landed",
+          phase_reached: "verify",
+          failure_category: null,
+          detail: "Refined ticket written.",
+          pr: "https://github.com/org/repo/pull/99",
+        }),
+      }),
+    );
+
+    const result = await runLoopIteration(makeDeps({ jiraClient, runSkill }));
+
+    expect(result.logLine?.pr).toBeNull();
+    const lines = await readRunLog(runsLogPath);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].pr).toBeNull();
   });
 
   it("appends exactly one valid runs.jsonl line for a processed ticket", async () => {
