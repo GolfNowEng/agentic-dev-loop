@@ -44,7 +44,15 @@ set -u
 
 INPUT=$(cat)
 
-CHECKER="$CLAUDE_PROJECT_DIR/scripts/check-comment-edit-in-tool-input.ts"
+# The checker is found relative to this script's own physical location
+# (.claude/hooks/ -> ../../scripts/), never via $CLAUDE_PROJECT_DIR: a
+# v1 `--phase research` spawn runs with CLAUDE_PROJECT_DIR=research-loop/
+# and reaches this file through the research-loop/.claude -> ../.claude
+# symlink, where $CLAUDE_PROJECT_DIR/scripts/ does not exist. `pwd -P`
+# resolves that symlink. If any of this fails, CHECKER points nowhere and
+# the "check failed" branch below denies.
+HOOK_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || HOOK_DIR=""
+CHECKER="${HOOK_DIR:-/nonexistent}/../../scripts/check-comment-edit-in-tool-input.ts"
 
 EXIT_CODE=2
 if [ -f "$CHECKER" ]; then

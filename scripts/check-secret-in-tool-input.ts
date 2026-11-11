@@ -1,25 +1,34 @@
 /**
- * PreToolUse hook checker invoked by .claude/hooks/block-secret-comments.sh
- * for every Bash call the hook's pre-filter recognizes as a `gh pr create`/
- * `gh pr edit` invocation. Reads the hook's stdin JSON payload, extracts
- * tool_input.command, and scans it for anything containsSecret() would
- * flag. Communicates its verdict purely via exit code -- no stdout, so
- * nothing it prints can itself become a leak channel:
+ * PreToolUse hook checker shared by `.claude/hooks/block-secret-comments.sh`
+ * and `.claude/hooks/block-github-secret-writes.sh`. One checker for both
+ * roles' write surfaces (the union of v1 dev-loop's and research-loop's
+ * checkers):
  *
- *   0 -- clean: not a gh pr create/edit call, or no secret-shaped content.
- *   1 -- secret-shaped content found in a gh pr create/edit command.
+ *   - `Bash` calls: scans `tool_input.command` when it is a `gh pr
+ *     create/edit` (dev's PR title/body) or `gh issue create/edit/comment`
+ *     (research's mirror Issue) invocation. Every other Bash command is 0.
+ *   - Any other tool with a `tool_input` (the `mcp__atlassian__*` Jira/
+ *     Confluence writes the settings.json matcher routes here): scans the
+ *     whole `tool_input` object, serialized, so a secret nested anywhere
+ *     (fields.description, commentBody, comment, ...) is caught.
+ *
+ * Reads the hook's stdin JSON payload and communicates its verdict purely
+ * via exit code -- no stdout, so nothing it prints can itself become a
+ * leak channel:
+ *
+ *   0 -- clean: not a scanned write, or no secret-shaped content.
+ *   1 -- secret-shaped content found (process exit code 3, see below).
  *   2 -- the check itself failed (malformed/non-JSON stdin, unexpected
  *        exception) -- distinct from "found a secret" so the calling hook
  *        script fails *closed* (deny) on this case too, rather than
  *        silently treating "couldn't tell" the same as "found nothing".
  *
- * The command string is read here purely as JSON *data* (via JSON.parse on
- * a string read from stdin) -- never interpolated into a shell command or
- * a dynamically-built source string. This matters because the command
- * string can itself contain the PR body text (e.g. `gh pr create --body
- * "..."`), and PR/ticket content is adversarially-influenceable -- backtick
- * s/${}/quotes in it must never be able to execute as code in this
- * process, which has this repo's real credentials in its environment.
+ * The untrusted content is read here purely as JSON *data* (via JSON.parse
+ * on a string read from stdin) -- never interpolated into a shell command
+ * or a dynamically-built source string. PR bodies, Jira comments and
+ * ticket text are adversarially-influenceable; backticks/`${}`/quotes in
+ * them must never be able to execute as code in this process, which has
+ * this repo's real credentials in its environment.
  */
 
 import { realpathSync } from "node:fs";
@@ -27,18 +36,27 @@ import { fileURLToPath } from "node:url";
 
 import { containsSecret } from "../src/core/redact.ts";
 
+function hasWord(command: string, word: string): boolean {
+  return new RegExp(`(?:^|\\W)${word}(?:$|\\W)`).test(command);
+}
+
 /**
- * Whole-word membership check -- matches the shell pre-filter's own
- * `grep -qw` logic, kept here too so the unit tests can exercise the
- * gh-pr-create/edit recognition directly without spawning bash. Not a
- * security boundary by itself (see the hook script's own header comment
- * for why over-matching here is harmless) -- just the recognizer for
- * "is this command actually a gh pr create/edit invocation."
+ * Whole-word membership checks -- the same logic as the hook scripts'
+ * `grep -qw` pre-filters, kept here too so the unit tests exercise the
+ * recognition directly. Not a security boundary by itself: over-matching
+ * (a command that merely mentions "gh pr create" in a string literal)
+ * just costs one extra scan, never a missed detection.
  */
 function isGhPrWrite(command: string): boolean {
-  const hasWord = (word: string): boolean =>
-    new RegExp(`(?:^|\\W)${word}(?:$|\\W)`).test(command);
-  return hasWord("gh") && hasWord("pr") && (hasWord("create") || hasWord("edit"));
+  return hasWord(command, "gh") && hasWord(command, "pr") && (hasWord(command, "create") || hasWord(command, "edit"));
+}
+
+function isGhIssueWrite(command: string): boolean {
+  return (
+    hasWord(command, "gh") &&
+    hasWord(command, "issue") &&
+    (hasWord(command, "create") || hasWord(command, "edit") || hasWord(command, "comment"))
+  );
 }
 
 /**
@@ -58,12 +76,24 @@ export function decideExitCode(stdin: string): 0 | 1 | 2 {
 
   try {
     const record = payload as Record<string, unknown> | null;
-    if (record?.tool_name !== "Bash") return 0;
-    const toolInput = record?.tool_input as Record<string, unknown> | null | undefined;
-    const command = toolInput?.command;
-    if (typeof command !== "string" || command.length === 0) return 0;
-    if (!isGhPrWrite(command)) return 0;
-    return containsSecret(command) ? 1 : 0;
+    const toolInput = record?.tool_input;
+    if (toolInput === null || toolInput === undefined) return 0;
+    const toolName = record?.tool_name;
+
+    if (toolName === "Bash") {
+      const command = (toolInput as Record<string, unknown>)?.command;
+      if (typeof command !== "string" || command.length === 0) return 0;
+      if (!isGhPrWrite(command) && !isGhIssueWrite(command)) return 0;
+      return containsSecret(command) ? 1 : 0;
+    }
+
+    // Only MCP tools are scanned whole; the settings.json matcher decides
+    // which ones reach this checker at all. A non-MCP, non-Bash tool
+    // (Read, Edit, ...) is not a write surface this hook guards.
+    if (typeof toolName !== "string" || !toolName.startsWith("mcp__")) return 0;
+    const scanned = JSON.stringify(toolInput);
+    if (!scanned) return 0;
+    return containsSecret(scanned) ? 1 : 0;
   } catch {
     return 2;
   }

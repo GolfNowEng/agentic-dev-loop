@@ -1,12 +1,46 @@
 {
+  "alwaysThinkingEnabled": true,
+  "permissions": {
+    "deny": [
+      "Edit(/.env*)",
+      "Edit(/.claude/settings*.json)",
+      "Edit(/.claude/hooks/**)",
+      "Edit(/scripts/check-*-in-tool-input.ts)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
+      {
+        "matcher": "mcp__atlassian__(addCommentToJiraIssue|editJiraIssue|addWorklogToJiraIssue|createIssueLink|createJiraIssue|createConfluencePage|updateConfluencePage|createConfluenceFooterComment|createConfluenceInlineComment)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-secret-comments.sh"
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-comment-edit-in-place.sh"
+          }
+        ]
+      },
       {
         "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-secret-comments.sh"
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-github-secret-writes.sh"
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-comment-edit-in-place.sh"
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-unsafe-git.sh"
           }
         ]
       }

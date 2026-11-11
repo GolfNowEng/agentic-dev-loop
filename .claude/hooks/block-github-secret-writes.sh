@@ -4,10 +4,9 @@
 #
 # Requires `jq` on PATH (confirmed present: jq-1.7.1). Denies (exit 2) any
 # gh issue create/edit/comment call whose command string contains a
-# secret-shaped value (per src/redact.ts's containsSecret(), via the
+# secret-shaped value (per src/core/redact.ts's containsSecret(), via the
 # shared scripts/check-secret-in-tool-input.ts checker -- the same checker
-# research-loop's existing Atlassian-MCP hook uses, extended in this
-# change to also recognize gh issue create/edit/comment Bash calls).
+# block-secret-comments.sh uses for Atlassian MCP writes and gh pr writes).
 #
 # Mandatory Phase 1 launch blocker per docs/future-enhancements.md's Jira
 # label-trigger design -- this hook must exist before ticket-refine writes
@@ -57,7 +56,15 @@ if ! printf '%s' "$COMMAND" | grep -Eqw "create|edit|comment"; then
   exit 0
 fi
 
-CHECKER="${CLAUDE_PROJECT_DIR:-}/scripts/check-secret-in-tool-input.ts"
+# The checker is found relative to this script's own physical location
+# (.claude/hooks/ -> ../../scripts/), never via $CLAUDE_PROJECT_DIR: a
+# v1 `--phase research` spawn runs with CLAUDE_PROJECT_DIR=research-loop/
+# and reaches this file through the research-loop/.claude -> ../.claude
+# symlink, where $CLAUDE_PROJECT_DIR/scripts/ does not exist. `pwd -P`
+# resolves that symlink. If any of this fails, CHECKER points nowhere and
+# the "check failed" branch below denies.
+HOOK_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || HOOK_DIR=""
+CHECKER="${HOOK_DIR:-/nonexistent}/../../scripts/check-secret-in-tool-input.ts"
 
 EXIT_CODE=2
 if [ -f "$CHECKER" ]; then
@@ -70,7 +77,7 @@ case "$EXIT_CODE" in
     exit 0
     ;;
   3)
-    echo "BLOCKED: this gh issue create/edit/comment command contains a secret-shaped value (matched a known secret name/format pattern in src/redact.ts). Never write a raw env var value, .envrc/.env content, API key, token, or password into a GitHub Issue -- report presence/shape only (e.g. \"reads API_KEY from env\"), the same rule SKILL.md's Ticket content protocol already requires for Jira." >&2
+    echo "BLOCKED: this gh issue create/edit/comment command contains a secret-shaped value (matched a known secret name/format pattern in src/core/redact.ts). Never write a raw env var value, .envrc/.env content, API key, token, or password into a GitHub Issue -- report presence/shape only (e.g. \"reads API_KEY from env\"), the same rule SKILL.md's Ticket content protocol already requires for Jira." >&2
     exit 2
     ;;
   *)

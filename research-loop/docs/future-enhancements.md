@@ -241,7 +241,7 @@ correction, see below):
   a comment violating the routing rule (size, shape, missing @-mention) —
   only matters once Jira content is actually being trimmed; (b) a
   `PreToolUse` hook on the new GitHub write surface that hard-denies via
-  `containsSecret()`/`redactSecrets()` (`src/redact.ts`, already wired into
+  `containsSecret()`/`redactSecrets()` (`src/core/redact.ts`, already wired into
   the existing Jira/Confluence hook) before any write reaches GitHub — a
   mandatory launch blocker, no fast-follow, since GitHub carries real
   ticket/codebase content from day one it's introduced. Both modeled on
@@ -601,7 +601,7 @@ its own design pass and its own adversarial review before landing — do not
 build any of it off this entry's sketch alone.
 
 **Why cut from the MVP**: a full spec covering all of this was drafted
-(`.claude/reviews/part3-4-spec-draft.md`, two revisions) and put through
+(`docs/research-part3-4-spec-draft.md` (repo root), two revisions) and put through
 two full rounds of 3-reviewer adversarial review. Both rounds found
 critical, non-converging issues — most importantly, that every version
 kept bundling genuinely-inert telemetry changes together with live,
@@ -614,7 +614,7 @@ than attempt a third patch-the-holes revision, scope was cut to an MVP
 that changes zero behavior (by construction, no reviewer could find a
 contradiction in something that doesn't affect any decision), with
 everything that *acts* on the score deferred here. See
-`.claude/reviews/part3-4-spec-draft.md` for the full rejected spec and the
+`docs/research-part3-4-spec-draft.md` (repo root) for the full rejected spec and the
 specific findings, if resuming this work later.
 
 **Deferred items**:

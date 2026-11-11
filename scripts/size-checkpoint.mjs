@@ -6,8 +6,9 @@
 // and nothing depends on it. Delete it once that question is answered one
 // way or the other -- it is not meant to become permanent tooling.
 //
-// Run with:
-//   npm run size-checkpoint [-- --project webtarsthree --threshold 15]
+// Run from the research phase's v1 root, where research's runs/ lives
+// (it reads ./runs/<project>.jsonl relative to the cwd):
+//   cd research-loop && node ../scripts/size-checkpoint.mjs [--project webtarsthree --threshold 15]
 //
 // A line counts toward the threshold only if it has a size_trajectory
 // field at all -- every run before this field existed has none, so this
