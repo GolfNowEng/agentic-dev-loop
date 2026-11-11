@@ -5,7 +5,7 @@
 //   npm run test:hooks
 //   node test/hooks/block-github-secret-writes.test.mjs
 
-import { BROKEN_CHECKER, runHook, withTempLayout, withNoJqPath, check, finish } from "./_helpers.mjs";
+import { BROKEN_CHECKER, runHook, withTempLayout, withNoJqPath, withOutsideCwd, check, finish } from "./_helpers.mjs";
 
 const HOOK = "block-github-secret-writes.sh";
 const SECRET = "CLIENT_SECRET=abcdefghijklmnop";
@@ -80,12 +80,12 @@ withNoJqPath((dir) => {
   check("CLAUDE_PROJECT_DIR unset: secret still denied (exit 2)", result.status === 2, `got ${result.status}, stderr: ${result.stderr}`);
 }
 
-// Reached through research-loop/.claude with CLAUDE_PROJECT_DIR=research-loop/.
-{
-  const deny = run(bash(`gh issue comment 42 --body "${SECRET}"`), { viaResearch: true });
-  check("via research-loop/.claude: gh issue secret denied", deny.status === 2, `got ${deny.status}, stderr: ${deny.stderr}`);
-  const allow = run(bash("gh issue comment 42 --body clean"), { viaResearch: true });
-  check("via research-loop/.claude: clean comment allowed (checker resolved)", allow.status === 0, `got ${allow.status}, stderr: ${allow.stderr}`);
-}
+// Run from a cwd outside the repo (a skill that cd'd into its worktree).
+withOutsideCwd((cwd) => {
+  const deny = run(bash(`gh issue comment 42 --body "${SECRET}"`), { cwd });
+  check("cwd outside the repo: gh issue secret denied", deny.status === 2, `got ${deny.status}, stderr: ${deny.stderr}`);
+  const allow = run(bash("gh issue comment 42 --body clean"), { cwd });
+  check("cwd outside the repo: clean comment allowed (checker resolved)", allow.status === 0, `got ${allow.status}, stderr: ${allow.stderr}`);
+});
 
 finish();

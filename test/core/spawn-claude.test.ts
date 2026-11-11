@@ -358,6 +358,37 @@ describe("spawnClaudeRun", () => {
     expect(seen[1]).not.toContain("--settings");
   });
 
+  it("passes --append-system-prompt <text> when appendSystemPrompt is given, and none otherwise", async () => {
+    const seen: string[][] = [];
+    const spawn: SpawnFn = (_cmd, args) => {
+      seen.push(args);
+      const child = new FakeChild();
+      child.finish("{}");
+      return child as never;
+    };
+
+    await spawnClaudeRun(makeOpts({ appendSystemPrompt: "# stance\nbe skeptical" }), quietDeps({ spawn }));
+    await spawnClaudeRun(makeOpts({ appendSystemPrompt: "" }), quietDeps({ spawn }));
+    await spawnClaudeRun(makeOpts(), quietDeps({ spawn }));
+
+    expect(seen[0][seen[0].indexOf("--append-system-prompt") + 1]).toBe("# stance\nbe skeptical");
+    expect(seen[1]).not.toContain("--append-system-prompt");
+    expect(seen[2]).not.toContain("--append-system-prompt");
+  });
+
+  it("spawns in opts.cwd when given", async () => {
+    const cwds: unknown[] = [];
+    const spawn: SpawnFn = (_cmd, _args, options) => {
+      cwds.push(options.cwd);
+      const child = new FakeChild();
+      child.finish("{}");
+      return child as never;
+    };
+
+    await spawnClaudeRun(makeOpts({ cwd: "/abs/repo-root" }), quietDeps({ spawn }));
+    expect(cwds).toEqual(["/abs/repo-root"]);
+  });
+
   it("does not send SIGKILL when the child exits on SIGTERM", async () => {
     const timers = makeFakeTimers();
     const child = new FakeChild("SIGTERM");

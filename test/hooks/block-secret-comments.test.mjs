@@ -14,6 +14,7 @@ import {
   runHook,
   withTempLayout,
   withNoJqPath,
+  withOutsideCwd,
   check,
   finish,
 } from "./_helpers.mjs";
@@ -185,18 +186,16 @@ for (const [label, stdin] of [
 }
 
 // ---------------------------------------------------------------------------
-// Reached through research-loop/.claude (symlink to ../.claude) with
-// CLAUDE_PROJECT_DIR=research-loop/, as a v1 `--phase research` spawn does.
+// Run from a cwd outside the repo (a skill that cd'd into its worktree).
 // ---------------------------------------------------------------------------
 
-{
-  const viaResearch = { viaResearch: true };
-  const a = run(mcp("mcp__atlassian__addCommentToJiraIssue", { commentBody: SECRET }), viaResearch);
-  check("via research-loop/.claude: MCP secret: exit code is 2", a.status === 2, `got ${a.status}, stderr: ${a.stderr}`);
-  const b = run(bash(`gh pr create --body "${SECRET}"`), viaResearch);
-  check("via research-loop/.claude: gh pr secret: exit code is 2", b.status === 2, `got ${b.status}, stderr: ${b.stderr}`);
-  const c = run(mcp("mcp__atlassian__addCommentToJiraIssue", { commentBody: "clean" }), viaResearch);
-  check("via research-loop/.claude: clean MCP: exit code is 0 (checker resolved)", c.status === 0, `got ${c.status}, stderr: ${c.stderr}`);
-}
+withOutsideCwd((cwd) => {
+  const a = run(mcp("mcp__atlassian__addCommentToJiraIssue", { commentBody: SECRET }), { cwd });
+  check("cwd outside the repo: MCP secret: exit code is 2", a.status === 2, `got ${a.status}, stderr: ${a.stderr}`);
+  const b = run(bash(`gh pr create --body "${SECRET}"`), { cwd });
+  check("cwd outside the repo: gh pr secret: exit code is 2", b.status === 2, `got ${b.status}, stderr: ${b.stderr}`);
+  const c = run(mcp("mcp__atlassian__addCommentToJiraIssue", { commentBody: "clean" }), { cwd });
+  check("cwd outside the repo: clean MCP: exit code is 0 (checker resolved)", c.status === 0, `got ${c.status}, stderr: ${c.stderr}`);
+});
 
 finish();

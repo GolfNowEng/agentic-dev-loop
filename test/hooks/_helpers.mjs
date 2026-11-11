@@ -13,31 +13,38 @@ import { tmpdir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(__dirname, "..", "..");
-export const RESEARCH_ROOT = join(REPO_ROOT, "research-loop");
 
 let failures = 0;
 
-export function hookPath(name, { viaResearch = false } = {}) {
-  return join(viaResearch ? RESEARCH_ROOT : REPO_ROOT, ".claude", "hooks", name);
+export function hookPath(name) {
+  return join(REPO_ROOT, ".claude", "hooks", name);
 }
 
 /**
- * Runs a hook script. `viaResearch` reaches the script through
- * research-loop/.claude (the tracked symlink to ../.claude) with
- * CLAUDE_PROJECT_DIR and cwd set to research-loop/, the way a v1
- * `--phase research` spawn sees it.
+ * Runs a hook script with CLAUDE_PROJECT_DIR = the repo root (both roles
+ * spawn from there). `cwd` defaults to the repo root too; pass another one
+ * to run the hook the way it runs after a skill `cd`s into its worktree.
  */
-export function runHook(name, stdinJson, { env = {}, viaResearch = false, path } = {}) {
-  const projectDir = viaResearch ? RESEARCH_ROOT : REPO_ROOT;
-  const merged = { ...process.env, CLAUDE_PROJECT_DIR: projectDir, ...env };
+export function runHook(name, stdinJson, { env = {}, path, cwd = REPO_ROOT } = {}) {
+  const merged = { ...process.env, CLAUDE_PROJECT_DIR: REPO_ROOT, ...env };
   // An override of `undefined` means "unset this variable".
   for (const [key, value] of Object.entries(merged)) if (value === undefined) delete merged[key];
-  return spawnSync("bash", [path ?? hookPath(name, { viaResearch })], {
+  return spawnSync("bash", [path ?? hookPath(name)], {
     input: stdinJson,
     encoding: "utf8",
-    cwd: projectDir,
+    cwd,
     env: merged,
   });
+}
+
+/** Runs `fn(dir)` with a throwaway directory outside the repo (a stand-in for a worktree cwd). */
+export function withOutsideCwd(fn) {
+  const dir = mkdtempSync(join(tmpdir(), "hook-cwd-"));
+  try {
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**

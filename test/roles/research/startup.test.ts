@@ -1,57 +1,49 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
-  assertResearchRoot,
-  researchClaudeMdExcludes,
+  RESEARCH_STANCE_PATH,
   REFINE_SKILL_MD_PATH,
+  loadResearchStance,
+  researchClaudeMdExcludes,
 } from "../../../src/roles/research/startup.ts";
 
-describe("assertResearchRoot", () => {
-  let dir: string;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "research-root-test-"));
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+const REPO_ROOT = resolve(import.meta.dirname, "../../..");
+
+// Both roles spawn from the repo root (Ruling 22). The root CLAUDE.md is
+// dev's "trust the ticket completely" stance, so the research spawn excludes
+// it and gets the skeptic stance through --append-system-prompt instead.
+describe("researchClaudeMdExcludes", () => {
+  it("excludes the repo root's CLAUDE.md, absolute", () => {
+    expect(researchClaudeMdExcludes("/abs/dev-loop")).toEqual(["/abs/dev-loop/CLAUDE.md"]);
   });
 
-  it("throws a clear error naming the missing ticket-refine SKILL.md", () => {
-    expect(() => assertResearchRoot(dir)).toThrow(
-      new RegExp(`ticket-refine.*not found.*${join(dir, ".claude/skills/ticket-refine/SKILL.md").replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}`),
-    );
-  });
-
-  it("does not throw when the skill is present", async () => {
-    await mkdir(join(dir, ".claude/skills/ticket-refine"), { recursive: true });
-    await writeFile(join(dir, REFINE_SKILL_MD_PATH), "# skill", "utf8");
-    expect(() => assertResearchRoot(dir)).not.toThrow();
-  });
-
-  it("holds for the real PHASE_ROOT today (research-loop/)", () => {
-    expect(() => assertResearchRoot("research-loop")).not.toThrow();
+  it("resolves a relative root", () => {
+    expect(researchClaudeMdExcludes(".")).toEqual([resolve("CLAUDE.md")]);
   });
 });
 
-// v1 research-loop ran claude -p from its own repo, so only
-// research-loop/CLAUDE.md (the skeptic stance) loaded. Inside the monolith
-// the research cwd is a subdirectory, and Claude Code also loads ancestor
-// CLAUDE.md files -- dev's "trust the ticket completely". The research
-// spawn excludes every CLAUDE.md above its root.
-describe("researchClaudeMdExcludes", () => {
-  it("excludes the repo root's CLAUDE.md, absolute", () => {
-    expect(researchClaudeMdExcludes("/abs/dev-loop", "research-loop")).toEqual([
-      "/abs/dev-loop/CLAUDE.md",
-    ]);
+describe("research stance", () => {
+  it("lives in the repo at RESEARCH_STANCE_PATH, next to the research role", () => {
+    expect(RESEARCH_STANCE_PATH).toBe("src/roles/research/stance.md");
   });
 
-  it("never excludes the research root's own CLAUDE.md", () => {
-    const excl = researchClaudeMdExcludes("/abs/dev-loop", "research-loop");
-    expect(excl).not.toContain("/abs/dev-loop/research-loop/CLAUDE.md");
+  it("is the skeptic stance, not the executor's", async () => {
+    const stance = await loadResearchStance(REPO_ROOT);
+    expect(stance).toContain("Treat every raw ticket as an unverified claim");
+    expect(stance).toContain("A bounce is a success, not a failure");
+    expect(stance).not.toContain("Trust the ticket completely");
   });
 
-  it("excludes nothing when the research root is the repo root (after Task 5/6 merges it)", () => {
-    expect(researchClaudeMdExcludes("/abs/dev-loop", ".")).toEqual([]);
+  it("is what the file says, byte for byte", async () => {
+    expect(await loadResearchStance(REPO_ROOT)).toBe(readFileSync(resolve(REPO_ROOT, RESEARCH_STANCE_PATH), "utf8"));
+  });
+
+  it("throws, naming the path, when the file is missing", async () => {
+    await expect(loadResearchStance("/nonexistent-root")).rejects.toThrow(/stance\.md/);
+  });
+
+  it("REFINE_SKILL_MD_PATH is repo-root-relative and exists", () => {
+    expect(() => readFileSync(resolve(REPO_ROOT, REFINE_SKILL_MD_PATH))).not.toThrow();
   });
 });

@@ -9,7 +9,6 @@ import {
   v2CloneDir,
   v2SessionsDir,
   runIdNow,
-  legacyRunDirs,
   v1PreCutoverRunsLog,
   v2RunsArchive,
   v2ProjectDir,
@@ -34,8 +33,9 @@ describe("paths: exact strings", () => {
   it("v2CloneDir", () => expect(v2CloneDir("web")).toBe(".pipeline/v2/web/repo"));
   it("v2SessionsDir", () => expect(v2SessionsDir("web")).toBe(".pipeline/v2/web/sessions"));
   it("runIdNow", () => expect(runIdNow(new Date("2026-11-11T01:02:03.456Z"))).toBe(RID));
-  it("legacy fns are relative", () => {
-    expect(legacyRunDirs("web")).toBe(".pipeline/web/runs");
+  it("no legacy (cwd-relative) path functions remain", async () => {
+    const mod = await import("../../src/core/paths.ts");
+    expect(Object.keys(mod).filter((k) => /^legacy/.test(k))).toEqual([]);
   });
   it("v2RunsArchive", () => expect(v2RunsArchive("web")).toBe("runs/v2/web.reset-archive.jsonl"));
   it("v2ProjectDir", () => expect(v2ProjectDir("web")).toBe(".pipeline/v2/web"));
@@ -66,7 +66,6 @@ describe("paths: validation", () => {
       expect(() => v2RunDir("web", "s1", bad, "dev", RID)).toThrow(UnsafePathError);
       expect(() => v2RunDir("web", "s1", "TARS-1", bad as never, RID)).toThrow(UnsafePathError);
       expect(() => v2RunDir("web", "s1", "TARS-1", "dev", bad)).toThrow(UnsafePathError);
-      expect(() => legacyRunDirs(bad)).toThrow(UnsafePathError);
       expect(() => v2RunsArchive(bad)).toThrow(UnsafePathError);
       expect(() => v2ProjectDir(bad)).toThrow(UnsafePathError);
       expect(() => v1PreCutoverRunsLog("dev", bad)).toThrow(UnsafePathError);

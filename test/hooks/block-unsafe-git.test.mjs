@@ -5,7 +5,7 @@
 //   npm run test:hooks
 //   node test/hooks/block-unsafe-git.test.mjs
 
-import { BROKEN_CHECKER, runHook, withTempLayout, withNoJqPath, check, finish } from "./_helpers.mjs";
+import { BROKEN_CHECKER, runHook, withTempLayout, withNoJqPath, withOutsideCwd, check, finish } from "./_helpers.mjs";
 
 const HOOK = "block-unsafe-git.sh";
 const bash = (command) => JSON.stringify({ tool_name: "Bash", tool_input: { command } });
@@ -157,12 +157,24 @@ withTempLayout(HOOK, {}, (path, root) => {
   check("checker missing: exit code is 2 (fail closed)", result.status === 2, `got ${result.status}`);
 });
 
-// Reached through research-loop/.claude with CLAUDE_PROJECT_DIR=research-loop/.
+// Run from a cwd outside the repo (a skill that cd'd into its worktree).
+withOutsideCwd((cwd) => {
+  const deny = runHook(HOOK, bash("git push --force"), { cwd });
+  check("cwd outside the repo: force push denied", deny.status === 2, `got ${deny.status}, stderr: ${deny.stderr}`);
+  const allow = runHook(HOOK, bash("git push -u origin x"), { cwd });
+  check("cwd outside the repo: plain push allowed (checker resolved)", allow.status === 0, `got ${allow.status}, stderr: ${allow.stderr}`);
+});
+
+// A push argument only known at run time is denied, and the denial says how
+// to spell it instead (Ruling 24a).
 {
-  const deny = runHook(HOOK, bash("git push --force"), { viaResearch: true });
-  check("via research-loop/.claude: force push denied", deny.status === 2, `got ${deny.status}, stderr: ${deny.stderr}`);
-  const allow = runHook(HOOK, bash("git push -u origin x"), { viaResearch: true });
-  check("via research-loop/.claude: plain push allowed (checker resolved)", allow.status === 0, `got ${allow.status}, stderr: ${allow.stderr}`);
+  const result = runHook(HOOK, bash('git push -u origin "$BRANCH"'));
+  check("run-time push value: exit code is 2", result.status === 2, `got ${result.status}`);
+  check(
+    "run-time push value: stderr says spell the branch name literally, or use HEAD",
+    result.stderr.includes("spell the branch name literally, or use HEAD"),
+    result.stderr,
+  );
 }
 
 finish();

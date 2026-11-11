@@ -5,7 +5,7 @@
 //   npm run test:hooks
 //   node test/hooks/block-comment-edit-in-place.test.mjs
 
-import { BROKEN_CHECKER, runHook, withTempLayout, check, finish } from "./_helpers.mjs";
+import { BROKEN_CHECKER, runHook, withTempLayout, withOutsideCwd, check, finish } from "./_helpers.mjs";
 
 const HOOK = "block-comment-edit-in-place.sh";
 const run = (stdin, opts) => runHook(HOOK, stdin, opts);
@@ -81,12 +81,12 @@ const bash = (command) => JSON.stringify({ tool_name: "Bash", tool_input: { comm
   check("CLAUDE_PROJECT_DIR unset: edit-in-place still denied (exit 2)", result.status === 2, `got ${result.status}, stderr: ${result.stderr}`);
 }
 
-// Reached through research-loop/.claude with CLAUDE_PROJECT_DIR=research-loop/.
-{
-  const deny = run(bash("gh issue comment 439 --edit-last --body x"), { viaResearch: true });
-  check("via research-loop/.claude: --edit-last denied", deny.status === 2, `got ${deny.status}, stderr: ${deny.stderr}`);
-  const allow = run(bash("gh issue comment 439 --body x"), { viaResearch: true });
-  check("via research-loop/.claude: fresh comment allowed (checker resolved)", allow.status === 0, `got ${allow.status}, stderr: ${allow.stderr}`);
-}
+// Run from a cwd outside the repo (a skill that cd'd into its worktree).
+withOutsideCwd((cwd) => {
+  const deny = run(bash("gh issue comment 439 --edit-last --body x"), { cwd });
+  check("cwd outside the repo: --edit-last denied", deny.status === 2, `got ${deny.status}, stderr: ${deny.stderr}`);
+  const allow = run(bash("gh issue comment 439 --body x"), { cwd });
+  check("cwd outside the repo: fresh comment allowed (checker resolved)", allow.status === 0, `got ${allow.status}, stderr: ${allow.stderr}`);
+});
 
 finish();
