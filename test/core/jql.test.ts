@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDevJql, buildRefineJql } from "../../src/core/jql.ts";
+import { buildDevJql, buildRefineJql, excludeKeysFromJql } from "../../src/core/jql.ts";
 import type { Config } from "../../src/core/types.ts";
 
 const config: Config = {
@@ -38,6 +38,10 @@ describe("buildRefineJql", () => {
     expect(jql).not.toContain("{repoLabel}");
   });
 
+  it("preserves the ORDER BY oldest-first clause from the template", () => {
+    expect(buildRefineJql(config)).toContain("ORDER BY created ASC");
+  });
+
   it("returns a non-empty string", () => {
     const jql = buildRefineJql(config);
     expect(typeof jql).toBe("string");
@@ -72,9 +76,37 @@ describe("buildDevJql", () => {
     expect(jql).not.toContain("{prOpenStatus}");
   });
 
+  it("preserves the ORDER BY oldest-first clause from the template", () => {
+    expect(buildDevJql(config, "user-123")).toContain("ORDER BY created ASC");
+  });
+
   it("returns a non-empty string", () => {
     const jql = buildDevJql(config, "user-123");
     expect(typeof jql).toBe("string");
     expect(jql.length).toBeGreaterThan(0);
+  });
+});
+
+describe("excludeKeysFromJql", () => {
+  it("returns the jql unchanged when there are no keys to exclude", () => {
+    expect(excludeKeysFromJql('labels = "x"', [])).toBe('labels = "x"');
+  });
+
+  it("appends a key-not-in clause", () => {
+    expect(excludeKeysFromJql('labels = "x"', ["A-1", "A-2"])).toBe(
+      'labels = "x" AND key not in ("A-1","A-2")',
+    );
+  });
+
+  it("inserts the clause before ORDER BY, case-insensitively", () => {
+    expect(excludeKeysFromJql('labels = "x" order by created ASC', ["A-1"])).toBe(
+      'labels = "x" AND key not in ("A-1") order by created ASC',
+    );
+  });
+
+  it("inserts before an upper-case ORDER BY in a real dev poll", () => {
+    expect(excludeKeysFromJql(buildDevJql(config, "user-123"), ["PROJ-1"])).toMatch(
+      /AND key not in \("PROJ-1"\) ORDER BY created ASC$/,
+    );
   });
 });

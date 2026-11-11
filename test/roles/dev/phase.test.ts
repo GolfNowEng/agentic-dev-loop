@@ -1148,7 +1148,10 @@ describe("runLoopIteration -- landed-ticket guard", () => {
 
   /** pollOldestMatching stand-in: returns the first queued ticket whose key the JQL hasn't excluded. */
   function queuePoll(tickets: JiraTicket[]) {
-    return vi.fn(async (jql: string) => tickets.find((t) => !jql.includes(`key != "${t.key}"`)) ?? null);
+    return vi.fn(
+      async (jql: string) =>
+        tickets.find((t) => !new RegExp(`key not in \\([^)]*"${t.key}"`).test(jql)) ?? null,
+    );
   }
 
   async function withLanded<T>(fn: (path: string) => Promise<T>): Promise<T> {

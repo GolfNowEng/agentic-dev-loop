@@ -8,7 +8,7 @@
 import type { JiraClient } from "../../core/jira-client.ts";
 import type { GitHubClient } from "../../core/github-client.ts";
 import type { Config, RunLogLine, Verdict } from "../../core/types.ts";
-import { buildDevJql, buildRefineJql } from "../../core/jql.ts";
+import { buildDevJql, buildRefineJql, excludeKeysFromJql } from "../../core/jql.ts";
 import { checkCeilings, hasReachedMaxRunsPerDay } from "../../core/ceilings.ts";
 import { appendRunLog } from "../../core/runs-log.ts";
 import { buildQaNotesAdf, buildBounceCommentAdf, buildCodeReviewFields } from "./code-review.ts";
@@ -105,14 +105,6 @@ async function postGitHubDetail(
   }
 }
 
-/** Append `AND key != "K"` clauses to a JQL, ahead of any ORDER BY. */
-function excludeKeys(jql: string, keys: string[]): string {
-  if (keys.length === 0) return jql;
-  const exclusion = keys.map((k) => ` AND key != "${k}"`).join("");
-  const orderBy = jql.search(/\s+ORDER\s+BY\s/i);
-  return orderBy === -1 ? jql + exclusion : jql.slice(0, orderBy) + exclusion + jql.slice(orderBy);
-}
-
 /**
  * Why this ticket must not be re-run, or null if it may run: its latest
  * "landed" PR is merged or still open, or that PR's state can't be read.
@@ -189,7 +181,7 @@ export async function runLoopIteration(
   const skipped: Array<{ ticket: string; reason: string }> = [];
   let ticket = null;
   for (;;) {
-    const jql = excludeKeys(baseJql, skipped.map((s) => s.ticket));
+    const jql = excludeKeysFromJql(baseJql, skipped.map((s) => s.ticket));
     ticket = await jiraClient.pollOldestMatching(jql);
     if (!ticket) {
       return skipped.length > 0 ? { kind: "idle", skipped } : { kind: "idle" };
