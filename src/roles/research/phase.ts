@@ -21,13 +21,13 @@
  * module never touches a real process or a real Jira instance.
  */
 
-import type { Config, RunLogLine, Verdict } from "./types.ts";
-import { CURRENT_LOG_VERSION } from "./types.ts";
-import type { JiraClient, JiraTicket } from "./jira-client.ts";
-import { checkCeilings } from "./ceilings.ts";
-import { parseVerdict } from "./verdict.ts";
-import { appendRunLog, hasLandedRun } from "./runs-log.ts";
-import { excludeKeysFromJql } from "./jql.ts";
+import type { Config, RunLogLine, Verdict } from "../../core/types.ts";
+import { CURRENT_LOG_VERSION } from "../../core/types.ts";
+import type { JiraClient, JiraTicket } from "../../core/jira-client.ts";
+import { checkCeilings } from "../../core/ceilings.ts";
+import { parseVerdict } from "../../core/verdict.ts";
+import { appendRunLog, hasLandedRun } from "../../core/runs-log.ts";
+import { excludeKeysFromJql } from "../../core/jql.ts";
 
 /**
  * What running the skill against a ticket produced. Stands in for the
@@ -83,7 +83,7 @@ export interface LoopIterationResult {
    *     transitionStatus) threw. The run itself still completed and is
    *     still logged; this only means Jira's state may be out of sync
    *     with runs.jsonl (the ticket may still sit at its old label/status).
-   *   - action "claim-error": claim() itself threw, before any run
+   *   - action "claim-error": claimTicket() itself threw, before any run
    *     happened -- nothing was logged for this ticket at all; see
    *     "claim-error" above.
    * Either way, one Jira write failing must never kill the loop or discard
@@ -127,10 +127,11 @@ export async function runLoopIteration(
 ): Promise<LoopIterationResult> {
   const { jiraClient, config, jql, runSkill, runsLogPath, runsToday, assigneeAccountId } = deps;
 
-  const preCheck = checkCeilings(config, {
+  const preCheck = checkCeilings({
     runsToday,
     runCostUsd: null,
     runDurationMin: null,
+    limits: config.ceilings,
   });
   if (preCheck.breached) {
     return { action: "paused-ceiling", pauseReason: preCheck.detail };
@@ -150,7 +151,7 @@ export async function runLoopIteration(
     return { action: "empty-queue", ...skipped };
   }
 
-  // A claim() throw (as opposed to its clean `false` lost-race return) is a
+  // A claimTicket() throw (as opposed to its clean `false` lost-race return) is a
   // real Jira-side error -- e.g. a transition's screen has a required field
   // claim() doesn't send (see docs/future-enhancements.md's claim()-doesn't-
   // send-required-screen-fields entry). Left uncaught, this would propagate
@@ -160,7 +161,7 @@ export async function runLoopIteration(
   // (still deferred), it only stops that gap from taking down the process.
   let claimed: boolean;
   try {
-    claimed = await jiraClient.claim(
+    claimed = await jiraClient.claimTicket(
       ticket.key,
       config.jira.claimStatus.from,
       config.jira.claimStatus.to,
@@ -188,7 +189,7 @@ export async function runLoopIteration(
   }
 
   const result = await runSkill(ticket);
-  const verdict: Verdict = parseVerdict(result.verdictRaw);
+  const verdict: Verdict = parseVerdict(result.verdictRaw, "refine");
 
   // ticket-refine reports its own passing verdict as "ready" (a refined
   // ticket, not a PR) -- normalize to "landed" for the shared RunOutcome
@@ -248,7 +249,11 @@ export async function runLoopIteration(
     retries: verdict.retries ?? 0,
     failure_category: verdict.failure_category,
     detail: verdict.detail,
-    pr: verdict.pr ?? null,
+    // Always null: the research role never opens a PR. core/remote-close.ts
+    // and reset-cli close a PR only for a runs.jsonl line with a non-null
+    // `pr`, so this must be enforced here, not left to ticket-refine's
+    // verdict schema happening to omit the field.
+    pr: null,
     cost_usd: result.costUsd,
     tokens: result.tokens,
     log_version: CURRENT_LOG_VERSION,
@@ -261,10 +266,11 @@ export async function runLoopIteration(
 
   await appendRunLog(runsLogPath, logLine);
 
-  const postCheck = checkCeilings(config, {
+  const postCheck = checkCeilings({
     runsToday: runsToday + 1,
     runCostUsd: result.costUsd,
     runDurationMin: result.durationMin,
+    limits: config.ceilings,
   });
   if (postCheck.breached) {
     return {
