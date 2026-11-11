@@ -18,7 +18,7 @@
 // LC_ALL=C and TZ=UTC, so two starters with different locales/zones agree.
 
 import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { SESSION_ID, TICKET_KEY, UnsafePathError, runIdNow } from "./paths.ts";
@@ -52,8 +52,11 @@ export class LiveWorkerError extends Error {
 /** Another process held the project's acquire mutex for longer than mutexTimeoutMs. */
 export class AcquireBusyError extends Error {
   readonly holderPid: number;
-  constructor(holderPid: number, waitedMs: number) {
-    super(`another process (pid ${holderPid}) is acquiring a session for this project; gave up after ${waitedMs}ms`);
+  constructor(holderPid: number, waitedMs: number, detail = "") {
+    super(
+      `another process (pid ${holderPid}) is acquiring a session for this project; gave up after ${waitedMs}ms` +
+        (detail ? ` (${detail})` : ""),
+    );
     this.name = "AcquireBusyError";
     this.holderPid = holderPid;
   }
@@ -72,8 +75,17 @@ export interface AcquireOptions {
   now: Date;
   /** How long to wait for a live acquire-mutex holder. Default 5000ms. */
   mutexTimeoutMs?: number;
-  /** Test-only seams. */
-  _hooks?: { beforePublish?: () => Promise<void> };
+  /** Test-only seams (not reachable from config). */
+  _hooks?: {
+    /** Between writing the session lock's temp file and linking it into place. */
+    beforePublish?: () => Promise<void>;
+    /** After judging the current mutex stale, before claiming its reclaim. */
+    onStaleMutex?: () => Promise<void>;
+    /** After a stale-mutex reclaim attempt finishes (whether or not it removed anything). */
+    afterStaleMutexReclaim?: () => Promise<void>;
+    /** Clock for mutex backoff / deadline. */
+    clock?: Clock;
+  };
 }
 
 export interface Session {
@@ -240,7 +252,12 @@ const isStaleFile = (f: string) => f.includes(STALE_MARK);
 const lockName = (f: string) => f.slice(0, f.indexOf(LOCK_EXT));
 
 const rand = () => randomBytes(4).toString("hex");
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+interface Clock {
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+}
+const realClock: Clock = { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 
 /** Write `body` fully to a temp file, then link(2) it to `target`. Returns false on EEXIST. */
 async function publish(dir: string, target: string, body: unknown, beforeLink?: () => Promise<void>): Promise<boolean> {
@@ -259,6 +276,50 @@ async function publish(dir: string, target: string, body: unknown, beforeLink?: 
 }
 
 // ---- acquire mutex --------------------------------------------------------
+//
+// `.acquire` holds {pid, started, nonce}; the nonce makes every mutex body
+// unique, so a body identifies one specific take of the mutex.
+//
+// Reclaiming a stale mutex is itself exclusive per body: the reclaimer links a
+// claim file named after the stale body's hash (`.acquire.reclaim-<sha>`), then
+// re-reads `.acquire` while holding the claim and removes it only if it still
+// holds exactly that body. A moved-aside mutex is never restored. Because the
+// only processes that may remove body X are (a) X's owner and (b) the single
+// holder of X's claim after re-confirming X is present, a reclaimer that judged
+// an older body stale can never remove a newer, live one (no ABA). A claim left
+// by a reclaimer that crashed mid-reclaim fails closed: AcquireBusyError names
+// the file to delete.
+
+interface MutexBody {
+  raw: string;
+  pid: number | null;
+  started: number | null;
+  nonce: string | null;
+}
+
+async function readMutexFile(path: string): Promise<MutexBody | null> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(path, "utf8");
+  } catch (e) {
+    if (errCode(e) === "ENOENT") return null;
+    throw e;
+  }
+  const p = parseBody(raw);
+  let nonce: string | null = null;
+  try {
+    const b = JSON.parse(raw);
+    if (typeof b?.nonce === "string" && b.nonce !== "") nonce = b.nonce;
+  } catch {
+    // corrupt: nonce stays null
+  }
+  return { raw, pid: p.pid, started: p.started, nonce };
+}
+
+/** File name of the per-body reclaim claim for a stale `.acquire` whose raw content is `raw`. */
+export function mutexClaimName(raw: string): string {
+  return `${MUTEX}.reclaim-${createHash("sha256").update(raw).digest("hex").slice(0, 32)}`;
+}
 
 interface Mutex {
   stillOurs: () => Promise<boolean>;
@@ -271,51 +332,70 @@ async function takeMutex(
   started: number,
   isAlive: AcquireOptions["isAlive"],
   timeoutMs: number,
+  hooks: AcquireOptions["_hooks"] = {},
 ): Promise<Mutex> {
+  const clock = hooks.clock ?? realClock;
   const path = join(dir, MUTEX);
-  const ours = async () => {
-    const e = await readEntry(dir, MUTEX);
-    return e !== null && e.pid === pid && e.started === started;
+  const nonce = randomUUID();
+  const mine = (b: MutexBody | null) => b !== null && b.pid === pid && b.started === started && b.nonce === nonce;
+
+  const release = async () => {
+    if (!mine(await readMutexFile(path))) return; // never touch a mutex that isn't ours
+    const aside = join(dir, `${MUTEX}.release-${pid}-${rand()}`);
+    try {
+      await fs.rename(path, aside);
+    } catch (e) {
+      if (errCode(e) === "ENOENT") return;
+      throw e;
+    }
+    // Discarded even if it turns out not to be ours (replaced between read and rename):
+    // a moved-aside mutex is never restored, so a finished holder can never be resurrected.
+    // That body's owner then fails its own verify (stillOurs) and gives up.
+    await fs.rm(aside, { force: true });
   };
-  const deadline = Date.now() + timeoutMs;
+
+  const deadline = clock.now() + timeoutMs;
   let holder = 0;
+  let detail = "";
   for (let delay = 5; ; delay = Math.min(delay * 2, 50)) {
-    if (await publish(dir, path, { pid, started })) {
-      return {
-        stillOurs: ours,
-        release: async () => {
-          if (await ours()) await fs.rm(path, { force: true });
-        },
-      };
+    if (await publish(dir, path, { pid, started, nonce })) {
+      return { stillOurs: async () => mine(await readMutexFile(path)), release };
     }
-    const h = await readEntry(dir, MUTEX);
-    if (h === null) continue; // released meanwhile
-    holder = h.pid ?? 0;
-    if (h.pid === null || h.started === null || !isAlive(h.pid, h.started)) {
-      // Stale mutex: move it aside, then confirm we moved the one we judged stale.
-      const asideFile = `${MUTEX}.stale-${pid}-${rand()}`;
-      const aside = join(dir, asideFile);
-      try {
-        await fs.rename(path, aside);
-      } catch (e) {
-        if (errCode(e) === "ENOENT") continue;
-        throw e;
+    const h = await readMutexFile(path);
+    if (h !== null) {
+      holder = h.pid ?? 0;
+      detail = "";
+      if (h.pid === null || h.started === null || !isAlive(h.pid, h.started)) {
+        await hooks.onStaleMutex?.();
+        detail = await reclaimStaleMutex(dir, h.raw, { pid, started, nonce: randomUUID() });
+        await hooks.afterStaleMutexReclaim?.();
       }
-      const moved = await readEntry(dir, asideFile);
-      const same = moved !== null && moved.pid === h.pid && moved.started === h.started;
-      if (!same) {
-        // We raced and moved a fresh holder's mutex: put it back (if nobody took the slot meanwhile).
-        try {
-          await fs.link(aside, path);
-        } catch (e) {
-          if (errCode(e) !== "EEXIST") throw e;
-        }
-      }
-      await fs.rm(aside, { force: true });
-      continue;
     }
-    if (Date.now() >= deadline) throw new AcquireBusyError(holder, timeoutMs);
-    await sleep(delay);
+    if (clock.now() >= deadline) throw new AcquireBusyError(holder, timeoutMs, detail);
+    await clock.sleep(Math.max(1, Math.round(delay * (0.5 + Math.random() * 0.5))));
+  }
+}
+
+/** Remove `.acquire` iff it still holds exactly `staleRaw`. Returns a reason when blocked, "" otherwise. */
+async function reclaimStaleMutex(dir: string, staleRaw: string, claimBody: object): Promise<string> {
+  const claimFile = mutexClaimName(staleRaw);
+  const claim = join(dir, claimFile);
+  if (!(await publish(dir, claim, claimBody))) {
+    return `stale mutex reclaim is claimed by ${claimFile}; if no acquire is running, delete it`;
+  }
+  try {
+    const now = await readMutexFile(join(dir, MUTEX));
+    if (now === null || now.raw !== staleRaw) return ""; // already reclaimed / replaced: nothing to do
+    const aside = join(dir, `${MUTEX}.stale-${rand()}`);
+    try {
+      await fs.rename(join(dir, MUTEX), aside);
+    } catch (e) {
+      if (errCode(e) !== "ENOENT") throw e;
+    }
+    await fs.rm(aside, { force: true }); // discarded, never restored
+    return "";
+  } finally {
+    await fs.rm(claim, { force: true });
   }
 }
 
@@ -333,12 +413,13 @@ export async function acquireSession(opts: AcquireOptions): Promise<Session> {
   if (!isStarted(started)) throw new Error(`cannot read the start time of pid ${pid} (ps -o lstart=)`);
   await fs.mkdir(dir, { recursive: true });
 
-  const mutex = await takeMutex(dir, pid, started, isAlive, opts.mutexTimeoutMs ?? 5000);
+  const mutex = await takeMutex(dir, pid, started, isAlive, opts.mutexTimeoutMs ?? 5000, opts._hooks);
   try {
     const isOurs = (e: Parsed) => e.pid === pid && e.started === started;
     const live = (e: Parsed) => e.pid !== null && isAlive(e.pid, e.started ?? 0);
-    const refuseIfLive = (locks: FileEntry[]) => {
-      const hit = locks.find((l) => !isOurs(l) && live(l));
+    // Our own live lock counts too: a second acquire by this process refuses (one worker per project).
+    const refuseIfLive = (locks: FileEntry[], except?: string) => {
+      const hit = locks.find((l) => l.file !== except && (isOurs(l) || live(l)));
       if (hit) throw new LiveWorkerError(lockName(hit.file), hit.pid!);
     };
 
@@ -373,7 +454,7 @@ export async function acquireSession(opts: AcquireOptions): Promise<Session> {
       const ok = self !== null && isOurs(self) && (await mutex.stillOurs());
       try {
         if (!ok) throw new Error(`session acquire lost a race on ${lockPath}; retry`);
-        refuseIfLive(await scanFiles(dir, isLockFile));
+        refuseIfLive(await scanFiles(dir, isLockFile), name + LOCK_EXT);
       } catch (e) {
         if (self && isOurs(self)) await fs.rm(lockPath, { force: true });
         throw e;
