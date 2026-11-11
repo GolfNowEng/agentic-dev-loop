@@ -6,6 +6,7 @@ import {
   realExecGhPrView,
   realDefaultBranch,
   containsTicketToken,
+  realFindOpenPrUrl,
 } from "../../src/core/github-client.ts";
 
 describe("StubGitHubClient", () => {
@@ -323,5 +324,26 @@ describe("core never imports from roles", () => {
       .filter((f) => f.endsWith(".ts"))
       .filter((f) => /from\s+["'][^"']*roles\//.test(readFileSync(new URL(f, dir), "utf8")));
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("realFindOpenPrUrl", () => {
+  it("lists open PRs in the repo and returns the first whose head branch or title has the key as a whole token", async () => {
+    const exec = vi.fn(async () =>
+      JSON.stringify([
+        { url: "https://github.com/org/repo/pull/2", title: "TARS-12: other", headRefName: "feature/TARS-12" },
+        { url: "https://github.com/org/repo/pull/3", title: "x", headRefName: "feature/TARS-1-thing" },
+      ]),
+    );
+    expect(await realFindOpenPrUrl("org/repo", exec)("TARS-1")).toBe("https://github.com/org/repo/pull/3");
+    const args = exec.mock.calls[0]![0] as string[];
+    expect(args).toEqual(expect.arrayContaining(["pr", "list", "-R", "org/repo", "--state", "open", "--search", "TARS-1"]));
+  });
+
+  it("null when nothing matches; refuses an invalid key without calling gh", async () => {
+    const exec = vi.fn(async () => "[]");
+    expect(await realFindOpenPrUrl("org/repo", exec)("TARS-1")).toBeNull();
+    await expect(realFindOpenPrUrl("org/repo", exec)("TARS-1 --x")).rejects.toThrow(/invalid ticket key/);
+    expect(exec).toHaveBeenCalledTimes(1);
   });
 });
