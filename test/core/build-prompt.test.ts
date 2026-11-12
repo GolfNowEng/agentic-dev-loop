@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolve } from "node:path";
-import { buildSkillPrompt, claudeEnvFor, repoDirFor, SKILL_NAME } from "../../src/core/build-prompt.ts";
+import { buildSkillPrompt, checkAbsPath, claudeEnvFor, repoDirFor, SKILL_NAME } from "../../src/core/build-prompt.ts";
 import { resolveRepoPath, v2CloneDir, UnsafePathError } from "../../src/core/paths.ts";
 import { makeV2Config } from "../fixtures/config.ts";
 
@@ -38,6 +38,14 @@ describe("buildSkillPrompt", () => {
     ["a run dir with a malformed run id", { runDir: "/abs/.pipeline/v2/w/dev-1/TARS-1/dev-X" }],
     ["a run dir with ..", { runDir: `/abs/.pipeline/v2/w/../../TARS-1/dev-${RID}` }],
     ["a repo dir with whitespace", { repoDir: "/abs/my repo" }],
+    ["a repo dir with ;", { repoDir: "/abs/repo;rm -rf x" }],
+    ["a repo dir with $", { repoDir: "/abs/$HOME/repo" }],
+    ["a repo dir with a backtick", { repoDir: "/abs/`id`/repo" }],
+    ["a repo dir with '", { repoDir: "/abs/it's/repo" }],
+    ["a run dir with ;", { runDir: `/abs;x/.pipeline/v2/w/dev-1/TARS-1/dev-${RID}` }],
+    ["a run dir with $", { runDir: `/abs/$x/.pipeline/v2/w/dev-1/TARS-1/dev-${RID}` }],
+    ["a run dir with a backtick", { runDir: `/abs/\`x\`/.pipeline/v2/w/dev-1/TARS-1/dev-${RID}` }],
+    ["a run dir with '", { runDir: `/abs/'x/.pipeline/v2/w/dev-1/TARS-1/dev-${RID}` }],
     ["a relative repo dir", { repoDir: "repo" }],
     ["an empty repo dir", { repoDir: "" }],
   ];
@@ -46,6 +54,19 @@ describe("buildSkillPrompt", () => {
       expect(() => buildSkillPrompt({ ...ok, ...patch })).toThrow(UnsafePathError);
     });
   }
+});
+
+describe("checkAbsPath (the allowlist)", () => {
+  it("accepts an email-shaped home and the usual path characters", () => {
+    expect(checkAbsPath("repo-dir", "/Users/a.b@corp.example/Desktop/Repos/web_tars+3")).toBe(
+      "/Users/a.b@corp.example/Desktop/Repos/web_tars+3",
+    );
+  });
+  it("rejects anything outside [A-Za-z0-9@._/+-]", () => {
+    for (const bad of ["/a;b", "/a$b", "/a`b", "/a'b", '/a"b', "/a b", "/a\\b", "/a|b", "/a&b", "/a*b"]) {
+      expect(() => checkAbsPath("repo-dir", bad)).toThrow(UnsafePathError);
+    }
+  });
 });
 
 describe("repoDirFor", () => {

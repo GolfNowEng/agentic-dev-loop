@@ -168,8 +168,11 @@ describe("structure: no banned git/gh flags", () => {
 });
 
 describe("structure: research-loop/ is gone", () => {
-  it("no research-loop/ directory", () => {
-    expect(existsSync(join(ROOT, "research-loop"))).toBe(false);
+  // Only its tracked checkout files. research-loop/runs/ may still hold
+  // pre-cutover v1 logs that v1PreCutoverRunsLog reads (Ruling 28).
+  it("no research-loop/.claude and no research-loop/CLAUDE.md", () => {
+    expect(existsSync(join(ROOT, "research-loop/.claude"))).toBe(false);
+    expect(existsSync(join(ROOT, "research-loop/CLAUDE.md"))).toBe(false);
   });
 
   it("the research stance file the spawn loads exists", () => {

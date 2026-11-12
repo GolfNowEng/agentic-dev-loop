@@ -79,6 +79,8 @@ describe("makeRunSkill", () => {
     expect(o.addDir).toBe(repo);
     expect(o.excludeClaudeMd ?? []).toEqual([]);
     expect(o.appendSystemPrompt).toBeUndefined();
+    expect(o.denyEditsUnder ?? []).toEqual([]);
+    expect(o.logPrefix).toBe("ticket-to-pr");
     expect(o.maxBudgetUsd).toBe(20);
     expect(o.timeoutMin).toBe(75);
     expect(o.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBe(String(75 * 60_000));
@@ -93,6 +95,9 @@ describe("makeRunSkill", () => {
     expect(o.allowedTools).toBe(RESEARCH_TOOLS);
     expect(o.excludeClaudeMd).toEqual(["/abs/dev-loop/CLAUDE.md"]);
     expect(o.appendSystemPrompt).toBe("# research stance\nbe skeptical");
+    // Research may write only RUN_DIR (under the repo root), never the target checkout (Ruling 27).
+    expect(o.denyEditsUnder).toEqual([repo]);
+    expect(o.logPrefix).toBe("ticket-refine");
     expect(o.addDir).toBe(repo);
     expect(o.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBe(String(120 * 60_000));
   });
@@ -102,6 +107,28 @@ describe("makeRunSkill", () => {
     await makeRunSkill(d)({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
     expect(spawned[0].prompt).toMatch(new RegExp(`repo-dir=${resolveRepoPath(`.pipeline/v2/${SLUG}/repo`).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
     expect(spawned[0].addDir).toBeNull();
+  });
+
+  it("research with no targetRepo.path: denies edits under the v2 clone dir (RUN_DIR is outside it)", async () => {
+    const d = deps({ config: makeV2Config() });
+    await makeRunSkill(d)({ role: "research", ticketKey: "TARS-1", runDir: runDir("research"), maxBudgetUsd: 50 });
+    const clone = resolveRepoPath(`.pipeline/v2/${SLUG}/repo`);
+    expect(spawned[0].denyEditsUnder).toEqual([clone]);
+    expect(resolveRepoPath(runDir("research")).startsWith(clone + "/")).toBe(false);
+  });
+
+  it("validates REPO_DIR at construction: a malformed targetRepo.path throws before any run", () => {
+    for (const bad of ["/abs/my repo", "relative/repo", "/abs/x;rm", "/abs/../x"]) {
+      expect(() =>
+        makeRunSkill(
+          deps({
+            config: makeV2Config((c) => {
+              c.targetRepo.path = bad;
+            }),
+          }),
+        ),
+      ).toThrow(/repo-dir/);
+    }
   });
 
   it("creates RUN_DIR before spawning", async () => {

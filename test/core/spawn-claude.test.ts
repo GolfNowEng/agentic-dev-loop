@@ -358,6 +358,53 @@ describe("spawnClaudeRun", () => {
     expect(seen[1]).not.toContain("--settings");
   });
 
+  it("denyEditsUnder: --settings permissions.deny for Edit/Write/NotebookEdit under each dir (//abs/** form), with claudeMdExcludes", async () => {
+    const seen: string[][] = [];
+    const spawn: SpawnFn = (_cmd, args) => {
+      seen.push(args);
+      const child = new FakeChild();
+      child.finish("{}");
+      return child as never;
+    };
+
+    await spawnClaudeRun(
+      makeOpts({ excludeClaudeMd: ["/abs/repo/CLAUDE.md"], denyEditsUnder: ["/abs/target"] }),
+      quietDeps({ spawn }),
+    );
+    await spawnClaudeRun(makeOpts({ denyEditsUnder: ["/abs/target"] }), quietDeps({ spawn }));
+    await spawnClaudeRun(makeOpts({ denyEditsUnder: [] }), quietDeps({ spawn }));
+
+    const deny = ["Edit(//abs/target/**)", "Write(//abs/target/**)", "NotebookEdit(//abs/target/**)"];
+    expect(JSON.parse(seen[0][seen[0].indexOf("--settings") + 1])).toEqual({
+      claudeMdExcludes: ["/abs/repo/CLAUDE.md"],
+      permissions: { deny },
+    });
+    expect(JSON.parse(seen[1][seen[1].indexOf("--settings") + 1])).toEqual({ permissions: { deny } });
+    expect(seen[2]).not.toContain("--settings");
+    expect(seen[0].filter((a) => a === "--settings")).toHaveLength(1);
+  });
+
+  it("denyEditsUnder rejects a relative path or a glob character (it becomes a permission rule)", async () => {
+    const spawn: SpawnFn = () => {
+      throw new Error("must not spawn");
+    };
+    for (const bad of ["rel/dir", "/abs/*", "/abs/(x)", "/abs/[x]"]) {
+      const r = await spawnClaudeRun(makeOpts({ denyEditsUnder: [bad] }), quietDeps({ spawn }));
+      expect(r.spawnError).toMatch(/denyEditsUnder/);
+    }
+  });
+
+  it("uses opts.logPrefix for its log lines when given", async () => {
+    const lines: string[] = [];
+    const spawn: SpawnFn = () => {
+      const child = new FakeChild();
+      child.finish("", 1);
+      return child as never;
+    };
+    await spawnClaudeRun(makeOpts({ logPrefix: "ticket-refine" }), { logError: (m) => lines.push(m), log: () => {}, spawn });
+    expect(lines.some((l) => l.startsWith("[ticket-refine] TARS-1: spawn failed"))).toBe(true);
+  });
+
   it("passes --append-system-prompt <text> when appendSystemPrompt is given, and none otherwise", async () => {
     const seen: string[][] = [];
     const spawn: SpawnFn = (_cmd, args) => {
