@@ -121,10 +121,12 @@ describe("evals harness, dry run", () => {
     const bad = all.filter((l) => !l.startsWith("DRY: ") && !l.startsWith("[eval] "));
     expect(bad).toEqual([]);
     const dry = all.filter((l) => l.startsWith("DRY: "));
-    expect(dry.some((l) => l.includes("npm run loop -- --config pipeline.eval.config.json") && l.includes("--once"))).toBe(true);
+    expect(dry.some((l) => l.includes("npm run loop -- --config=pipeline.eval.config.json") && l.includes("--once"))).toBe(true);
     expect(dry.some((l) => l.includes("evals/jira.mjs create"))).toBe(true);
     expect(dry.some((l) => l.includes("gh auth status"))).toBe(true);
     expect(dry.some((l) => l.includes("evals/check-clean.mjs"))).toBe(true);
+    expect(dry.some((l) => /evals\/jira\.mjs create --summary=.* --description-file=/.test(l))).toBe(true);
+    expect(dry.some((l) => /evals\/check-clean\.mjs --config=pipeline\.eval\.config\.json --keys=DRY-1/.test(l))).toBe(true);
     // Lines that name an outward tool are only ever DRY: lines.
     const outwardNamed = all.filter((l) => /(^|\s)(gh|curl|claude|npm run loop)(\s|$)|jira\.mjs/.test(l));
     expect(outwardNamed.every((l) => l.startsWith("DRY: "))).toBe(true);

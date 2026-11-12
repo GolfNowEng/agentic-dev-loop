@@ -52,9 +52,15 @@ describe("scripts/stats.mjs", () => {
   });
 
   async function stats(...args: string[]): Promise<string> {
-    const { stdout } = await run(process.execPath, [SCRIPT, "--root", root, "--project", "proj", ...args]);
+    const { stdout } = await run(process.execPath, [SCRIPT, `--root=${root}`, "--project=proj", ...args]);
     return stdout;
   }
+
+  it("refuses the old --name value form, naming the replacement", async () => {
+    await expect(run(process.execPath, [SCRIPT, `--root=${root}`, "--days", "3"])).rejects.toMatchObject({
+      stderr: expect.stringContaining("use --days=3"),
+    });
+  });
 
   async function fixtures(): Promise<void> {
     await mkdir(join(root, "runs/v2"), { recursive: true });
@@ -129,7 +135,7 @@ describe("scripts/stats.mjs", () => {
     const before = await snapshot(root);
     await stats();
     await stats("--v1");
-    await stats("--days", "1");
+    await stats("--days=1");
     expect(await snapshot(root)).toEqual(before);
   });
 });

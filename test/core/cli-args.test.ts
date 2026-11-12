@@ -8,7 +8,7 @@ const REPO_ROOT = resolve(import.meta.dirname, "../..");
 
 describe("parseArgs", () => {
   it("defaults: worker phase, no session, not once, not streaming", () => {
-    expect(parseArgs(["--project", "webtarsthree"])).toEqual({
+    expect(parseArgs(["--project=webtarsthree"])).toEqual({
       phase: "worker",
       project: "webtarsthree",
       configPath: undefined,
@@ -18,8 +18,8 @@ describe("parseArgs", () => {
     });
   });
 
-  it("reads every flag, in both --name value and --name=value form", () => {
-    expect(parseArgs(["--stream", "--project=webtarsthree", "--session", "dev-2", "--phase=dev", "--once"])).toEqual({
+  it("reads every flag in --name=value form", () => {
+    expect(parseArgs(["--stream", "--project=webtarsthree", "--session=dev-2", "--phase=dev", "--once"])).toEqual({
       phase: "dev",
       project: "webtarsthree",
       configPath: undefined,
@@ -27,33 +27,38 @@ describe("parseArgs", () => {
       once: true,
       stream: true,
     });
-    expect(parseArgs(["--config", "/tmp/x.json", "--phase", "research"]).configPath).toBe("/tmp/x.json");
-    expect(parseArgs(["--project", "p", "--phase", "worker"]).phase).toBe("worker");
+    expect(parseArgs(["--config=/tmp/x.json", "--phase=research"]).configPath).toBe("/tmp/x.json");
+    expect(parseArgs(["--project=p", "--phase=worker"]).phase).toBe("worker");
   });
 
-  it("rejects --phase foo, naming the allowed values", () => {
-    expect(() => parseArgs(["--project", "p", "--phase", "foo"])).toThrow(/--phase worker\|research\|dev.*"foo"/);
+  it("rejects the old --name value form with the exact replacement", () => {
+    expect(() => parseArgs(["--project", "webtarsthree"])).toThrow(/use --project=webtarsthree/);
+    expect(() => parseArgs(["--project=p", "--phase", "dev"])).toThrow(/use --phase=dev/);
+  });
+
+  it("rejects --phase=foo, naming the allowed values", () => {
+    expect(() => parseArgs(["--project=p", "--phase=foo"])).toThrow(/--phase=worker\|research\|dev.*"foo"/);
   });
 
   it("rejects a flag with no value", () => {
     expect(() => parseArgs(["--project"])).toThrow(/--project needs a value/);
-    expect(() => parseArgs(["--project", "p", "--session"])).toThrow(/--session needs a value/);
-    expect(() => parseArgs(["--project", "p", "--phase", "--once"])).toThrow(/--phase needs a value/);
+    expect(() => parseArgs(["--project=p", "--session"])).toThrow(/--session needs a value/);
+    expect(() => parseArgs(["--project=p", "--phase", "--once"])).toThrow(/--phase needs a value/);
   });
 
   it("requires exactly one of --project / --config", () => {
-    expect(() => parseArgs([])).toThrow(/--project <name>/);
-    expect(() => parseArgs(["--project", "p", "--config", "c.json"])).toThrow(/not both/);
+    expect(() => parseArgs([])).toThrow(/--project=<name>/);
+    expect(() => parseArgs(["--project=p", "--config=c.json"])).toThrow(/not both/);
   });
 
   it("rejects unknown flags and stray arguments", () => {
-    expect(() => parseArgs(["--project", "p", "--onec"])).toThrow(/unknown argument "--onec"/);
-    expect(() => parseArgs(["--project", "p", "extra"])).toThrow(/unknown argument "extra"/);
+    expect(() => parseArgs(["--project=p", "--onec"])).toThrow(/unknown argument "--onec"/);
+    expect(() => parseArgs(["--project=p", "extra"])).toThrow(/unknown argument "extra"/);
   });
 
   it("has no way to pass session test seams", () => {
-    expect(() => parseArgs(["--project", "p", "--_hooks", "x"])).toThrow(/unknown argument/);
-    expect(Object.keys(parseArgs(["--project", "p"]))).not.toContain("_hooks");
+    expect(() => parseArgs(["--project=p", "--_hooks=x"])).toThrow(/unknown argument/);
+    expect(Object.keys(parseArgs(["--project=p"]))).not.toContain("_hooks");
   });
 });
 

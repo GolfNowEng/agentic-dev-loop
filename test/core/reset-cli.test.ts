@@ -47,11 +47,18 @@ describe("reset-cli", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  const cli = (...args: string[]) => run(process.execPath, [CLI, "--root", root, "--project", "proj", ...args], { cwd: dir });
+  const cli = (...args: string[]) => run(process.execPath, [CLI, `--root=${root}`, "--project=proj", ...args], { cwd: dir });
+
+  it("refuses the old --name value form, naming the replacement", async () => {
+    await expect(cli("--ticket", "TARS-1", "--dry-run")).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("use --ticket=TARS-1"),
+    });
+  });
 
   it("--close-remote --dry-run previews the PR recorded in the v2 log", async () => {
     await put(root, "runs/v2/proj.jsonl", v2rec("TARS-1", "dev", "https://github.com/o/r/pull/7") + "\n");
-    const { stdout } = await cli("--ticket", "TARS-1", "--dry-run", "--close-remote");
+    const { stdout } = await cli("--ticket=TARS-1", "--dry-run", "--close-remote");
     expect(stdout).toContain("- close Jira ticket TARS-1");
     expect(stdout).toContain("- close mirror GitHub Issue for TARS-1");
     expect(stdout).toContain("- close PR https://github.com/o/r/pull/7");
@@ -60,13 +67,13 @@ describe("reset-cli", () => {
 
   it("--close-remote --dry-run falls back to a PR in the v1 dev log (pre-cutover runs/<slug>.jsonl)", async () => {
     await put(root, "runs/proj.jsonl", v1line("TARS-1", "bounced", "https://github.com/o/r/pull/8") + "\n");
-    const { stdout } = await cli("--ticket", "TARS-1", "--dry-run", "--close-remote");
+    const { stdout } = await cli("--ticket=TARS-1", "--dry-run", "--close-remote");
     expect(stdout).toContain("- close PR https://github.com/o/r/pull/8");
   });
 
   it("--close-remote --dry-run with only research records previews no PR", async () => {
     await put(root, "runs/v2/proj.jsonl", v2rec("TARS-1", "research", null) + "\n");
-    const { stdout } = await cli("--ticket", "TARS-1", "--dry-run", "--close-remote");
+    const { stdout } = await cli("--ticket=TARS-1", "--dry-run", "--close-remote");
     expect(stdout).toContain("no open PR found locally for this ticket -- nothing to close");
     expect(stdout).not.toContain("- close PR ");
   });
@@ -75,7 +82,7 @@ describe("reset-cli", () => {
     const log = v2rec("TARS-1", "dev", null) + "\n";
     await put(root, "runs/v2/proj.jsonl", log);
     await put(root, ".pipeline/v2/proj/dev-1/TARS-1/dev-20261110T000000Z/usage.json", "{}");
-    const { stdout } = await cli("--ticket", "TARS-1", "--dry-run");
+    const { stdout } = await cli("--ticket=TARS-1", "--dry-run");
     expect(stdout).toContain("role: all");
     expect(stdout).toContain("archive 1 record(s)");
     expect(await readFile(join(root, "runs/v2/proj.jsonl"), "utf8")).toBe(log);
@@ -93,7 +100,7 @@ describe("reset-cli", () => {
     await put(root, ".pipeline/proj/runs/TARS-1-x/verdict.json", "{}");
     await put(root, "research-loop/runs/proj.jsonl", v1line("TARS-1", "landed", null) + "\n");
 
-    await cli("--ticket", "TARS-1", "--role", "research");
+    await cli("--ticket=TARS-1", "--role=research");
 
     expect(await readdir(join(root, ".pipeline/v2/proj/dev-1/TARS-1"))).toEqual(["dev-20261110T000000Z"]);
     expect((await readFile(join(root, "runs/v2/proj.jsonl"), "utf8")).trim()).toBe(v2rec("TARS-1", "dev", null));
@@ -109,13 +116,13 @@ describe("reset-cli", () => {
     await put(root, "runs/v2/proj.jsonl", log);
     await put(root, ".pipeline/v2/proj/sessions/dev-1.lock", JSON.stringify({ pid: process.pid, started: processStartTime(process.pid), inFlight: null }));
 
-    const dry = await cli("--ticket", "TARS-1", "--dry-run");
+    const dry = await cli("--ticket=TARS-1", "--dry-run");
     expect(dry.stdout).toMatch(/WARNING: session lock/);
 
-    await expect(cli("--ticket", "TARS-1")).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("--ignore-live-worker") });
+    await expect(cli("--ticket=TARS-1")).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("--ignore-live-worker") });
     expect(await readFile(join(root, "runs/v2/proj.jsonl"), "utf8")).toBe(log);
 
-    await cli("--ticket", "TARS-1", "--ignore-live-worker");
+    await cli("--ticket=TARS-1", "--ignore-live-worker");
     expect(await readFile(join(root, "runs/v2/proj.reset-archive.jsonl"), "utf8")).toBe(log);
   });
 
@@ -125,16 +132,16 @@ describe("reset-cli", () => {
       phases: [JSON.parse(v2rec("TARS-1", "research", null)).phases[0], JSON.parse(v2rec("TARS-1", "dev", "https://github.com/o/r/pull/9")).phases[0]],
     });
     await put(root, "runs/v2/proj.jsonl", both + "\n");
-    const dry = await cli("--ticket", "TARS-1", "--role", "research", "--dry-run");
+    const dry = await cli("--ticket=TARS-1", "--role=research", "--dry-run");
     expect(dry.stdout).toContain("REFUSED (other role landed: dev https://github.com/o/r/pull/9)");
-    await cli("--ticket", "TARS-1", "--role", "research");
+    await cli("--ticket=TARS-1", "--role=research");
     expect(await readFile(join(root, "runs/v2/proj.jsonl"), "utf8")).toBe(both + "\n");
-    await cli("--ticket", "TARS-1", "--role", "research", "--include-cross-role");
+    await cli("--ticket=TARS-1", "--role=research", "--include-cross-role");
     expect(await readFile(join(root, "runs/v2/proj.reset-archive.jsonl"), "utf8")).toBe(both + "\n");
   });
 
   it("rejects an unknown --role", async () => {
-    await expect(cli("--ticket", "TARS-1", "--role", "qa", "--dry-run")).rejects.toMatchObject({
+    await expect(cli("--ticket=TARS-1", "--role=qa", "--dry-run")).rejects.toMatchObject({
       code: 1,
       stderr: expect.stringContaining("--role must be research, dev or all"),
     });
@@ -161,14 +168,14 @@ describe("reset-cli config resolution", () => {
   });
 
   it("a cwd with no config of its own resolves --project against the repo root's configs", async () => {
-    const { stdout } = await run(process.execPath, [CLI, "--root", root, "--project", "webtarsthree", "--ticket", "TARS-1", "--dry-run"], { cwd: root });
+    const { stdout } = await run(process.execPath, [CLI, `--root=${root}`, "--project=webtarsthree", "--ticket=TARS-1", "--dry-run"], { cwd: root });
     expect(stdout).toContain("--dry-run: nothing deleted or closed.");
     expect(stdout).toContain(join(root, "runs/v2/webtarsthree.jsonl"));
   });
 
   it("still fails, listing the repo root's projects, for an unknown project", async () => {
     await expect(
-      run(process.execPath, [CLI, "--root", root, "--project", "nope", "--ticket", "TARS-1", "--dry-run"], { cwd: root }),
+      run(process.execPath, [CLI, `--root=${root}`, "--project=nope", "--ticket=TARS-1", "--dry-run"], { cwd: root }),
     ).rejects.toMatchObject({ stderr: expect.stringMatching(/Unknown project "nope".*webtarsthree/) });
   });
 });
