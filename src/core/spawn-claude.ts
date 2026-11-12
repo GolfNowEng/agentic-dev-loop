@@ -16,6 +16,12 @@
  * after KILL_GRACE_MS. Without it a SIGTERM to this process alone would
  * exit and leave the child running, orphaned, still able to push.
  *
+ * Once a signal is received the process is stopping: `killActiveChild` (and
+ * `stopSpawning`) set a module-level flag first, synchronously, and every
+ * later run settles with `spawnError: "stopping: signal received"` without
+ * calling spawn. So a cycle that reaches its next spawn while the handler
+ * is still awaiting cannot start a child that would outlive the process.
+ *
  * `spawnClaudeRun` never throws. A spawn failure (spawn() throwing, the
  * child's 'error' event, a nonzero exit) comes back as `spawnError` -- with
  * the parsed usage whenever the child printed any stdout; a
@@ -315,8 +321,24 @@ let active: { child: ChildProcess; done: Promise<void> } | null = null;
 
 export type KillActiveResult = "none" | "exited" | "killed";
 
+/** Set once a signal is received; no child is spawned after it. Never cleared in production. */
+let stopping = false;
+
+export const STOPPING_SPAWN_ERROR = "stopping: signal received";
+
+/** Refuses every later spawn (see the header). Idempotent. */
+export function stopSpawning(): void {
+  stopping = true;
+}
+
+/** Test-only: clears the stopping flag so it does not leak between tests. */
+export function _resetStoppingForTests(): void {
+  stopping = false;
+}
+
 /**
- * Stops the running `claude -p` child, if any: SIGTERM, then SIGKILL when
+ * Refuses further spawns (`stopSpawning`, first, synchronously), then
+ * stops the running `claude -p` child, if any: SIGTERM, then SIGKILL when
  * the run has not ended KILL_GRACE_MS later. Resolves once the run has
  * ended (or, after SIGKILL, once POST_KILL_GRACE_MS more has passed).
  * Never throws. Timers are injectable for tests.
@@ -324,6 +346,7 @@ export type KillActiveResult = "none" | "exited" | "killed";
 export async function killActiveChild(
   timers: Pick<SpawnClaudeDeps, "setTimeout" | "clearTimeout"> = {},
 ): Promise<KillActiveResult> {
+  stopSpawning();
   const run = active;
   if (run === null) return "none";
   const set = timers.setTimeout ?? setTimeout;
@@ -387,6 +410,10 @@ function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promi
       resolve(outcome);
     };
 
+    if (stopping) {
+      settle({ stdout: "", spawnError: STOPPING_SPAWN_ERROR, killedTimeout: false });
+      return;
+    }
     let child: ChildProcess;
     try {
       child = deps.spawn("claude", buildArgs(opts), {

@@ -8,6 +8,14 @@
 //   - Mid-phase: the lock is kept and its inFlight marked `interrupted: true`,
 //     so recovery does not count the stopped run as a failed attempt.
 //   - Otherwise: the lock is released.
+// Once a signal is received (`beginStop`, called synchronously first by
+// stopOnSignal) the process is stopping and the cycle freezes: the wrapped
+// `session.setInFlight` (set or clear) no longer calls through and returns a
+// promise that never settles, so the cycle, still running during the
+// handler's awaits, makes no further session or log writes (no new flight
+// in a released lock, no `error` record for a killed child counted as an
+// attempt). onSignal writes through the raw session, so it is unaffected.
+// `canRelease()` is false once stopping: only onSignal decides the lock.
 // Pure over the session handle so the session fake can test it; main.ts installs it.
 
 import type { InFlight, Session } from "../core/session.ts";
@@ -23,6 +31,8 @@ export interface TrackedSession {
   markFlightsRecorded: () => void;
   /** True when releasing the lock loses nothing (flights recorded, no phase in flight). */
   canRelease: () => boolean;
+  /** Synchronously enter "stopping": freeze the cycle's setInFlight, forbid canRelease. Idempotent. */
+  beginStop: () => void;
   /** On a signal; never throws. */
   onSignal: () => Promise<SignalAction>;
 }
@@ -31,11 +41,13 @@ export function trackSession(session: Session, logError: (m: string) => void = (
   const adopted: InFlight[] = [...(session.inFlight ? [session.inFlight] : []), ...session.orphanedInFlight];
   let recorded = adopted.length === 0;
   let current: InFlight | null = null;
+  let stopping = false;
   const msg = (err: unknown) => (err instanceof Error ? err.message : String(err));
   return {
     session: {
       ...session,
       setInFlight: async (f) => {
+        if (stopping) return new Promise<never>(() => {});
         await session.setInFlight(f);
         current = f;
       },
@@ -44,7 +56,10 @@ export function trackSession(session: Session, logError: (m: string) => void = (
     markFlightsRecorded: () => {
       recorded = true;
     },
-    canRelease: () => recorded && current === null,
+    canRelease: () => !stopping && recorded && current === null,
+    beginStop: () => {
+      stopping = true;
+    },
     onSignal: async () => {
       if (!recorded) {
         logError(
@@ -81,12 +96,15 @@ export interface StopOnSignalDeps {
 }
 
 /**
- * main.ts's SIGINT/SIGTERM handler: stop the running child first (SIGTERM,
+ * main.ts's SIGINT/SIGTERM handler: enter "stopping" first, synchronously
+ * (`beginStop`: the cycle freezes; killChild also refuses new spawns), then
+ * stop the running child (SIGTERM,
  * then SIGKILL after the grace), so no orphaned run can still push, then
  * mark/release the session as `onSignal` decides, then exit 130 (SIGINT) or
  * 143. A failure to stop the child is logged and never blocks the exit.
  */
 export async function stopOnSignal(sig: NodeJS.Signals, deps: StopOnSignalDeps): Promise<void> {
+  deps.tracked.beginStop();
   const logError = deps.logError ?? (() => {});
   try {
     await deps.killChild();
