@@ -40,7 +40,9 @@
  *      mentions `hookspath` (any case). A `GIT_CONFIG_PARAMETERS` or
  *      `GIT_CONFIG_KEY_<n>` value only known at run time is unverifiable.
  *   2b. Variables set without an assignment word: `printf -v NAME`, `read
- *      [-a] NAME...`, `mapfile`/`readarray [NAME]` naming HUSKY or
+ *      [-a] NAME...`, `mapfile`/`readarray [NAME]`, `getopts OPTS NAME`,
+ *      zsh `vared NAME`, and a nameref target (`declare`/`typeset`/`local
+ *      -n r=NAME`; a nameref with no target yet is unverifiable) naming HUSKY or
  *      HUSKY_SKIP_HOOKS are denied; naming GIT_CONFIG_PARAMETERS or
  *      GIT_CONFIG_KEY_<n> is unverifiable (the value is only known at run
  *      time). This runs before the NEVER_EXECUTES_ARGS exemption below
@@ -58,7 +60,8 @@
  *      exempt, and so is git's own argument list (`git commit -m '...'` is
  *      parsed by the git rules below).
  *   2d. A shell (`bash`/`sh`/...) with no `-c` and no script-file operand
- *      (or with `-s` / `-`) reads its script from stdin. A here-string, a
+ *      (or with `-s`, `-`, or a `/dev/stdin`, `/dev/fd/0` or
+ *      `/proc/self/fd/0` operand) reads its script from stdin. A here-string, a
  *      heredoc (quoted body as is; an unquoted body only when it has no `$`
  *      or backtick expansions), or a pipe from a literal `echo`/`printf`
  *      (no expansions, no backslash escapes, no `%` directives, no `echo
@@ -87,6 +90,10 @@
  *     or `>` redirection, editing `.git/config` directly.
  *   - git's own exec hooks (`rebase --exec`, `submodule foreach`, `bisect
  *     run`), and a shell given a script-file operand (`bash script.sh`).
+ *   - A `-c` script whose text comes from an expansion the tokenizer drops
+ *     (`bash -c "$(cat <<'EOF' ...)"`, `bash -c $'\x67it ...'`) and a `<( )`
+ *     script operand (`bash <(echo ...)`, `source <(...)`): a banned flag
+ *     there is not seen (parked follow-up).
  *   - Anything whose text only exists at run time beyond the cases above
  *     (a command read from a file, `source`d scripts, aliases defined
  *     elsewhere).
@@ -582,7 +589,12 @@ function checkEnvVar(w: Word, hasValue: boolean): string | null {
   return null;
 }
 
-function analyzeDeclare(args: Word[]): string | null {
+/** Declarers whose `-n` makes NAME a nameref (`export -n` un-exports instead). */
+const NAMEREF_DECLARERS = new Set(["declare", "typeset", "local"]);
+
+function analyzeDeclare(name: string, args: Word[]): string | null {
+  // `declare -n r=HUSKY` (also `-gn`, `-rn`, ...): assigning r later assigns HUSKY.
+  const nameref = NAMEREF_DECLARERS.has(name) && args.some((a) => /^-[A-Za-z]*n/.test(a.value) && !a.leadingExpansion);
   for (const a of args) {
     if (a.leadingExpansion) {
       if (/hookspath|HUSKY/i.test(a.value)) throw new Unverifiable("an exported name only known at run time");
@@ -591,6 +603,14 @@ function analyzeDeclare(args: Word[]): string | null {
     if (a.value.startsWith("-") || a.value.startsWith("+")) continue;
     const violation = checkEnvVar(a, ASSIGNMENT.test(a.value));
     if (violation !== null) return violation;
+    if (nameref) {
+      const eq = a.value.indexOf("=");
+      // No target yet: a later `r=TARGET` sets it, which this checker does not follow.
+      if (eq === -1) throw new Unverifiable("a nameref whose target is set later");
+      const target = { ...a, value: a.value.slice(eq + 1), leadingExpansion: a.expansion };
+      const targetViolation = checkSetName(target);
+      if (targetViolation !== null) return targetViolation;
+    }
   }
   return null;
 }
@@ -682,6 +702,11 @@ function walkShortOptions(args: Word[], valueOpts: string, onValue: (opt: string
   return { end: j, violation: null };
 }
 
+/** Builtins analyzeVarSetter knows. */
+const VAR_SETTERS = new Set(["printf", "read", "mapfile", "readarray", "getopts", "vared"]);
+/** zsh `vared` options that take a separate value. */
+const VARED_VALUE_OPTS = "pricfeM";
+
 function analyzeVarSetter(name: string, args: Word[], depth: number): string | null {
   // `printf $OPT HUSKY 0`: an option word only known at run time could be `-v`.
   if (args.some((a) => a.leadingExpansion) && args.some((a) => /HUSKY|GIT_CONFIG_/.test(a.value))) {
@@ -690,6 +715,18 @@ function analyzeVarSetter(name: string, args: Word[], depth: number): string | n
   if (name === "printf") {
     const { violation } = walkShortOptions(args, "v", (_opt, value) => checkSetName(value));
     return violation;
+  }
+  if (name === "getopts") {
+    // `getopts OPTSTRING NAME [ARG...]`: NAME is the second operand.
+    const target = args[1];
+    return target === undefined ? null : checkSetName(target);
+  }
+  if (name === "vared") {
+    // `vared [opts] NAME`: zsh's line editor assigns the edited value to NAME.
+    const { end, violation } = walkShortOptions(args, VARED_VALUE_OPTS, () => null);
+    if (violation !== null) return violation;
+    const target = args[end];
+    return target === undefined ? null : checkSetName(target);
   }
   if (name === "read") {
     const { end, violation } = walkShortOptions(args, READ_VALUE_OPTS, (opt, value) => (opt === "a" ? checkSetName(value) : null));
@@ -755,7 +792,7 @@ function analyzeCommand(words: Word[], depth: number, viaXargs = false, stdin: S
   const name = basename(head.value);
 
   if (name === "env") return analyzeEnv(rest, depth, stdin);
-  if (DECLARERS.has(name)) return analyzeDeclare(rest);
+  if (DECLARERS.has(name)) return analyzeDeclare(name, rest);
   if (name === "direnv") {
     // `direnv exec <dir> <cmd...>` runs <cmd> (Ruling 31's spelling); every other subcommand is not a wrapper.
     if (rest[0]?.value !== "exec" || rest.length < 3) return null;
@@ -781,7 +818,7 @@ function analyzeCommand(words: Word[], depth: number, viaXargs = false, stdin: S
   if (name === "git") return analyzeGit(rest, depth, viaXargs);
   if (name === "gh") return analyzeGh(rest, depth, viaXargs);
   // Before the NEVER_EXECUTES_ARGS exemption: `printf -v` assigns.
-  if (name === "printf" || name === "read" || name === "mapfile" || name === "readarray") {
+  if (VAR_SETTERS.has(name)) {
     const violation = analyzeVarSetter(name, rest, depth);
     if (violation !== null) return violation;
   }
@@ -822,6 +859,9 @@ function analyzeEnv(args: Word[], depth: number, stdin: Stdin): string | null {
   return analyzeCommand([...kept, ...args.slice(j)], depth, false, stdin);
 }
 
+/** Script operands that name the shell's own stdin. */
+const STDIN_PATHS = new Set(["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"]);
+
 function analyzeShell(args: Word[], depth: number, viaXargs: boolean, stdin: Stdin): string | null {
   let hasC = false;
   let readsStdin = false; // `-s`, or a `-` operand
@@ -854,6 +894,8 @@ function analyzeShell(args: Word[], depth: number, viaXargs: boolean, stdin: Std
     break;
   }
   if (!hasC) {
+    // `/dev/stdin`-style operands read stdin, exactly like `-`.
+    if (!readsStdin && args[j] !== undefined && STDIN_PATHS.has(args[j].value) && !args[j].expansion) readsStdin = true;
     // A script-file operand: not visible from here (documented residual).
     if (!readsStdin && args[j] !== undefined) return null;
     // xargs supplies the operand, or the shell's stdin, at run time.
