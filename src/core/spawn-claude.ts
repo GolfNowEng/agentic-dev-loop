@@ -11,6 +11,11 @@
  * ended): every spawn gets `--max-budget-usd`, and a run still going at
  * `timeoutMin` is sent SIGTERM, then SIGKILL 30 s later.
  *
+ * The child of the run in progress is kept in a module-level handle, so a
+ * signal handler can stop it (`killActiveChild`): SIGTERM, then SIGKILL
+ * after KILL_GRACE_MS. Without it a SIGTERM to this process alone would
+ * exit and leave the child running, orphaned, still able to push.
+ *
  * `spawnClaudeRun` never throws. A spawn failure (spawn() throwing, the
  * child's 'error' event, a nonzero exit) comes back as `spawnError` -- with
  * the parsed usage whenever the child printed any stdout; a
@@ -305,6 +310,47 @@ function buildArgs(opts: SpawnClaudeOpts): string[] {
   ];
 }
 
+/** The run in progress: its child, and a promise that settles when the run does. */
+let active: { child: ChildProcess; done: Promise<void> } | null = null;
+
+export type KillActiveResult = "none" | "exited" | "killed";
+
+/**
+ * Stops the running `claude -p` child, if any: SIGTERM, then SIGKILL when
+ * the run has not ended KILL_GRACE_MS later. Resolves once the run has
+ * ended (or, after SIGKILL, once POST_KILL_GRACE_MS more has passed).
+ * Never throws. Timers are injectable for tests.
+ */
+export async function killActiveChild(
+  timers: Pick<SpawnClaudeDeps, "setTimeout" | "clearTimeout"> = {},
+): Promise<KillActiveResult> {
+  const run = active;
+  if (run === null) return "none";
+  const set = timers.setTimeout ?? setTimeout;
+  const clear = timers.clearTimeout ?? clearTimeout;
+  const within = (ms: number): Promise<boolean> =>
+    new Promise((resolve) => {
+      const t = set(() => resolve(false), ms);
+      void run.done.then(() => {
+        clear(t);
+        resolve(true);
+      });
+    });
+  try {
+    run.child.kill("SIGTERM");
+  } catch {
+    // Already gone.
+  }
+  if (await within(KILL_GRACE_MS)) return "exited";
+  try {
+    run.child.kill("SIGKILL");
+  } catch {
+    // Already gone.
+  }
+  await within(POST_KILL_GRACE_MS);
+  return "killed";
+}
+
 interface ChildOutcome {
   stdout: string;
   spawnError?: string;
@@ -313,6 +359,10 @@ interface ChildOutcome {
 
 /** Runs the child to completion (or kill). Never rejects. */
 function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promise<ChildOutcome> {
+  let markDone: () => void = () => {};
+  const done = new Promise<void>((r) => {
+    markDone = r;
+  });
   return new Promise((resolve) => {
     let settled = false;
     let killedTimeout = false;
@@ -332,6 +382,8 @@ function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promi
       if (termTimer !== undefined) deps.clearTimeout(termTimer);
       if (killTimer !== undefined) deps.clearTimeout(killTimer);
       if (postKillTimer !== undefined) deps.clearTimeout(postKillTimer);
+      if (active?.done === done) active = null;
+      markDone();
       resolve(outcome);
     };
 
@@ -346,6 +398,7 @@ function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promi
       settle({ stdout: "", spawnError: err instanceof Error ? err.message : String(err), killedTimeout: false });
       return;
     }
+    active = { child, done };
 
     if (opts.stream) {
       if (child.stdout) {

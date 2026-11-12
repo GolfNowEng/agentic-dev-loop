@@ -7,7 +7,7 @@
 // The skills refuse (agent_error, no files written) a run-dir that is not
 // absolute or has no `/.pipeline/v2/` in it. This side refuses first.
 
-import { isAbsolute, normalize } from "node:path";
+import { isAbsolute, normalize, relative } from "node:path";
 import type { Config, Role, RoleLimits } from "./types.ts";
 import { RUN_ID, TICKET_KEY, UnsafePathError, resolveRepoPath, v2CloneDir } from "./paths.ts";
 
@@ -39,6 +39,30 @@ export function checkAbsPath(label: string, value: string): string {
     throw new UnsafePathError(`${label} ${JSON.stringify(value)} must be absolute and normalized`);
   }
   return value;
+}
+
+/**
+ * Throws UnsafePathError when REPO_DIR (absolute, already checkAbsPath'd)
+ * sits wrong relative to the dev-loop root:
+ *   - the root itself or an ancestor of it: research's Edit/Write deny
+ *     under REPO_DIR would cover RUN_DIR, so every run would end with no
+ *     verdict (agent_error), cost money, and get the ticket Blocked;
+ *   - inside the root, except the v2 clone dir (`cloneDir`).
+ * Startup calls it, so a misconfigured `targetRepo.path` exits 1.
+ */
+export function checkRepoDirPlacement(repoDir: string, devLoopRoot: string, cloneDir: string): string {
+  const up = relative(repoDir, devLoopRoot);
+  if (up === "") {
+    throw new UnsafePathError(`repo-dir ${JSON.stringify(repoDir)} is the dev-loop root; point targetRepo.path at the target repo's own checkout`);
+  }
+  if (!up.startsWith("..") && !isAbsolute(up)) {
+    throw new UnsafePathError(`repo-dir ${JSON.stringify(repoDir)} is an ancestor of the dev-loop root; research's edit deny would cover its run dirs`);
+  }
+  const down = relative(devLoopRoot, repoDir);
+  if (repoDir !== cloneDir && !down.startsWith("..") && !isAbsolute(down)) {
+    throw new UnsafePathError(`repo-dir ${JSON.stringify(repoDir)} is inside the dev-loop root; only the v2 clone dir may be (omit targetRepo.path to use it)`);
+  }
+  return repoDir;
 }
 
 export function buildSkillPrompt({ role, ticketKey, runDir, repoDir }: SkillPromptArgs): string {

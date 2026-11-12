@@ -71,3 +71,31 @@ export function trackSession(session: Session, logError: (m: string) => void = (
     },
   };
 }
+
+export interface StopOnSignalDeps {
+  tracked: TrackedSession;
+  /** Stops the running `claude -p` child (spawn-claude's killActiveChild). */
+  killChild: () => Promise<unknown>;
+  exit: (code: number) => void;
+  logError?: (m: string) => void;
+}
+
+/**
+ * main.ts's SIGINT/SIGTERM handler: stop the running child first (SIGTERM,
+ * then SIGKILL after the grace), so no orphaned run can still push, then
+ * mark/release the session as `onSignal` decides, then exit 130 (SIGINT) or
+ * 143. A failure to stop the child is logged and never blocks the exit.
+ */
+export async function stopOnSignal(sig: NodeJS.Signals, deps: StopOnSignalDeps): Promise<void> {
+  const logError = deps.logError ?? (() => {});
+  try {
+    await deps.killChild();
+  } catch (err) {
+    logError(`could not stop the running claude -p child: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    await deps.tracked.onSignal();
+  } finally {
+    deps.exit(sig === "SIGINT" ? 130 : 143);
+  }
+}

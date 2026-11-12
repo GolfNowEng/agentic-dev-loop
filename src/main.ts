@@ -16,8 +16,12 @@
  * guard: a v1-labelled project such as catalog-ui-* exits 1, a minor/patch
  * difference is a warning) -> credentials -> acquireSession (one live worker
  * per project; a second start names the live session and exits 1) ->
- * record the adopted in-flight runs -> loop. SIGINT/SIGTERM release the lock
- * unless a phase is mid-run (then its flight is marked interrupted).
+ * record the adopted in-flight runs -> loop. REPO_DIR must be absolute and
+ * normalized, and may not be the dev-loop root, an ancestor of it, or inside
+ * it (except the v2 clone dir). SIGINT/SIGTERM first stop the running
+ * `claude -p` child (SIGTERM, then SIGKILL after KILL_GRACE_MS), then
+ * release the lock unless a phase is mid-run (then its flight is marked
+ * interrupted).
  *
  * Every spawn runs from the repo root and gets
  * `/<skill> <KEY> run-dir=<abs RUN_DIR> repo-dir=<abs REPO_DIR>`
@@ -45,13 +49,13 @@ import {
 } from "./core/github-client.ts";
 import { redactSensitive } from "./core/redact.ts";
 import { decideNextAction, type PollResultKind } from "./core/poll-loop.ts";
-import { PROJECT_SLUG, resolveRepoPath, v2RunsLog, v2SessionsDir } from "./core/paths.ts";
+import { PROJECT_SLUG, resolveRepoPath, v2CloneDir, v2RunsLog, v2SessionsDir } from "./core/paths.ts";
 import { acquireSession, isProcessAlive, LiveWorkerError } from "./core/session.ts";
-import { trackSession, type TrackedSession } from "./worker/signal.ts";
+import { stopOnSignal, trackSession, type TrackedSession } from "./worker/signal.ts";
 import { findLandedPrUrlAcross, hasLandedV1 } from "./core/iteration-log.ts";
 import { parseArgs, preflight, type Phase } from "./core/cli-args.ts";
-import { checkAbsPath, repoDirFor, SKILL_NAME } from "./core/build-prompt.ts";
-import { spawnClaudeRun } from "./core/spawn-claude.ts";
+import { checkAbsPath, checkRepoDirPlacement, repoDirFor, SKILL_NAME } from "./core/build-prompt.ts";
+import { killActiveChild, spawnClaudeRun } from "./core/spawn-claude.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
 import { makeRunSkill } from "./worker/skill-runner.ts";
 import { reconcileMergedTickets } from "./roles/dev/reconcile.ts";
@@ -257,6 +261,7 @@ async function main(): Promise<void> {
   const researchStance = roles.includes("research") ? await loadResearchStance(REPO_ROOT) : "";
   // REPO_DIR goes into every prompt: a malformed targetRepo.path exits 1 here, before the lock.
   checkAbsPath("repo-dir", repoDirFor(config, slug));
+  checkRepoDirPlacement(repoDirFor(config, slug), REPO_ROOT, resolveRepoPath(v2CloneDir(slug)));
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();
@@ -282,9 +287,11 @@ async function main(): Promise<void> {
   }
   const tracked = trackSession(session, logError);
   const onSignal = (sig: NodeJS.Signals) => {
-    // Mid-phase: keep the lock, its inFlight marked interrupted (the next start
-    // resumes it without counting an attempt). Otherwise release the lock.
-    void tracked.onSignal().finally(() => process.exit(sig === "SIGINT" ? 130 : 143));
+    // Stop the running claude -p child first (SIGTERM, SIGKILL after
+    // KILL_GRACE_MS), so it cannot keep running orphaned. Then, mid-phase:
+    // keep the lock, its inFlight marked interrupted (the next start resumes
+    // it without counting an attempt). Otherwise release the lock.
+    void stopOnSignal(sig, { tracked, killChild: () => killActiveChild(), exit: (code) => process.exit(code), logError });
   };
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);

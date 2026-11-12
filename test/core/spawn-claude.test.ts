@@ -560,6 +560,7 @@ describe("killActiveChild (final review I5: a signal stops the running claude -p
     expect(child.signals).toEqual(["SIGTERM"]);
     expect(done).toBeNull();
     timers.advance(1);
+    await flush();
     expect(child.signals).toEqual(["SIGTERM", "SIGKILL"]);
     expect(await killed).toBe("killed");
     await run;
