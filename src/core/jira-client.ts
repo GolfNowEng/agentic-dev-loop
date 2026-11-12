@@ -48,6 +48,9 @@ export interface JiraClient {
    * ticket - the caller should skip this ticket and continue, not treat
    * that as an error.
    *
+   * A 400 whose body names required fields ("Field X is required.")
+   * throws ClaimMissingFieldsError so the caller can report them by name.
+   *
    * Any other failure (a non-2xx Jira response, e.g. a 400 from a
    * transition screen with a required field this call doesn't send, or a
    * network error) throws. Callers must catch that themselves and treat
@@ -361,8 +364,9 @@ export class RealJiraClient implements JiraClient {
     });
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      throw new Error(
-        `Jira request failed: ${init.method ?? "GET"} ${path} -> ${response.status} ${response.statusText}. ${body}`,
+      throw Object.assign(
+        new Error(`Jira request failed: ${init.method ?? "GET"} ${path} -> ${response.status} ${response.statusText}. ${body}`),
+        { status: response.status, body },
       );
     }
     return response;
@@ -417,10 +421,19 @@ export class RealJiraClient implements JiraClient {
       // process already claimed it. Skip, do not throw.
       return false;
     }
-    await this.request(`/rest/api/3/issue/${ticketKey}/transitions`, {
-      method: "POST",
-      body: JSON.stringify({ transition: { id: transition.id } }),
-    });
+    try {
+      await this.request(`/rest/api/3/issue/${ticketKey}/transitions`, {
+        method: "POST",
+        body: JSON.stringify({ transition: { id: transition.id } }),
+      });
+    } catch (err) {
+      const e = err as { status?: number; body?: string };
+      if (e.status === 400) {
+        const fields = parseRequiredFields(e.body ?? "");
+        if (fields.length > 0) throw new ClaimMissingFieldsError(fields);
+      }
+      throw err;
+    }
     return true;
   }
 
@@ -559,4 +572,45 @@ export class RealJiraClient implements JiraClient {
       body: JSON.stringify({ transition: { id: transitionId } }),
     });
   }
+}
+
+/** The claim transition was rejected because required field(s) are missing. */
+export class ClaimMissingFieldsError extends Error {
+  readonly fields: string[];
+  constructor(fields: string[]) {
+    super(`Jira requires field(s) to claim: ${fields.join(", ")}`);
+    this.name = "ClaimMissingFieldsError";
+    this.fields = fields;
+  }
+}
+
+/** Field names a Jira 400 body says are required, deduped, in order; [] if none/non-JSON. */
+export function parseRequiredFields(body: string): string[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    return [];
+  }
+  if (typeof data !== "object" || data === null) return [];
+  const { errorMessages, errors } = data as { errorMessages?: unknown; errors?: unknown };
+  const out: string[] = [];
+  const add = (n: string) => {
+    if (!out.includes(n)) out.push(n);
+  };
+  if (Array.isArray(errorMessages)) {
+    for (const m of errorMessages) {
+      const hit = typeof m === "string" ? /^Field (.+?) is required\.?$/.exec(m) : null;
+      if (hit) add(hit[1]);
+    }
+  }
+  if (typeof errors === "object" && errors !== null) {
+    for (const [key, m] of Object.entries(errors)) {
+      if (typeof m !== "string") continue;
+      const hit = /^(.+?) is required\.?$/i.exec(m);
+      if (hit && hit[1].trim().toLowerCase() !== "field") add(hit[1]);
+      else if (hit || /^required\.?$/i.test(m.trim())) add(key);
+    }
+  }
+  return out;
 }

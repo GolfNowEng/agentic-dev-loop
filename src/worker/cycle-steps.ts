@@ -3,7 +3,7 @@
 // running one phase with in-flight bookkeeping, the Ruling 16 budgets and the
 // post-phase ceiling check. cycle.ts sequences them.
 
-import type { JiraTicket } from "../core/jira-client.ts";
+import { ClaimMissingFieldsError, type JiraTicket } from "../core/jira-client.ts";
 import type { Role } from "../core/types.ts";
 import type { PhaseEntry } from "../core/iteration-log.ts";
 import { hasLandedPhase, lastSkipBlockers } from "../core/iteration-log.ts";
@@ -14,7 +14,7 @@ import { TICKET_KEY, runIdNow, v2RunDir } from "../core/paths.ts";
 import { durationMin, errorMessage } from "../core/run-skill.ts";
 import { runResearchPhase } from "../roles/research/phase.ts";
 import { runDevPhase } from "../roles/dev/phase.ts";
-import { append, MAX_SKIPS, nowIso, type Ctx } from "./context.ts";
+import { append, latestRecord, MAX_SKIPS, nowIso, type Ctx } from "./context.ts";
 
 /** A Jira error that would fail every ticket (auth/permission): the worker pauses. */
 export class WorkerPausedError extends Error {
@@ -135,6 +135,37 @@ export async function nextDevCandidate(ctx: Ctx): Promise<DevCandidate | null> {
   }
 }
 
+/** Record the missing claim fields and comment once on Jira (not again while the detail is unchanged). */
+async function reportMissingFields(ctx: Ctx, key: string, err: ClaimMissingFieldsError): Promise<void> {
+  const list = err.fields.join(", ");
+  const detail = `claim blocked: required field(s) missing: ${list}`;
+  const prev = latestRecord(ctx.records, key);
+  const repeat = prev !== null && prev.outcome === "claim-error" && prev.detail === detail;
+  await append(ctx, key, nowIso(ctx), "claim-error", [], { detail });
+  if (repeat) return;
+  const body = {
+    type: "doc",
+    version: 1,
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "dev-loop could not start this ticket: ", marks: [{ type: "strong" }] },
+          {
+            type: "text",
+            text: `moving it to ${ctx.research.claimStatus.to} requires ${list}. Fill in the field(s); the loop retries on its next poll.`,
+          },
+        ],
+      },
+    ],
+  };
+  try {
+    await ctx.deps.jira.addComment(key, body);
+  } catch (e) {
+    ctx.log(`[worker] ${key}: could not post the missing-fields comment: ${errorMessage(e)}`);
+  }
+}
+
 /** Step 4's candidate: research poll, never-re-refine guard, gate, then claim. */
 export async function nextResearchCandidate(ctx: Ctx): Promise<JiraTicket | null> {
   for (;;) {
@@ -154,6 +185,11 @@ export async function nextResearchCandidate(ctx: Ctx): Promise<JiraTicket | null
     try {
       claimed = await ctx.deps.jira.claimTicket(t.key, ctx.research.claimStatus.from, ctx.research.claimStatus.to);
     } catch (err) {
+      if (err instanceof ClaimMissingFieldsError) {
+        await reportMissingFields(ctx, t.key, err);
+        skip(ctx, t.key, `claim threw: ${errorMessage(err)}`);
+        continue;
+      }
       await append(ctx, t.key, nowIso(ctx), "claim-error", [], { detail: `claim failed: ${errorMessage(err)}` });
       skip(ctx, t.key, `claim threw: ${errorMessage(err)}`);
       continue;
