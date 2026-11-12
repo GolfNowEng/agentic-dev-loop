@@ -6,7 +6,7 @@ import { access, appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { redactSensitive } from "./redact.ts";
 import { resolveRepoPath, SESSION_ID, TICKET_KEY, v1PreCutoverRunsLog, v1RunsLog, v2RunsLog } from "./paths.ts";
-import type { FailureCategory, PhaseReached, Role, RunOutcome, SizeTrajectory } from "./types.ts";
+import type { FailureCategory, FollowUp, PhaseReached, Role, RunOutcome, SizeTrajectory } from "./types.ts";
 
 export interface PhaseEntry {
   role: Role;
@@ -29,6 +29,8 @@ export interface PhaseEntry {
   size_trajectory?: SizeTrajectory;
   /** Dev entries: tests that also fail on the unmodified base branch (Ruling 29). */
   preexisting_failures?: string[];
+  /** Dev entries: the follow-up ticket filed for them, and its fix PR (Ruling 30). */
+  follow_up?: FollowUp;
   /** Research entries with outcome landed only. */
   handoff?: "done" | "skipped-ceiling" | "failed";
   jira_sync_error?: string;

@@ -297,6 +297,18 @@ Each phase's `progress.jsonl` events use the phase name shown.
    `failure_category: "too_large"` before doing any further work. Better to
    stop here than after writing code.
 5. Set up the target repo working directory as described above.
+5a. **Baseline suite.** Before writing anything, run the target repo's full
+   test suite once on the fresh worktree (still identical to
+   `origin/<targetRepo.defaultBranch>`), the same way its commit hook does
+   (read `.husky/pre-commit` or the repo's hook config; usually `npm
+   test`). Record the failing tests as `baseline_failures` (`"<file> >
+   <test name>"`, empty when green) in one `progress.jsonl` note with the
+   baseline SHA. These failures are pre-existing by definition. Phase 4
+   step 1 and "Pre-existing failures blocking a hook" below use this list;
+   do not re-derive it later. When the list is non-empty and the repo has
+   a commit or push hook that runs the suite, go straight to "Pre-existing
+   failures blocking a hook" now, before Phase 1: every commit in this run
+   would otherwise be rejected.
 6. **Derive `COMMIT_TYPE` from the ticket's `issuetype`** — this drives both
    the Green commit (Phase 3) and the PR title (Phase 5), and, via the
    target repo's squash-merge-as-commit-message CI convention, the semver
@@ -333,13 +345,25 @@ For each Acceptance Criterion, in order:
    passed on baseline code.
 
 Once every AC's test is written and confirmed failing for the right reason,
-record `red_confirmed: true` (this goes into `verdict.json` later) and
-commit the tests alone, before any implementation code
-(`git commit -m "test(<TICKET>): add failing tests for ACs"`).
+record `red_confirmed: true` (this goes into `verdict.json` later).
+
+Then **mark each new test expected-to-fail** before committing, so a
+commit hook that runs the suite accepts the Red commit without any bypass:
+`it(...)`/`test(...)` becomes `it.fails(...)`/`test.fails(...)` in vitest,
+and `test.failing(...)` in jest (pick the one the target repo's runner
+supports; check its `package.json`). Run the new tests once more: each must
+now *pass* as expected-to-fail. A marked test that still reports a failure
+means the marker is wrong, not the code — fix the marker. Commit the tests
+alone, before any implementation code
+(`git commit -m "test(<TICKET>): add failing tests for ACs"`). The marker
+keeps the TDD evidence in git: the Red commit's tests are recorded as
+failing on that commit.
 
 ### Phase 3 — Green
 
-Implement the minimum change to make the Phase 2 tests pass. Touch **only**
+First **remove the expected-to-fail marker** from every test Phase 2 marked
+(`it.fails` → `it`, `test.failing` → `test`), then implement the minimum
+change to make those tests pass. Touch **only**
 the files enumerated in the ticket's Scope section. If implementing
 correctly requires touching a file not enumerated, or reveals the described
 bug isn't reproducible, or an AC turns out unimplementable as written — stop
@@ -371,6 +395,9 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
       `git -C <REPO_DIR> worktree remove <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-baseline`.
       Ignored files (`node_modules`) do not block the removal.
    5. Decide:
+      - Phase 0 step 5a's `baseline_failures` already lists the suite's
+        failures on this same base; when a branch failure is on that list
+        you may skip re-running it in a baseline worktree.
       - If **every test that fails on the branch also fails, with the same
         assertion, on the baseline**, the failures are pre-existing and not
         caused by this change. Continue to step 2. Record each one as
@@ -544,6 +571,88 @@ reorder, or "improve" the title or body here.
 4. Run Cleanup (see below), then emit the always-emitted result line and
    stop.
 
+## Pre-existing failures blocking a hook
+
+Reached from Phase 0 step 5a, or whenever a `git commit` or `git push` in
+this run is rejected by a hook that runs the suite and every failing test
+is on `baseline_failures`. A failure that is not on that list is this
+change's own defect: fix it, never route it here. **Never bypass the hook**:
+never `--no-verify`, `-n`, `HUSKY=0` or `core.hooksPath`. The goal is to
+make the hook pass honestly, with the fix itself landing in its own PR.
+
+1. **Decide the fix size.** A follow-up *fix* is allowed only when it
+   changes only test files (test setup, stubs, env defaults inside the
+   test, fixtures) and every file it touches can be named up front. A
+   failure that needs an application-code change is a real bug: skip to
+   step 6.
+2. **File the follow-up ticket** with `mcp__atlassian__createJiraIssue` in
+   the same Jira project and issue type `Bug`, summary
+   `Fix pre-existing test failures on <defaultBranch> (found by <TICKET>)`,
+   and a description listing each failing test, its assertion output (no
+   secret values, same rules as the PR body), the baseline SHA and, for a
+   fix, the files it will touch. Copy the ticket's `repo:` label only;
+   **never add the pipeline trigger label** (`pipeline:*`), so the loop
+   never picks the follow-up up on its own. Link it with
+   `mcp__atlassian__createIssueLink`, type `Relates`, to `<TICKET>`.
+   Record its key as `FOLLOW_UP`.
+3. **Fix it on its own branch, off `origin/<targetRepo.defaultBranch>`**,
+   never off this ticket's branch:
+
+   ```bash
+   git -C <REPO_DIR> worktree add \
+     <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-fu \
+     -b <FOLLOW_UP>-fix-preexisting-tests origin/<targetRepo.defaultBranch>
+   ```
+
+   Install dependencies as for the run's worktree. Make the minimum
+   test-only change, run the formerly failing tests (they must pass) and
+   the full suite (it must be green apart from failures that a test-only
+   change cannot reach; if any remain, stop and go to step 6). Commit
+   `fix(<FOLLOW_UP>): fix pre-existing test failures on <defaultBranch>`,
+   with the hooks running normally. Push it and open its PR exactly as
+   Phase 5 does (push-branch, content supplied, `--no-jira`), with title
+   `fix(<FOLLOW_UP>): fix pre-existing test failures on <defaultBranch>`
+   and a body in the Phase 4 step 7 shape whose Jira link is the
+   follow-up's. Record its PR URL. Then
+   `git -C <REPO_DIR> worktree remove <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-fu`.
+4. **Carry the committed fix into this ticket's worktree, unstaged**, only
+   while a commit or push needs the hook to pass:
+
+   ```bash
+   git -C <REPO_DIR> diff origin/<targetRepo.defaultBranch> <FOLLOW_UP>-fix-preexisting-tests > <RUN_DIR>/follow-up.patch
+   git apply <RUN_DIR>/follow-up.patch        # in this ticket's worktree; working tree only
+   ```
+
+   Before **every** commit and push while it is applied: stage only this
+   ticket's files by name (never `git add -A`, never `git add .`), and
+   check `git diff --cached --name-only` lists none of the patch's files
+   (`git apply --numstat <RUN_DIR>/follow-up.patch` names them). Before the
+   push, also check `git diff --name-only origin/<targetRepo.defaultBranch>...HEAD`
+   lists none of them. If a patch file overlaps this ticket's own scope,
+   stop and bounce `env_setup` naming the file: the two changes cannot be
+   separated.
+5. **Remove it** as soon as the push is done, and in Cleanup whatever the
+   outcome: `git apply -R <RUN_DIR>/follow-up.patch`, then check
+   `git status --short` shows none of the patch's files. In the ticket's
+   PR body (Phase 4 step 7), the `## Pre-existing failures` section adds:
+   `Fixed separately in <follow-up PR URL> (<FOLLOW_UP>); merge it first or
+   alongside.`
+6. **Files-only follow-up** (no fix possible within step 1's limits, or
+   step 3 could not get the suite green): file the ticket as in step 2 but
+   with a description of what was found and why it is not test-only, link
+   it with `mcp__atlassian__createIssueLink` so `<TICKET>` **is blocked by**
+   `<FOLLOW_UP>`, record `follow_up: {"ticket": "<FOLLOW_UP>", "pr": null}`,
+   and bounce `tests_flaky` naming the failures and the follow-up key. The
+   blocker gate keeps `<TICKET>` out of the queue until the follow-up's PR
+   merges.
+
+Record `follow_up: {"ticket": "<FOLLOW_UP>", "pr": "<url or null>"}` in
+`verdict.json` whenever a follow-up was filed. Never file a second follow-up
+for the same failures: before step 2, search for an open ticket whose
+summary starts `Fix pre-existing test failures on <defaultBranch>` and that
+names the same tests (`mcp__atlassian__getJiraIssue` on any linked issue),
+and reuse it and its open PR if one exists.
+
 ## Cleanup (hard gate, every run)
 
 Before this skill's final result line — regardless of outcome (landed,
@@ -624,6 +733,10 @@ from this exact path, and only from there):
   "preexisting_failures": []
 }
 ```
+
+`follow_up` is optional: `{"ticket": "<KEY>", "pr": "<url>" | null}` when
+the run filed a follow-up for pre-existing failures that blocked a hook
+("Pre-existing failures blocking a hook"); omit it otherwise.
 
 `preexisting_failures` is optional: the `"<file> > <test name>"` of each
 test that failed on the branch and identically on the unmodified base

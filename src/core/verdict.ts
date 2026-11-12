@@ -15,8 +15,10 @@
 //     Verdict with silently-undefined fields.
 
 import { readFile } from "node:fs/promises";
+import { TICKET_KEY } from "./paths.ts";
 import type {
   ExecutorVerdict,
+  FollowUp,
   PhaseReached,
   RunOutcome,
   SizeDelta,
@@ -73,6 +75,13 @@ function isValidExecutorShape(v: Verdict): v is ExecutorVerdict {
   }
 
   return true;
+}
+
+function isFollowUp(value: unknown): value is FollowUp {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.ticket !== "string" || !TICKET_KEY.test(v.ticket)) return false;
+  return v.pr === null || (typeof v.pr === "string" && v.pr.length > 0);
 }
 
 /**
@@ -176,6 +185,9 @@ export function parseVerdict(
     const v: unknown = verdict.preexisting_failures;
     const ok = Array.isArray(v) && v.every((t) => typeof t === "string" && t.length > 0);
     if (!ok) delete verdict.preexisting_failures;
+  }
+  if (verdict.follow_up !== undefined && !isFollowUp(verdict.follow_up)) {
+    delete verdict.follow_up;
   }
 
   return verdict;

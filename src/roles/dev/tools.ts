@@ -10,7 +10,10 @@
  * -p mode with no human to answer it. ticket-to-pr only ever reads the
  * ticket itself via MCP (fetches summary/description/comments/status); it
  * never transitions status, moves epics, or writes comments through MCP
- * -- the loop runner's REST client handles all of that. Bash is allowed
+ * -- the loop runner's REST client handles all of that. The one exception
+ * (Ruling 30): createJiraIssue + createIssueLink, so a run blocked by
+ * pre-existing failures can file the linked follow-up ticket. Both go
+ * through the PreToolUse secret-content hooks in .claude/settings.json. Bash is allowed
  * broadly since every TDD phase (Red/Green/Verify/PR) assumes real
  * command execution inside the isolated per-run worktree. Read/Grep/Glob
  * are allowed for the same reason Edit/Write already are: the skill reads
@@ -22,6 +25,8 @@
 export const ALLOWED_TOOLS = [
   "mcp__atlassian__getAccessibleAtlassianResources",
   "mcp__atlassian__getJiraIssue",
+  "mcp__atlassian__createJiraIssue",
+  "mcp__atlassian__createIssueLink",
   "Bash",
   "Read",
   "Grep",

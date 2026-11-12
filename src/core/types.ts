@@ -111,6 +111,12 @@ export interface SizeTrajectory {
  * derives a RunLogLine from it; it derives no epic-or-label-move decision.
  * See ExecutorVerdict for the shape ticket-to-pr must always produce.
  */
+/** A follow-up ticket for pre-existing failures (Ruling 30). */
+export interface FollowUp {
+  ticket: string;
+  pr: string | null;
+}
+
 export interface Verdict {
   outcome: VerdictOutcome;
   phase_reached: PhaseReached;
@@ -151,6 +157,11 @@ export interface Verdict {
    * Optional; a malformed value is dropped at the parse boundary.
    */
   preexisting_failures?: string[];
+  /**
+   * The follow-up ticket this run filed for pre-existing failures that
+   * blocked a commit/push hook (Ruling 30), and its fix PR when one opened.
+   */
+  follow_up?: FollowUp;
   /** Schema version this verdict was written under. Absent means "1.0". */
   log_version?: string;
   /**
