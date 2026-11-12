@@ -12,6 +12,8 @@
     "build": "tsc",
     "check-auth": "node --env-file=.env scripts/check-jira-auth.mjs",
     "stats": "node scripts/stats.mjs",
+    "cutover:migrate": "node scripts/migrate-v1-folders.mjs",
+    "cutover:relabel": "node --env-file=.env scripts/relabel-v1-refined.mjs",
     "loop": "node --env-file=.env src/main.ts",
     "reset-project": "node src/core/reset-cli.ts",
     "reset-project:remote": "node --env-file=.env src/core/reset-cli.ts",
