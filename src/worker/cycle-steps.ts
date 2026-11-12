@@ -224,8 +224,8 @@ export const MIN_DEV_BUDGET_USD = 1;
 
 // ---- running a phase ----
 
-/** A run an enforcing sandbox refused: its denials, plus the measured cost and run dir. */
-export type PhaseParked = NonNullable<RunSkillResult["parked"]> & { cost_usd: number; run_dir: string };
+/** A run an enforcing sandbox refused: its denials, plus the measured cost, run dir and timing (for the ceilings). */
+export type PhaseParked = NonNullable<RunSkillResult["parked"]> & { cost_usd: number; run_dir: string; started: string; ended: string };
 
 export type PhaseRun =
   | {
@@ -253,7 +253,7 @@ export async function runPhase(ctx: Ctx, role: Role, ticket: JiraTicket, maxBudg
   let parked: PhaseParked | undefined;
   const runSkill: RunSkillFn = async (args) => {
     const res = await deps.runSkill(args);
-    if (res.parked) parked = { ...res.parked, cost_usd: res.costUsd, run_dir: args.runDir };
+    if (res.parked) parked = { ...res.parked, cost_usd: res.costUsd, run_dir: args.runDir, started: res.started, ended: res.ended };
     return res;
   };
   const entry =
@@ -284,7 +284,7 @@ export async function runPhase(ctx: Ctx, role: Role, ticket: JiraTicket, maxBudg
  * limits. runs/day is checked before a role starts (per role), not here, so
  * one role reaching its cap never stops the other role's work.
  */
-export function postPhaseBreach(ctx: Ctx, entry: PhaseEntry): string | null {
+export function postPhaseBreach(ctx: Ctx, entry: Pick<PhaseEntry, "role" | "cost_usd" | "started" | "ended">): string | null {
   const view = entry.role === "research" ? ctx.research : ctx.dev;
   const c = checkCeilings({
     runsToday: 0,

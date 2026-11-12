@@ -191,7 +191,9 @@ async function finish(
 /**
  * A run the sandbox refused: one "parked" record (resume set, not an attempt,
  * no Jira write; `prior` keeps a landed research), a notification, and the
- * loop carries on. A lost session lock still pauses, after the record.
+ * loop carries on. A lost session lock, or the refused run breaching its
+ * role's cost/duration ceiling (its cost is real but not in `phases`), still
+ * pauses, after the record, as finish() does.
  */
 async function park(
   ctx: Ctx,
@@ -203,7 +205,7 @@ async function park(
   syncErrors: string[],
   fatal: string | undefined,
 ): Promise<WorkerIterationResult> {
-  const { denied, approveHint, cost_usd, run_dir } = parked;
+  const { denied, approveHint, cost_usd, run_dir, started: runStarted, ended: runEnded } = parked;
   const record = await append(ctx, t.key, started, "parked", prior, {
     ...extra(syncErrors, `sandbox refused: ${denied.map((d) => `${d.kind} ${d.target}`).join(", ")}`),
     resume: role,
@@ -211,6 +213,8 @@ async function park(
   });
   ctx.deps.notify?.(`dev-loop: ${t.key} parked`, `sandbox refused ${denied.map((d) => d.target).join(", ")}; run npm run sandbox:approvals`);
   if (fatal) return { kind: "paused", reason: fatal, record };
+  const breach = postPhaseBreach(ctx, { role, cost_usd, started: runStarted, ended: runEnded });
+  if (breach) return { kind: "paused", reason: breach, record };
   return { kind: "did", record };
 }
 

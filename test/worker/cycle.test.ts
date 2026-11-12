@@ -1398,7 +1398,7 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       expect(r).toMatchObject({ outcome: "parked", resume: "research" });
       expect(result.kind).toBe("paused");
       if (result.kind === "paused") {
-        expect(result.reason).toMatch(/^research: .*min/);
+        expect(result.reason).toMatch(/^research: runDurationMin/);
         expect(result.record).toEqual(r);
       }
     });

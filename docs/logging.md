@@ -218,7 +218,10 @@ Outcomes: `landed`, `bounced`, `error`, `killed`, `skipped-blocked`,
   target }], approveHint?, cost_usd, run_dir }`; `approveHint` and every
   `target` are redacted. Jira is not touched after the run (the claim
   before a research run still happens). A desktop notification fires
-  (macOS, `osascript`, redacted), and the loop carries on. While a ticket's
+  (macOS, `osascript`, redacted), and the loop carries on, unless the
+  refused run itself breached its role's cost or duration ceiling (its cost
+  is real but not in `phases`), which pauses after the record as for any
+  phase. While a ticket's
   latest record is `parked`, step 2 excludes it from every poll and step 0
   doesn't resume it.
 - `unparked`: written by `npm run sandbox:approvals -- --clear=<KEY>`
