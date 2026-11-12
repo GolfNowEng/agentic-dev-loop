@@ -1373,6 +1373,42 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       expect(await records(h)).toHaveLength(1);
     });
 
+    it("a parked dev run over maxCostPerRunUsd pauses the loop after the parked record", async () => {
+      h = await harness({ script: { dev: [parkedStep({ costUsd: 30 })] } });
+      h.jira.dev = [devTicket("TARS-3")];
+
+      const result = await runWorkerIteration(h.deps);
+
+      const [r] = await records(h);
+      expect(r).toMatchObject({ outcome: "parked", parked: { cost_usd: 30 } });
+      expect(result.kind).toBe("paused");
+      if (result.kind === "paused") {
+        expect(result.reason).toMatch(/maxCostPerRunUsd/);
+        expect(result.record).toEqual(r);
+      }
+    });
+
+    it("a parked research run over runTimeoutMin pauses the loop after the parked record", async () => {
+      h = await harness({ script: { research: [parkedStep({ started: "2026-11-11T08:00:00.000Z", ended: "2026-11-11T11:00:00.000Z" })] } });
+      h.jira.research = [ticket("TARS-1")];
+
+      const result = await runWorkerIteration(h.deps);
+
+      const [r] = await records(h);
+      expect(r).toMatchObject({ outcome: "parked", resume: "research" });
+      expect(result.kind).toBe("paused");
+      if (result.kind === "paused") {
+        expect(result.reason).toMatch(/^research: .*min/);
+        expect(result.record).toEqual(r);
+      }
+    });
+
+    it("a parked run within the ceilings does not pause", async () => {
+      h = await harness({ script: { dev: [parkedStep({ costUsd: 19 })] } });
+      h.jira.dev = [devTicket("TARS-3")];
+      expect((await runWorkerIteration(h.deps)).kind).toBe("did");
+    });
+
     it("a parked run makes no Jira transition or comment", async () => {
       h = await harness({ script: { research: [parkedStep()] } });
       h.jira.research = [ticket("TARS-1")];

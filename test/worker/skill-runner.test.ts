@@ -261,6 +261,26 @@ describe("makeRunSkill", () => {
       expect(lines).toContain("[ticket-to-pr] TARS-1: sandbox refused network evil.example; parking");
     });
 
+    it("the sandbox refused log line is redacted (token-shaped target)", async () => {
+      const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+      const secret: SandboxDenial[] = [{ kind: "credential", target: `token ${token}` }];
+      for (const mode of ["enforce", "discover"] as const) {
+        result = withReport(secret);
+        onSpawn = writeVerdict;
+        const lines: string[] = [];
+        await makeRunSkill(deps({ sandbox: sel(mode), log: (m) => void lines.push(m), logError: (m) => void lines.push(m) }))({
+          role: "dev",
+          ticketKey: "TARS-1",
+          runDir: runDir("dev"),
+          maxBudgetUsd: 20,
+        });
+        const refused = lines.filter((l) => l.includes("sandbox refused"));
+        expect(refused).toHaveLength(1);
+        expect(refused[0]).not.toContain(token);
+        expect(refused[0]).toContain("REDACTED");
+      }
+    });
+
     it("discover + denied report: reads verdict.json normally, no parked", async () => {
       result = withReport(denied);
       onSpawn = writeVerdict;
