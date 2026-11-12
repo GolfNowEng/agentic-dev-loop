@@ -351,11 +351,41 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
 
 ### Phase 4 — Verify
 
-1. Run the full existing test suite. It must be 100% green. If it's not,
-   and the failure is unrelated to this change, bounce with `tests_flaky`
-   naming the failing test(s); if the failure is caused by this change,
-   that's a Green-phase defect — go back and fix it, do not proceed to PR
-   with a broken suite.
+1. Run the full existing test suite. If it is 100% green, continue to
+   step 2. If anything fails, run the **Pre-existing failure check**
+   before deciding anything:
+   1. Note the exact set of failing tests (file + test name) on the branch.
+   2. Make a throwaway baseline worktree of the unmodified base branch and
+      install its dependencies the same way you did for the run's worktree:
+
+      ```bash
+      git -C <REPO_DIR> worktree add --detach \
+        <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-baseline \
+        origin/<targetRepo.defaultBranch>
+      ```
+
+   3. In the baseline, run **only the failing test files**, with the same
+      command and environment as the branch run. Record the baseline SHA
+      (`git -C <baseline> rev-parse --short HEAD`).
+   4. Remove it before going on, whatever the result:
+      `git -C <REPO_DIR> worktree remove <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-baseline`.
+      Ignored files (`node_modules`) do not block the removal.
+   5. Decide:
+      - If **every test that fails on the branch also fails, with the same
+        assertion, on the baseline**, the failures are pre-existing and not
+        caused by this change. Continue to step 2. Record each one as
+        `"<file> > <test name>"` in `verdict.json`'s `preexisting_failures`,
+        and carry them into the PR (step 7) and the result line.
+      - If any test **fails only on the branch**, that's a Green-phase
+        defect. Go back and fix it; do not proceed to PR with a broken
+        suite.
+      - If the baseline can't be set up or run (install fails, the command
+        errors before running tests), bounce `env_setup` with the output.
+      - If a failure passes on a re-run of the branch itself, it's
+        flaky, not pre-existing: bounce `tests_flaky` naming it.
+   Never bypass a push hook to get past these failures: if `push-branch`'s
+   push is blocked by a hook that runs the suite, bounce `tests_flaky` with
+   the hook output and the pre-existing list. Never use `--no-verify`.
 2. Run whatever the target repo's own CI would run beyond tests — lint,
    typecheck, and build, at minimum (check the target repo's own CI config
    or `package.json` scripts for the actual commands; don't assume names).
@@ -440,7 +470,19 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
      the site URL from `getAccessibleAtlassianResources` (already called in
      Phase 0). The `## QA Notes` list is the `qa_notes` array from step 6,
      numbered, in order. No other sections — no "Core Architecture,"
-     "Files Changed," "Migration Notes," or similar.
+     "Files Changed," "Migration Notes," or similar — with one exception:
+     when step 1 recorded `preexisting_failures`, append this section last:
+
+     ```markdown
+     ## Pre-existing failures
+     These tests also fail on unmodified `origin/<defaultBranch>` <sha>; not caused by this change:
+     - `<file> > <test name>`
+     ```
+
+     Also add one `qa_notes` entry at the end: "Note: <n> test(s) fail
+     pre-existing on `origin/<defaultBranch>` <sha>, not caused by this
+     change — see the PR's Pre-existing failures section." The result line
+     says the same in a few words.
    - **Never write an absolute filesystem path into the title or body** —
      this machine's home directory is an email address, so an absolute
      path leaks PII into a PR anyone with repo access can see. Refer to
@@ -578,9 +620,14 @@ from this exact path, and only from there):
   "qa_notes": [
     "Navigate to `/rotten-tomatoes/critics?query=tina+kakad`",
     "Expected: the Self-Service badge appears next to the critic's name"
-  ]
+  ],
+  "preexisting_failures": []
 }
 ```
+
+`preexisting_failures` is optional: the `"<file> > <test name>"` of each
+test that failed on the branch and identically on the unmodified base
+branch (Phase 4 step 1). Omit it or leave it empty when there were none.
 
 `cost_usd` and `tokens` are left as `0`/zeros by this skill — the loop
 runner derives the real values from `claude -p --output-format json`'s own

@@ -27,6 +27,8 @@ export interface PhaseEntry {
   verify_loops?: number;
   retries?: number;
   size_trajectory?: SizeTrajectory;
+  /** Dev entries: tests that also fail on the unmodified base branch (Ruling 29). */
+  preexisting_failures?: string[];
   /** Research entries with outcome landed only. */
   handoff?: "done" | "skipped-ceiling" | "failed";
   jira_sync_error?: string;

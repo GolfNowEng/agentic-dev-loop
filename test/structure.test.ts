@@ -135,13 +135,13 @@ describe("structure: skill prose (Ruling 24)", () => {
 
     it("re-runs the failing tests against unmodified origin/<defaultBranch> before bouncing", () => {
       expect(phase4()).toContain("Pre-existing failure check");
-      expect(phase4()).toMatch(/git -C <REPO_DIR> worktree add --detach\s+\S*baseline/);
+      expect(phase4()).toMatch(/git -C <REPO_DIR> worktree add --detach[\s\\]+\S*-baseline/);
       expect(phase4()).toContain("origin/<targetRepo.defaultBranch>");
     });
 
     it("proceeds only when the branch's failing set is a subset of the baseline's", () => {
       expect(phase4()).toMatch(/every test that fails on the branch also fails[^.]*on the baseline/i);
-      expect(phase4()).toMatch(/fails only on the branch[^.]*Green-phase defect/i);
+      expect(phase4()).toMatch(/fails only on the branch[^.]*Green-phase\s+defect/i);
     });
 
     it("names the pre-existing failures in the PR body, qa_notes and the result line", () => {

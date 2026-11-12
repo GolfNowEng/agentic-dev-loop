@@ -170,6 +170,14 @@ export function parseVerdict(
     }
   }
 
+  // preexisting_failures is optional telemetry, like size_trajectory: keep
+  // only a non-empty-string array, never flip the outcome over it.
+  if (verdict.preexisting_failures !== undefined) {
+    const v: unknown = verdict.preexisting_failures;
+    const ok = Array.isArray(v) && v.every((t) => typeof t === "string" && t.length > 0);
+    if (!ok) delete verdict.preexisting_failures;
+  }
+
   return verdict;
 }
 

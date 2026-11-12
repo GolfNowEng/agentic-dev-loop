@@ -111,6 +111,9 @@ export async function runDevPhase(ticket: JiraTicket, deps: DevPhaseDeps): Promi
     red_confirmed: verdict.red_confirmed,
     verify_loops: verdict.verify_loops,
     retries: verdict.retries,
+    ...(verdict.preexisting_failures && verdict.preexisting_failures.length > 0
+      ? { preexisting_failures: verdict.preexisting_failures }
+      : {}),
     ...(errors.length > 0 ? { jira_sync_error: errors.join("; ") } : {}),
   };
 }

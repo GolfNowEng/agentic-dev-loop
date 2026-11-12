@@ -145,6 +145,12 @@ export interface Verdict {
    * PR-link stub in that case.
    */
   qa_notes?: string[];
+  /**
+   * Tests that failed on the branch AND identically on the unmodified base
+   * branch (Ruling 29): the run proceeded to a PR and named them there.
+   * Optional; a malformed value is dropped at the parse boundary.
+   */
+  preexisting_failures?: string[];
   /** Schema version this verdict was written under. Absent means "1.0". */
   log_version?: string;
   /**

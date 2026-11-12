@@ -333,7 +333,11 @@ working in it manually is never affected by a background run:
    reason, commit tests before any implementation.
 4. **Green** — implement the minimum change to pass, touching only the
    files the ticket's Scope section names.
-5. **Verify** — full suite must be green; also runs whatever the target
+5. **Verify** — full suite must be green, except for failures that also
+   fail identically on the unmodified base branch: those are re-run on a
+   throwaway baseline worktree, named in the PR's `## Pre-existing failures`
+   section and `verdict.json`'s `preexisting_failures`, and do not block the
+   PR (Ruling 29). A failure only on the branch is still a defect. Also runs whatever the target
    repo's own CI runs beyond tests (lint, typecheck, build) so a
    lint/build failure is caught here, not after the PR is already open;
    spawns `qa-agent` (see below) for a fresh-context adversarial pass, up
