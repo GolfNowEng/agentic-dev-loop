@@ -14,6 +14,7 @@ import {
   stopSpawning,
   _resetStoppingForTests,
   ALLOWED_TERMINAL_REASONS,
+  TEARDOWN_GRACE_MS,
 } from "../../src/core/spawn-claude.ts";
 import type { SpawnClaudeOpts, SpawnFn, SpawnClaudeDeps } from "../../src/core/spawn-claude.ts";
 import { parseVerdict } from "../../src/core/verdict.ts";
@@ -1089,14 +1090,83 @@ describe("sandbox adapter", () => {
 
   it("a teardown that throws (a buggy adapter) still never throws out of spawnClaudeRun", async () => {
     const { adapter, calls } = recordingAdapter();
+    let attempts = 0;
     adapter.teardown = () => {
+      attempts++;
       throw new Error("buggy teardown");
     };
+    const errors: string[] = [];
     const result = await spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), {
       ...quiet,
+      logError: (m) => errors.push(m),
       spawn: finishingSpawn(calls).spawn,
     });
     expect(result.spawnError).toBeUndefined();
+    expect(attempts).toBe(1);
+    expect(errors.some((m) => m.includes("sandbox teardown failed: buggy teardown"))).toBe(true);
+  });
+
+  it("logs an inspect failure", async () => {
+    const { adapter, calls } = recordingAdapter({ inspectThrows: true });
+    const errors: string[] = [];
+    await spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), {
+      ...quiet,
+      logError: (m) => errors.push(m),
+      spawn: finishingSpawn(calls).spawn,
+    });
+    expect(errors.some((m) => m.includes("sandbox inspect failed: inspect blew up"))).toBe(true);
+  });
+
+  it("a hanging teardown: spawnClaudeRun still returns once TEARDOWN_GRACE_MS passes", async () => {
+    const timers = makeFakeTimers();
+    const { adapter, calls } = recordingAdapter({ teardownGate: new Promise<void>(() => {}) });
+    const errors: string[] = [];
+    let result: unknown = null;
+    const pending = spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), {
+      ...quiet,
+      ...timers,
+      logError: (m) => errors.push(m),
+      spawn: finishingSpawn(calls).spawn,
+    }).then((r) => (result = r));
+    for (let i = 0; i < 5; i++) await flush();
+    expect(calls).toContain("teardown");
+    expect(result).toBeNull();
+
+    timers.advance(TEARDOWN_GRACE_MS - 1);
+    await flush();
+    expect(result).toBeNull();
+    timers.advance(1);
+    await pending;
+    expect(result).not.toBeNull();
+    expect(errors.some((m) => m.includes("sandbox teardown still running"))).toBe(true);
+    expect(timers.pendingCount()).toBe(0);
+  });
+
+  it("a hanging teardown: killActiveChild still resolves once TEARDOWN_GRACE_MS passes", async () => {
+    const timers = makeFakeTimers();
+    const { adapter, calls } = recordingAdapter({ teardownGate: new Promise<void>(() => {}) });
+    const child = new FakeChild("SIGTERM");
+    const pending = spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), {
+      ...quiet,
+      ...timers,
+      spawn: () => {
+        calls.push("spawn");
+        return child as never;
+      },
+    });
+    await flush();
+
+    let killResult: string | null = null;
+    const killed = killActiveChild(timers).then((r) => (killResult = r));
+    for (let i = 0; i < 5; i++) await flush();
+    expect(calls).toContain("teardown");
+    expect(killResult).toBeNull();
+
+    timers.advance(TEARDOWN_GRACE_MS);
+    await killed;
+    expect(killResult).toBe("exited");
+    await pending;
+    expect(calls.filter((c) => c === "teardown")).toHaveLength(1);
   });
 
   it("result.sandbox carries adapter, instance, prepare_ms and the report", async () => {
