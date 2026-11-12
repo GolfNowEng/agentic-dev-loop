@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { recordAdoptedFlights, runWorkerIteration } from "../../src/worker/cycle.ts";
+import { ClaimMissingFieldsError } from "../../src/core/jira-client.ts";
 import { findPendingHandoffs } from "../../src/worker/handoff.ts";
 import { appendIteration, findLandedPrUrlAcross, readIterations } from "../../src/core/iteration-log.ts";
 import type { IterationRecord, PhaseEntry } from "../../src/core/iteration-log.ts";
@@ -176,6 +177,89 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
     ]);
     expect(recs[0].detail).toMatch(/400 required field/);
     expect(result.kind).toBe("did");
+  });
+
+  describe("claim blocked by required fields", () => {
+    const missing = (fields: string[]) => async (k: string) => {
+      if (k === "TARS-1") throw new ClaimMissingFieldsError(fields);
+      return true;
+    };
+    const commentText = (c: { body: Record<string, unknown> }) => JSON.stringify(c.body);
+
+    it("(a) records the field names, comments once on the ticket, next ticket runs", async () => {
+      h = await harness();
+      h.jira.research = [ticket("TARS-1"), ticket("TARS-3")];
+      h.jira.claimImpl = missing(["Story Points"]);
+
+      await runWorkerIteration(h.deps);
+
+      const recs = await records(h);
+      expect(recs.map((r) => [r.ticket, r.outcome])).toEqual([
+        ["TARS-1", "claim-error"],
+        ["TARS-3", "landed"],
+      ]);
+      expect(recs[0].detail).toBe("claim blocked: required field(s) missing: Story Points");
+      const cs = h.jira.comments.filter((c) => c.key === "TARS-1");
+      expect(cs).toHaveLength(1);
+      expect(commentText(cs[0])).toContain("Story Points");
+      expect(commentText(cs[0])).toContain("dev-loop could not start this ticket: ");
+    });
+
+    it("(b) the same missing field on a later iteration posts no second comment", async () => {
+      h = await harness();
+      h.jira.research = [ticket("TARS-1")];
+      h.jira.claimImpl = missing(["Story Points"]);
+      await runWorkerIteration(h.deps);
+      h.clock.advance(11 * MIN);
+      await runWorkerIteration(h.deps);
+
+      expect(h.jira.comments.filter((c) => c.key === "TARS-1")).toHaveLength(1);
+    });
+
+    it("(c) a changed field set posts a second comment", async () => {
+      h = await harness();
+      h.jira.research = [ticket("TARS-1")];
+      h.jira.claimImpl = missing(["Story Points"]);
+      await runWorkerIteration(h.deps);
+      h.clock.advance(11 * MIN);
+      h.jira.claimImpl = missing(["Story Points", "Sprint"]);
+      await runWorkerIteration(h.deps);
+
+      const cs = h.jira.comments.filter((c) => c.key === "TARS-1");
+      expect(cs).toHaveLength(2);
+      expect(commentText(cs[1])).toContain("Sprint");
+    });
+
+    it("(d) a failing addComment is swallowed: record appended, next ticket runs", async () => {
+      h = await harness();
+      h.jira.research = [ticket("TARS-1"), ticket("TARS-3")];
+      h.jira.claimImpl = missing(["Story Points"]);
+      h.jira.addComment = async () => {
+        throw new Error("comment API down");
+      };
+
+      await runWorkerIteration(h.deps);
+
+      expect((await records(h)).map((r) => [r.ticket, r.outcome])).toEqual([
+        ["TARS-1", "claim-error"],
+        ["TARS-3", "landed"],
+      ]);
+    });
+
+    it("(e) a plain claim Error keeps the old detail and posts no comment", async () => {
+      h = await harness();
+      h.jira.research = [ticket("TARS-1"), ticket("TARS-3")];
+      h.jira.claimImpl = async (k) => {
+        if (k === "TARS-1") throw new Error("boom 500");
+        return true;
+      };
+
+      await runWorkerIteration(h.deps);
+
+      const recs = await records(h);
+      expect(recs[0].detail).toMatch(/^claim failed: .*boom 500/);
+      expect(h.jira.comments.filter((c) => c.key === "TARS-1")).toHaveLength(0);
+    });
   });
 
   it("claim lost race (false) → re-polls excluding it, no record for it", async () => {

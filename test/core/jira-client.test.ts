@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   RealJiraClient,
+  ClaimMissingFieldsError,
+  parseRequiredFields,
   StubJiraClient,
   credentialsFromEnv,
   assigneeAccountIdFromEnv,
@@ -212,9 +214,46 @@ describe("RealJiraClient", () => {
       );
     const client = new RealJiraClient(CREDENTIALS, makeConfig());
 
-    await expect(client.claimTicket("PROJ-1", "Backlog", "In Progress")).rejects.toThrow(
-      /400 Bad Request/,
-    );
+    const err = await client.claimTicket("PROJ-1", "Backlog", "In Progress").catch((e) => e);
+    expect(err).toBeInstanceOf(ClaimMissingFieldsError);
+    expect((err as ClaimMissingFieldsError).fields).toEqual(["customfield_1"]);
+    expect((err as Error).message).toBe("Jira requires field(s) to claim: customfield_1");
+  });
+
+  it("claimTicket 400 with an unparseable body, and a 500, still throw a plain Error", async () => {
+    for (const [status, text, re] of [
+      [400, "nope", /400 Bad Request/],
+      [500, '{"errorMessages":["Field Story Points is required."]}', /500/],
+    ] as const) {
+      fetchMock
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ transitions: [{ id: "42", to: { name: "In Progress" } }] }), { status: 200 }),
+        )
+        .mockResolvedValueOnce(new Response(text, { status, statusText: status === 400 ? "Bad Request" : "Server Error" }));
+      const client = new RealJiraClient(CREDENTIALS, makeConfig());
+      const err = await client.claimTicket("PROJ-1", "Backlog", "In Progress").catch((e) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(ClaimMissingFieldsError);
+      expect((err as Error).message).toMatch(re);
+    }
+  });
+
+  it("claimTicket 400 with errorMessages 'Field X is required.' throws ClaimMissingFieldsError", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ transitions: [{ id: "42", to: { name: "In Progress" } }] }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response('{"errorMessages":["Field Story Points is required."],"errors":{}}', {
+          status: 400,
+          statusText: "Bad Request",
+        }),
+      );
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+    const err = await client.claimTicket("PROJ-1", "Backlog", "In Progress").catch((e) => e);
+    expect(err).toBeInstanceOf(ClaimMissingFieldsError);
+    expect((err as ClaimMissingFieldsError).fields).toEqual(["Story Points"]);
+    expect((err as Error).name).toBe("ClaimMissingFieldsError");
   });
 
   it("claimTicket posts the matching transition and returns true on success", async () => {
@@ -843,5 +882,32 @@ describe("StubJiraClient", () => {
     for (const [name, call] of calls) {
       await expect(call(), name).rejects.toThrow(new RegExp(`${name}.*not configured`));
     }
+  });
+});
+
+describe("parseRequiredFields", () => {
+  it("reads errorMessages 'Field X is required.' (with or without the period)", () => {
+    expect(
+      parseRequiredFields('{"errorMessages":["Field Story Points is required.","Field Sprint is required"],"errors":{}}'),
+    ).toEqual(["Story Points", "Sprint"]);
+  });
+  it("reads errors{} messages, falling back to the key when no name is usable", () => {
+    expect(
+      parseRequiredFields(
+        '{"errors":{"customfield_1":"Story Points is required.","customfield_10002":"required","customfield_3":"Field is required"}}',
+      ),
+    ).toEqual(["Story Points", "customfield_10002", "customfield_3"]);
+  });
+  it("mixes both shapes in order and dedupes", () => {
+    expect(
+      parseRequiredFields(
+        '{"errorMessages":["Field Story Points is required.","Something else"],"errors":{"a":"Story Points is required.","b":"Team is required"}}',
+      ),
+    ).toEqual(["Story Points", "Team"]);
+  });
+  it("returns [] for non-JSON or nothing matching", () => {
+    expect(parseRequiredFields("<html>")).toEqual([]);
+    expect(parseRequiredFields('{"errorMessages":["boom"],"errors":{"x":"invalid"}}')).toEqual([]);
+    expect(parseRequiredFields("null")).toEqual([]);
   });
 });
