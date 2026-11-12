@@ -29,6 +29,7 @@ Not built yet. Design: [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-d
   with the Keystone kit). Everything sbx-specific lives in
   `src/sandbox/sbx/`, so it can be removed, or another sandbox added,
   without touching the loop.
+- `[core]` Optional "sandbox" config block and --sandbox=<name> flag (CLI wins; --sandbox=none forces it off). Only the none adapter exists so far; the default is unchanged.
 - `[core]` New outcome `parked` and failure category `sandbox_denied`: a
   sandbox block (network, credential, infra) puts the ticket on hold
   without counting an attempt. `npm run sandbox:approvals` lists parked

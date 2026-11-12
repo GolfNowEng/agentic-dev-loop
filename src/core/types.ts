@@ -10,6 +10,8 @@
  * match the pipeline spec's failure_category enum exactly - do not add or
  * remove values without updating the spec.
  */
+import type { SandboxConfig } from "../sandbox/types.ts";
+
 export type FailureCategory =
   | "spec_ambiguous"
   | "spec_contradicted"
@@ -342,6 +344,8 @@ export interface Config {
     dev: RoleSettings & { codeReviewFields: CodeReviewFieldsConfig };
   };
   ceilings: CeilingsConfig;
+  /** Optional sandbox for agent spawns; absent means the none adapter. */
+  sandbox?: SandboxConfig;
 }
 
 /** Per-run limits a role enforces (shape of ceilings.ts CeilingLimits). */

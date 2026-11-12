@@ -1,6 +1,6 @@
 /**
  * CLI entrypoint:
- *   `node --env-file="${DEVLOOP_ENV_FILE:-.env}" src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--once] [--stream]`
+ *   `node --env-file="${DEVLOOP_ENV_FILE:-.env}" src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--sandbox=<name>] [--once] [--stream]`
  * `--config <path>` also works as a fallback for an arbitrary path outside
  * the naming convention; passing both --project and --config is an error
  * (src/core/cli-args.ts parses and tests all of it).
@@ -56,6 +56,7 @@ import { PROJECT_SLUG, resolveRepoPath, v2CloneDir, v2RunsLog, v2SessionsDir } f
 import { acquireSession, isProcessAlive, LiveWorkerError } from "./core/session.ts";
 import { stopOnSignal, trackSession, type TrackedSession } from "./worker/signal.ts";
 import { findLandedPrUrlAcross, hasLandedV1 } from "./core/iteration-log.ts";
+import { selectSandbox } from "./sandbox/select.ts";
 import { parseArgs, preflight, type Phase } from "./core/cli-args.ts";
 import { FlagError } from "./core/flags.ts";
 import { checkAbsPath, checkRepoDirPlacement, repoDirFor, SKILL_NAME } from "./core/build-prompt.ts";
@@ -249,7 +250,7 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
 let activePhase: Phase | null = null;
 
 async function main(): Promise<void> {
-  const { phase, project, configPath, session: requestedSession, once, stream } = parseArgs(process.argv.slice(2));
+  const { phase, project, configPath, session: requestedSession, sandbox: sandboxName, once, stream } = parseArgs(process.argv.slice(2));
   activePhase = phase;
   const prefix = prefixOf(phase);
   const roles = rolesOf(phase);
@@ -258,6 +259,9 @@ async function main(): Promise<void> {
   const resolvedConfigPath = configPath ? resolve(configPath) : await resolveProjectConfigPath(project, REPO_ROOT);
   const config = await loadConfig(resolvedConfigPath);
   for (const warning of preflight(config, phase, LOOP_VERSION).warnings) logError(`[${prefix}] WARNING: ${warning}`);
+  // Fail on a bad --sandbox / config adapter before any session is acquired.
+  const sandboxSelection = selectSandbox(config, sandboxName);
+  void sandboxSelection; // consumed by sandbox preflight (next task)
   // Only existence is checked: the root .env is never read here.
   const rootEnvPath = resolve(REPO_ROOT, ".env");
   const envWarning = envFileWarning({ envFileVar: process.env.DEVLOOP_ENV_FILE, cwd: process.cwd(), rootEnvPath, rootEnvExists: existsSync(rootEnvPath) });

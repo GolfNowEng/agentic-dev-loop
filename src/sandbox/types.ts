@@ -12,6 +12,13 @@ import type { SpawnOptions } from "node:child_process";
 
 export type SandboxMode = "discover" | "enforce";
 
+/** The optional `sandbox` block of a project config. Adapter sub-blocks are keyed by adapter name. */
+export interface SandboxConfig {
+  adapter: string;
+  mode?: SandboxMode;
+  [adapterName: string]: unknown;
+}
+
 export interface PreflightCtx {
   repoRoot: string;
   mounts: string[];

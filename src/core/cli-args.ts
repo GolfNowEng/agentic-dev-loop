@@ -3,7 +3,7 @@
 //
 //   --project=<p> | --config=<path>   exactly one
 //   [--phase=worker|research|dev]     default worker (both roles)
-//   [--session=<name>] [--once] [--stream]
+//   [--session=<name>] [--sandbox=<name>] [--once] [--stream]
 //
 // Value flags are --name=value only (src/core/flags.ts); the old
 // `--name value` form is refused with the replacement. Anything else is an
@@ -21,12 +21,13 @@ export interface CliArgs {
   project?: string;
   configPath?: string;
   session?: string;
+  sandbox?: string;
   once: boolean;
   stream: boolean;
 }
 
 const PHASES: readonly string[] = ["worker", "research", "dev"];
-const SPEC = { values: ["--project", "--config", "--phase", "--session"], bools: ["--once", "--stream"] } as const;
+const SPEC = { values: ["--project", "--config", "--phase", "--session", "--sandbox"], bools: ["--once", "--stream"] } as const;
 
 export function parseArgs(argv: string[]): CliArgs {
   const { values, bools } = parseFlags(argv, SPEC, "main.ts");
@@ -50,6 +51,7 @@ export function parseArgs(argv: string[]): CliArgs {
     project,
     configPath,
     session: values["--session"],
+    sandbox: values["--sandbox"],
     once: bools.has("--once"),
     stream: bools.has("--stream"),
   };
