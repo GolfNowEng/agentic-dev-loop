@@ -60,6 +60,13 @@ export const KILL_GRACE_MS = 30_000;
  */
 export const POST_KILL_GRACE_MS = 5_000;
 
+/**
+ * The longest any caller waits for a sandbox teardown (killActiveChild, the
+ * run's finally). A hung adapter must not stop a signal from exiting the
+ * process; past this, the wait is abandoned with a logged error.
+ */
+export const TEARDOWN_GRACE_MS = 30_000;
+
 export interface SpawnClaudeOpts {
   prompt: string;
   model: string;
@@ -335,7 +342,8 @@ function buildArgs(opts: SpawnClaudeOpts): string[] {
 
 /**
  * The run in progress: its child, a promise that settles when the run does,
- * and its (once-guarded, never-rejecting) sandbox teardown.
+ * and a wait for its sandbox teardown (once-guarded, never rejecting, and
+ * bounded by TEARDOWN_GRACE_MS).
  */
 let active: { child: ChildProcess; done: Promise<void>; teardown: () => Promise<void> } | null = null;
 
@@ -409,8 +417,10 @@ interface ChildOutcome {
 /** How runChild talks to a prepared sandbox. */
 interface ChildSandbox {
   wrap: (cmd: string, args: string[], opts: WrappedSpawn["opts"]) => WrappedSpawn;
-  /** Once-guarded; never rejects. */
+  /** Starts the teardown (fire-and-forget). Once-guarded; never rejects. */
   teardown: () => Promise<void>;
+  /** Waits for the teardown, at most TEARDOWN_GRACE_MS. Once-guarded; never rejects. */
+  waitTeardown: () => Promise<void>;
 }
 
 const noTeardown = async (): Promise<void> => {};
@@ -422,6 +432,7 @@ function runChild(
   sandbox?: ChildSandbox,
 ): Promise<ChildOutcome> {
   const teardown = sandbox?.teardown ?? noTeardown;
+  const waitTeardown = sandbox?.waitTeardown ?? noTeardown;
   let markDone: () => void = () => {};
   const done = new Promise<void>((r) => {
     markDone = r;
@@ -467,7 +478,7 @@ function runChild(
       settle({ stdout: "", spawnError: err instanceof Error ? err.message : String(err), killedTimeout: false, exitCode: null });
       return;
     }
-    active = { child, done, teardown };
+    active = { child, done, teardown: waitTeardown };
 
     if (opts.stream) {
       if (child.stdout) {
@@ -571,7 +582,16 @@ export async function spawnClaudeRun(
 
   // Prepare the sandbox, if any. A failure here means no child: return
   // before the result checks, with an infra denial (Review Focus 2).
-  let prepared: { adapter: SandboxAdapter; handle: SandboxHandle; prepare_ms: number; teardown: () => Promise<void> } | undefined;
+  let prepared:
+    | {
+        adapter: SandboxAdapter;
+        handle: SandboxHandle;
+        prepare_ms: number;
+        /** The bounded wait. */
+        teardown: () => Promise<void>;
+        startTeardown: () => Promise<void>;
+      }
+    | undefined;
   if (opts.sandbox !== undefined && !stopping) {
     const { adapter, run } = opts.sandbox;
     const t0 = deps.now().getTime();
@@ -610,7 +630,23 @@ export async function spawnClaudeRun(
           deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: sandbox teardown failed: ${message}`);
         }
       })());
-    prepared = { adapter, handle, prepare_ms, teardown };
+    // Bounded wait, also once-guarded so the kill path and the finally
+    // share one timer and one log line.
+    let waited: Promise<void> | undefined;
+    const waitTeardown = (): Promise<void> =>
+      (waited ??= new Promise<void>((resolve) => {
+        const timer = deps.setTimeout(() => {
+          deps.logError(
+            `[${deps.logPrefix}] ${opts.ticketKey}: sandbox teardown still running after ${TEARDOWN_GRACE_MS / 1000}s, not waiting for it`,
+          );
+          resolve();
+        }, TEARDOWN_GRACE_MS);
+        void teardown().then(() => {
+          deps.clearTimeout(timer);
+          resolve();
+        });
+      }));
+    prepared = { adapter, handle, prepare_ms, teardown: waitTeardown, startTeardown: teardown };
   }
 
   let outcome: ChildOutcome;
@@ -621,13 +657,16 @@ export async function spawnClaudeRun(
       deps,
       prepared && {
         wrap: (cmd, args, spawnOpts) => prepared.adapter.wrap(prepared.handle, cmd, args, spawnOpts),
-        teardown: prepared.teardown,
+        teardown: prepared.startTeardown,
+        waitTeardown: prepared.teardown,
       },
     );
     if (prepared) {
       try {
         report = await prepared.adapter.inspect(prepared.handle, outcome.exitCode);
-      } catch {
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: sandbox inspect failed: ${message}`);
         report = { denied: [{ kind: "infra", target: "inspect" }] };
       }
     }
