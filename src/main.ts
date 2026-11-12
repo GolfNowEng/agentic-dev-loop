@@ -15,7 +15,8 @@
  * (requiredPlaceholderFree(phase), then in worker mode the label-version
  * guard: a v1-labelled project such as catalog-ui-* exits 1, a minor/patch
  * difference is a warning) -> leftover root .env warning (DEVLOOP_ENV_FILE
- * set and not the root .env itself) -> credentials -> acquireSession (one live worker
+ * set and not the root .env itself) -> REPO_DIR checks -> sandbox preflight and
+ * cleanupOrphans (selected adapter) -> credentials -> acquireSession (one live worker
  * per project; a second start names the live session and exits 1) ->
  * record the adopted in-flight runs -> loop. REPO_DIR must be absolute and
  * normalized, and may not be the dev-loop root, an ancestor of it, or inside
@@ -56,13 +57,14 @@ import { PROJECT_SLUG, resolveRepoPath, v2CloneDir, v2RunsLog, v2SessionsDir } f
 import { acquireSession, isProcessAlive, LiveWorkerError } from "./core/session.ts";
 import { stopOnSignal, trackSession, type TrackedSession } from "./worker/signal.ts";
 import { findLandedPrUrlAcross, hasLandedV1 } from "./core/iteration-log.ts";
-import { selectSandbox } from "./sandbox/select.ts";
+import { DEFAULT_ADAPTER } from "./sandbox/index.ts";
+import { selectSandbox, type SandboxSelection } from "./sandbox/select.ts";
 import { parseArgs, preflight, type Phase } from "./core/cli-args.ts";
 import { FlagError } from "./core/flags.ts";
 import { checkAbsPath, checkRepoDirPlacement, repoDirFor, SKILL_NAME } from "./core/build-prompt.ts";
 import { killActiveChild, spawnClaudeRun } from "./core/spawn-claude.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
-import { makeRunSkill } from "./worker/skill-runner.ts";
+import { makeRunSkill, sandboxMounts } from "./worker/skill-runner.ts";
 import { reconcileMergedTickets } from "./roles/dev/reconcile.ts";
 import { loadResearchStance, REFINE_SKILL_MD_PATH } from "./roles/research/startup.ts";
 import pkg from "../package.json" with { type: "json" };
@@ -116,6 +118,8 @@ interface LoopContext {
   githubClient: RealGitHubClient;
   slug: string;
   researchStance: string;
+  /** The selected sandbox; attached to the runner only when it is not the default adapter. */
+  sandbox: SandboxSelection;
 }
 
 /** Research only: find or create the ticket's mirror GitHub Issue before the run. Never throws. */
@@ -190,6 +194,8 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
         dev: runsDev ? gitFileSha(DEV_SKILL_MD_PATH) : "",
       },
       spawn: (opts) => spawnClaudeRun(opts, { log, logError }),
+      // The default adapter is never attached, so its spawn stays byte-identical.
+      ...(ctx.sandbox.adapter.name !== DEFAULT_ADAPTER ? { sandbox: ctx.sandbox } : {}),
       beforeRun: (_role, key) => ensureMirrorIssue(ctx, key),
       log,
       logError,
@@ -261,7 +267,6 @@ async function main(): Promise<void> {
   for (const warning of preflight(config, phase, LOOP_VERSION).warnings) logError(`[${prefix}] WARNING: ${warning}`);
   // Fail on a bad --sandbox / config adapter before any session is acquired.
   const sandboxSelection = selectSandbox(config, sandboxName);
-  void sandboxSelection; // consumed by sandbox preflight (next task)
   // Only existence is checked: the root .env is never read here.
   const rootEnvPath = resolve(REPO_ROOT, ".env");
   const envWarning = envFileWarning({ envFileVar: process.env.DEVLOOP_ENV_FILE, cwd: process.cwd(), rootEnvPath, rootEnvExists: existsSync(rootEnvPath) });
@@ -276,6 +281,9 @@ async function main(): Promise<void> {
   // REPO_DIR goes into every prompt: a malformed targetRepo.path exits 1 here, before the lock.
   checkAbsPath("repo-dir", repoDirFor(config, slug));
   checkRepoDirPlacement(repoDirFor(config, slug), REPO_ROOT, resolveRepoPath(v2CloneDir(slug)));
+  // Once at startup, before the lock: a throw exits 1 through the fatal path.
+  await sandboxSelection.adapter.preflight({ repoRoot: REPO_ROOT, mounts: sandboxMounts(REPO_ROOT, repoDirFor(config, slug)), config: sandboxSelection.config });
+  await sandboxSelection.adapter.cleanupOrphans();
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();
@@ -323,6 +331,7 @@ async function main(): Promise<void> {
     githubClient,
     slug,
     researchStance,
+    sandbox: sandboxSelection,
   };
   try {
     await runLoop(ctx, tracked, assigneeAccountId);

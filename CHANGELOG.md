@@ -34,6 +34,7 @@ Not built yet. Design: [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-d
   sandbox block (network, credential, infra) puts the ticket on hold
   without counting an attempt. `npm run sandbox:approvals` lists parked
   tickets and prints the allow commands for a human to run.
+- `[core]` The skill runner gives each sandboxed run its own instance name (`dl-<ticket>-<role>-<6 hex>`, shown in the "running" line) and mounts (repo root plus the target checkout when it is outside it). In enforce mode a sandbox refusal returns `parked` before verdict.json is read; discover mode logs it and carries on. The selected adapter's preflight and orphan cleanup run once at startup, before the session lock.
 
 ## [2.1.0] — 2026-11-12
 
