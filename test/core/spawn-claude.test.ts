@@ -13,6 +13,7 @@ import {
   killActiveChild,
   stopSpawning,
   _resetStoppingForTests,
+  ALLOWED_TERMINAL_REASONS,
 } from "../../src/core/spawn-claude.ts";
 import type { SpawnClaudeOpts, SpawnFn, SpawnClaudeDeps } from "../../src/core/spawn-claude.ts";
 import { parseVerdict } from "../../src/core/verdict.ts";
@@ -705,5 +706,90 @@ describe("role ALLOWED_TOOLS", () => {
     expect(RESEARCH_ALLOWED_TOOLS).toBe(
       "mcp__atlassian__getAccessibleAtlassianResources,mcp__atlassian__getJiraIssue,mcp__atlassian__searchJiraIssuesUsingJql,mcp__atlassian__addCommentToJiraIssue,mcp__atlassian__editJiraIssue,mcp__atlassian__search,mcp__atlassian__getConfluencePage,mcp__atlassian__searchConfluenceUsingCql,Bash,Read,Grep,Glob",
     );
+  });
+});
+
+describe("result-error detection", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "spawn-claude-resulterr-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function makeOpts(overrides: Partial<SpawnClaudeOpts> = {}): SpawnClaudeOpts {
+    return {
+      prompt: "/ticket-to-pr TARS-1",
+      model: "sonnet",
+      allowedTools: "Bash,Read",
+      addDir: null,
+      timeoutMin: 75,
+      maxBudgetUsd: 20,
+      stream: false,
+      ticketKey: "TARS-1",
+      rawUsagePath: join(dir, "raw-usage", "TARS-1-x.json"),
+      env: { PATH: "/usr/bin" },
+      ...overrides,
+    };
+  }
+
+  async function run(stdout: string, code = 0, overrides: Partial<SpawnClaudeOpts> = {}) {
+    const child = new FakeChild();
+    const spawn: SpawnFn = () => {
+      child.finish(stdout, code);
+      return child as never;
+    };
+    return spawnClaudeRun(makeOpts(overrides), { log: () => {}, logError: () => {}, spawn });
+  }
+
+  it("allows only the completed terminal_reason", () => {
+    expect(ALLOWED_TERMINAL_REASONS).toEqual(["completed"]);
+  });
+
+  it("a completed result passes and is recorded as resultError", async () => {
+    const result = await run(
+      JSON.stringify({ type: "result", is_error: false, terminal_reason: "completed", total_cost_usd: 0.5 }),
+    );
+    expect(result.spawnError).toBeUndefined();
+    expect(result.resultError).toEqual({ is_error: false, terminal_reason: "completed" });
+  });
+
+  it("a terminal_reason outside the allowed set is a spawnError, and the cost is kept", async () => {
+    const result = await run(
+      JSON.stringify({ type: "result", is_error: false, terminal_reason: "api_error", total_cost_usd: 0.2 }),
+    );
+    expect(result.spawnError).toBe("claude reported a failed result (is_error=false, terminal_reason=api_error)");
+    expect(result.usage.costUsd).toBe(0.2);
+  });
+
+  it("is_error: true is a spawnError", async () => {
+    const result = await run(JSON.stringify({ type: "result", is_error: true, terminal_reason: "completed" }));
+    expect(result.spawnError).toContain("is_error=true");
+  });
+
+  it("a result with no terminal_reason and is_error: false passes", async () => {
+    const result = await run(JSON.stringify({ type: "result", is_error: false }));
+    expect(result.spawnError).toBeUndefined();
+  });
+
+  it("non-JSON stdout with a 0 exit is a spawnError", async () => {
+    const result = await run("not json at all");
+    expect(result.spawnError).toBe("claude exited 0 without a result");
+  });
+
+  it("streaming: a final api_error result gets the same spawnError", async () => {
+    const lines = [
+      JSON.stringify({ type: "system" }),
+      JSON.stringify({ type: "result", is_error: false, terminal_reason: "api_error" }),
+      "",
+    ].join("\n");
+    const result = await run(lines, 0, { stream: true });
+    expect(result.spawnError).toBe("claude reported a failed result (is_error=false, terminal_reason=api_error)");
+  });
+
+  it("a nonzero exit keeps its own spawnError", async () => {
+    const result = await run(JSON.stringify({ type: "result", is_error: true, terminal_reason: "api_error" }), 1);
+    expect(result.spawnError).toMatch(/^claude exited with code 1/);
   });
 });
