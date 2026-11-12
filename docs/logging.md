@@ -230,11 +230,16 @@ iteration writes nothing. The steps run in this order:
      resets attempts and teaches the landed lookup), no rebuild.
 
    Before either a self-heal or a resume, the ticket's live Jira status is
-   re-read: only `claimStatus.to` (In Progress) proceeds. Any other status
-   appends a phase-less `resume-dropped` record (not an attempt, no `resume`,
-   so it resolves the pending resume); a failed lookup leaves the resume
-   pending, keeps the ticket out of this iteration's polls, and retries next
-   iteration.
+   re-read: only `claimStatus.to` (In Progress) proceeds. A dev resume also
+   accepts `statusNames.prOpen` (Code Review; Ruling 51): the dev run had
+   landed before the crash or signal, so with an open PR it gets the same
+   `skipped-pr-exists` record without a Jira transition, and with none
+   (merged, closed, or the lookup failed) it is `resume-dropped` ("Code
+   Review with no open PR"); dev is never re-run from Code Review. Any other
+   status appends a phase-less `resume-dropped` record (not an attempt, no
+   `resume`, so it resolves the pending resume); a failed status lookup
+   leaves the resume pending, keeps the ticket out of this iteration's polls,
+   and retries next iteration.
 
    Then, every iteration, one ticket whose latest record has `resume` set to
    a role this process runs, and that is below both the attempt cap and that

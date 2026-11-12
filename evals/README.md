@@ -26,6 +26,10 @@ carry the `dev-loop-eval` label and a `[dev-loop-eval]` summary prefix.
 | exactly `0` | LIVE: real Jira tickets, real sandbox PRs, paid `claude -p` runs |
 | anything else (`true`, `yes`, `false`, …) | refused, exit 1, nothing runs |
 
+`run.sh` refuses live mode when `CLAUDECODE` is set (inside a Claude Code
+session, including a `claude -p` agent): a human runs live evals from their
+own shell. Dry mode still works there.
+
 ```sh
 npm run eval -- clean                       # dry (default): print every outward command, run none
 DRY_RUN=0 npm run eval -- clean             # LIVE: one scenario, for real
@@ -53,8 +57,11 @@ ticket itself.
 ## Files
 
 - `lib.sh`: `outward` (the one gate for outward commands), `run_to`
-  (wall-clock limit), `api` (`gh api` pinned to the sandbox), `jira`,
-  `assert_repo`, `assert_clone`.
+  (wall-clock limit; runs the command in its own process group and on
+  timeout sends the group SIGTERM, then SIGKILL after `RUN_TO_GRACE_S`,
+  default 40 s, so `npm run loop`'s node and `claude -p` children stop
+  too), `api` (`gh api` pinned to the sandbox), `jira`, `assert_repo`,
+  `assert_clone`.
 - `preflight.sh`: the config guard (`config-guard.mjs`, local), then gh,
   sandbox and Jira checks (outward).
 - `run.sh`: preflight, then scenario setup, then the loop under `run_to`,

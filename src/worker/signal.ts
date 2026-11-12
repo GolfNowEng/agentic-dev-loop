@@ -12,9 +12,13 @@
 // stopOnSignal) the process is stopping and the cycle freezes: the wrapped
 // `session.setInFlight` (set or clear) no longer calls through and returns a
 // promise that never settles, so the cycle, still running during the
-// handler's awaits, makes no further session or log writes (no new flight
-// in a released lock, no `error` record for a killed child counted as an
-// attempt). onSignal writes through the raw session, so it is unaffected.
+// handler's awaits, makes no further lock writes and spawns no new child
+// (no new flight in a released lock, no `error` record for a killed child
+// counted as an attempt). Other writes that do not go through setInFlight
+// can still happen in the stop window: polls, `claimTicket`, the
+// missing-fields comment plus its `claim-error` record, and `resume-dropped`
+// / other record appends (parked; all idempotent or deduped).
+// onSignal writes through the raw session, so it is unaffected.
 // A cycle write already in flight when the signal arrives is awaited by
 // onSignal (its error swallowed) before it reads `current`, so it decides
 // from the state that landed: a set that landed is marked interrupted, a

@@ -2,7 +2,9 @@
 // (with --write) add the project's dev trigger label (roles.dev.triggerLabel,
 // e.g. pipeline:v2.0.0:dev), which only the 2.0.0 dev poll matches. Dry run
 // by default; never removes labels.
-//   node --env-file=.env scripts/relabel-v1-refined.mjs --project <p> [--write --confirm <sha256>]
+//   npm run cutover:relabel -- --project <p> [--write --confirm <sha256>]
+// (= node --env-file="${DEVLOOP_ENV_FILE:-.env}" scripts/relabel-v1-refined.mjs ...;
+// DEVLOOP_ENV_FILE, default .env)
 // Env: JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_ASSIGNEE_ACCOUNT_ID.
 // Test seams: --root (where pipeline.<p>.config.json lives), CUTOVER_PGREP.
 import { createHash } from "node:crypto";

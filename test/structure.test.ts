@@ -318,11 +318,14 @@ describe("structure: final-review fixes stay wired", () => {
   it("main.ts warns about a leftover root .env, after config load and before the session (I4)", () => {
     const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
     const load = main.indexOf("await loadConfig(");
-    const warn = main.indexOf("envFileWarning(process.env.DEVLOOP_ENV_FILE");
+    const warn = main.indexOf("envFileWarning({ envFileVar: process.env.DEVLOOP_ENV_FILE");
     const acquire = main.indexOf("await acquireSession(");
     expect(load).toBeGreaterThan(-1);
     expect(warn).toBeGreaterThan(load);
     expect(acquire).toBeGreaterThan(warn);
+    // M4: compared as resolved paths (cwd for the variable, the repo root's .env).
+    expect(main).toContain('const rootEnvPath = resolve(REPO_ROOT, ".env");');
+    expect(main.slice(warn, main.indexOf("\n", warn))).toMatch(/cwd: process\.cwd\(\), rootEnvPath, rootEnvExists: existsSync\(rootEnvPath\)/);
   });
 
   it("check-jira-auth's missing-var hint names DEVLOOP_ENV_FILE (I4)", () => {

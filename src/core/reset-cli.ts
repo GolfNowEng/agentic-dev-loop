@@ -22,7 +22,8 @@
  * --close-remote (requires --ticket) additionally closes the real Jira
  * ticket, its mirror GitHub Issue, and any PR recorded for the ticket (v2
  * log, else the v1 dev log) -- see src/core/remote-close.ts. Needs
- * credentials, so run it with `--env-file=.env` (`reset-project:remote`).
+ * credentials, so run it via `reset-project:remote`, which loads
+ * `--env-file="${DEVLOOP_ENV_FILE:-.env}"` (DEVLOOP_ENV_FILE, default .env).
  * An agent must confirm with the human in chat before a real
  * (non-dry-run) --close-remote, regardless of permission settings -- see
  * docs/reset.md and .claude/skills/reset-project/SKILL.md.

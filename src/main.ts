@@ -1,6 +1,6 @@
 /**
  * CLI entrypoint:
- *   `node --env-file=.env src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--once] [--stream]`
+ *   `node --env-file="${DEVLOOP_ENV_FILE:-.env}" src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--once] [--stream]`
  * `--config <path>` also works as a fallback for an arbitrary path outside
  * the naming convention; passing both --project and --config is an error
  * (src/core/cli-args.ts parses and tests all of it).
@@ -15,7 +15,7 @@
  * (requiredPlaceholderFree(phase), then in worker mode the label-version
  * guard: a v1-labelled project such as catalog-ui-* exits 1, a minor/patch
  * difference is a warning) -> leftover root .env warning (DEVLOOP_ENV_FILE
- * set) -> credentials -> acquireSession (one live worker
+ * set and not the root .env itself) -> credentials -> acquireSession (one live worker
  * per project; a second start names the live session and exits 1) ->
  * record the adopted in-flight runs -> loop. REPO_DIR must be absolute and
  * normalized, and may not be the dev-loop root, an ancestor of it, or inside
@@ -258,7 +258,8 @@ async function main(): Promise<void> {
   const config = await loadConfig(resolvedConfigPath);
   for (const warning of preflight(config, phase, LOOP_VERSION).warnings) logError(`[${prefix}] WARNING: ${warning}`);
   // Only existence is checked: the root .env is never read here.
-  const envWarning = envFileWarning(process.env.DEVLOOP_ENV_FILE, existsSync(resolve(REPO_ROOT, ".env")));
+  const rootEnvPath = resolve(REPO_ROOT, ".env");
+  const envWarning = envFileWarning({ envFileVar: process.env.DEVLOOP_ENV_FILE, cwd: process.cwd(), rootEnvPath, rootEnvExists: existsSync(rootEnvPath) });
   if (envWarning !== null) logError(`[${prefix}] WARNING: ${envWarning}`);
   const loopConfig = await loadLoopConfig(resolve(REPO_ROOT, "pipeline.loop.config.json"));
   const slug = repoSlugFromUrl(config.targetRepo.url);

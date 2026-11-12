@@ -59,8 +59,43 @@ outward() {
   "$@"
 }
 
-# macOS has no timeout(1). Run a command with a wall-clock limit (seconds).
-run_to() { local s=$1; shift; perl -e 'alarm shift; exec @ARGV or die "exec failed: $!"' "$s" "$@"; }
+# macOS has no timeout(1). Run a command with a wall-clock limit (seconds)
+# that stops the whole process tree, not just the direct child (final review
+# I2: `npm run loop` forwards only SIGINT/SIGTERM, so an alarm on npm left
+# `node src/main.ts` and its `claude -p` child running). The command runs in
+# its own process group; on timeout the group gets SIGTERM (main.ts's
+# handler stops its claude child and marks the flight interrupted), then
+# SIGKILL if anything in it is still alive after RUN_TO_GRACE_S seconds
+# (default 40: above main.ts's KILL_GRACE_MS + POST_KILL_GRACE_MS). A
+# SIGINT/SIGTERM/SIGHUP to run_to itself is forwarded to the group (it is no
+# longer the terminal's foreground group). Exit status: the command's own,
+# or 124 on timeout. Plain perl (core modules only), bash 3.2.
+run_to() {
+  local s=$1; shift
+  perl -MPOSIX=WNOHANG -MTime::HiRes=sleep,time -e '
+    my ($limit, $grace) = (shift, shift);
+    my $pid = fork;
+    die "run_to: fork failed: $!\n" unless defined $pid;
+    if ($pid == 0) { setpgrp(0, 0); exec @ARGV or die "run_to: exec failed: $!\n"; }
+    setpgrp($pid, $pid); # also from the parent, so the group exists before any kill
+    my $status;
+    my $reap = sub { my $r = waitpid($pid, WNOHANG); $status = $? if $r == $pid; return defined $status; };
+    my $stop = sub {
+      kill "TERM", -$pid;
+      my $end = time + $grace;
+      while (time < $end) { $reap->(); last unless kill 0, -$pid; sleep 0.1; }
+      kill "KILL", -$pid if kill 0, -$pid;
+      waitpid($pid, 0) unless defined $status;
+    };
+    for my $sig (qw(INT TERM HUP)) { $SIG{$sig} = sub { $stop->(); exit 128 + ($sig eq "INT" ? 2 : $sig eq "TERM" ? 15 : 1); }; }
+    my $end = time + $limit;
+    until ($reap->()) {
+      if (time >= $end) { print STDERR "[eval] run_to: wall-clock limit ${limit}s reached; stopping the process group\n"; $stop->(); exit 124; }
+      sleep 0.2;
+    }
+    exit($status & 127 ? 128 + ($status & 127) : $status >> 8);
+  ' "$s" "${RUN_TO_GRACE_S:-40}" "$@"
+}
 
 # Every GitHub REST call is pinned to the sandbox repo: the repo it uses
 # ($EVAL_REPO) is asserted before each call.

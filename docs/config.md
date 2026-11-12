@@ -227,7 +227,8 @@ profile). Why: the repo root is the `claude -p` spawn cwd, so a `.env` there
 is one `cat .env` away from every run (settings deny `Read`, not a Bash
 `cat`). Move the file yourself; nothing in this repo moves or creates it.
 When `DEVLOOP_ENV_FILE` is set and a `.env` still exists in the repo root,
-`npm run loop` logs a warning at startup.
+`npm run loop` logs a warning at startup, unless the variable resolves to
+that root `.env` itself (e.g. `DEVLOOP_ENV_FILE=.env`).
 
 The assign call is wrapped in try/catch and surfaced via the existing
 `jiraSyncError` result field — a failed assignment never blocks the actual

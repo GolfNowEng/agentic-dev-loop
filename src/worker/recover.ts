@@ -13,6 +13,14 @@
 //     instead (Code Review with the PR-link QA stub, no rebuild), recorded as
 //     "skipped-pr-exists" with a landed dev phase carrying the PR, which
 //     resets failedAttempts and teaches findLandedPrUrlAcross the PR.
+// Every self-heal or resume first re-reads the live Jira status. Only
+// `claimStatus.to` proceeds as above, except for a dev resume (Ruling 51):
+// at `statusNames.prOpen` (Code Review) the dev run already landed (a signal
+// or crash hit after runDevPhase moved the ticket), so an open PR gets the
+// same skipped-pr-exists record without the Jira transition, and no open PR
+// (merged, closed, lookup failed) is resume-dropped; dev is never re-run
+// from Code Review. Any other status is resume-dropped. Research: only
+// `claimStatus.to`.
 // The log, not the lock, carries the resume because every --phase process
 // of a project shares the session dir (and auto-names dev-1): a --phase dev
 // start can adopt a --phase research crash. Keeping it in the log lets the
@@ -36,23 +44,40 @@ type Runner = (ctx: Ctx, t: JiraTicket, started: string) => Promise<WorkerIterat
 
 const flightTag = (f: InFlight): string => `in-flight ${f.role} run ${f.runDir} (since ${f.since})`;
 
-/** Open PR for a dev resume, or null (lookup failure -> null: re-run rather than guess). */
+/**
+ * Open PR for a dev resume, or null. A lookup failure is null: at In Progress
+ * that re-runs dev rather than guess; at Code Review it drops the resume.
+ */
 async function openPr(ctx: Ctx, ticket: string): Promise<string | null> {
   try {
     return await ctx.deps.findOpenPrUrl(ticket);
   } catch (err) {
-    ctx.log(`[worker] ${ticket}: open-PR lookup failed, will re-run dev: ${errorMessage(err)}`);
+    ctx.log(`[worker] ${ticket}: open-PR lookup failed (treated as no open PR): ${errorMessage(err)}`);
     return null;
   }
 }
 
-/** Self-heal a dev ticket whose PR is already open: Code Review, one resolved record. */
-async function selfHeal(ctx: Ctx, ticket: string, pr: string, runDir: string, since: string): Promise<WorkerIterationResult> {
+/**
+ * Self-heal a dev ticket whose PR is already open: one resolved record. With
+ * `transition`, the ticket is moved to Code Review first; without it (Ruling
+ * 51) it is already there and Jira is not touched.
+ */
+async function selfHeal(
+  ctx: Ctx,
+  ticket: string,
+  pr: string,
+  runDir: string,
+  since: string,
+  transition: boolean,
+): Promise<WorkerIterationResult> {
+  const prOpen = ctx.dev.statusNames.prOpen;
   const errors: string[] = [];
-  try {
-    await ctx.deps.jira.transitionStatus(ticket, ctx.dev.statusNames.prOpen, buildCodeReviewFields(ctx.dev, buildPrLinkQaNotesAdf(pr)));
-  } catch (err) {
-    errors.push(errorMessage(err));
+  if (transition) {
+    try {
+      await ctx.deps.jira.transitionStatus(ticket, prOpen, buildCodeReviewFields(ctx.dev, buildPrLinkQaNotesAdf(pr)));
+    } catch (err) {
+      errors.push(errorMessage(err));
+    }
   }
   const entry: PhaseEntry = {
     role: "dev",
@@ -71,11 +96,35 @@ async function selfHeal(ctx: Ctx, ticket: string, pr: string, runDir: string, si
     run_dir: runDir,
   };
   const record = await append(ctx, ticket, nowIso(ctx), "skipped-pr-exists", [entry], {
-    detail: `PR already open (${pr}); moved to ${ctx.dev.statusNames.prOpen} without a rebuild`,
+    detail: transition
+      ? `PR already open (${pr}); moved to ${prOpen} without a rebuild`
+      : `PR already open (${pr}); already in ${prOpen}, no transition, no rebuild`,
     ...(errors.length > 0 ? { jira_sync_error: errors.join("; ") } : {}),
   });
-  ctx.log(`[worker] ${ticket}: dev resume found an open PR (${pr}); self-healed to ${ctx.dev.statusNames.prOpen}`);
+  ctx.log(`[worker] ${ticket}: dev resume found an open PR (${pr}); ${transition ? `self-healed to ${prOpen}` : `already in ${prOpen}, recorded without a transition`}`);
   return { kind: "did", record };
+}
+
+/** A phase-less resume-dropped record (not an attempt, no `resume`: resolves the pending resume). */
+async function dropResume(ctx: Ctx, ticket: string, detail: string): Promise<WorkerIterationResult> {
+  const record = await append(ctx, ticket, nowIso(ctx), "resume-dropped", [], { detail });
+  ctx.log(`[worker] ${ticket}: ${record.detail}`);
+  return { kind: "did", record };
+}
+
+/**
+ * A dev resume whose ticket is at Code Review (Ruling 51): the dev run had
+ * landed. An open PR is recorded skipped-pr-exists without a transition;
+ * none (merged, closed, lookup failed) drops the resume. Dev is never re-run.
+ */
+async function resolveAtCodeReview(ctx: Ctx, ticket: string, runDir: string, since: string, suffix: string): Promise<WorkerIterationResult> {
+  const pr = await openPr(ctx, ticket);
+  if (pr) return selfHeal(ctx, ticket, pr, runDir, since, false);
+  return dropResume(
+    ctx,
+    ticket,
+    `resume of the dev phase dropped: status is "${ctx.dev.statusNames.prOpen}" (Code Review with no open PR: merged, closed or lookup failed); dev is not re-run${suffix}`,
+  );
 }
 
 /** First iteration: make every adopted flight durable in the log (idempotent per run dir). Returns the last self-heal, if any. */
@@ -93,17 +142,17 @@ export async function recordFlights(ctx: Ctx, flights: InFlight[]): Promise<Work
       } catch (err) {
         ctx.log(`[worker] ${f.ticket}: status lookup failed, recording the flight for a later resume: ${errorMessage(err)}`);
       }
+      if (status !== null && status === ctx.dev.statusNames.prOpen) {
+        healed = await resolveAtCodeReview(ctx, f.ticket, f.runDir, f.since, ` (${tag})`);
+        continue;
+      }
       if (status !== null && status !== ctx.research.claimStatus.to) {
-        const record = await append(ctx, f.ticket, nowIso(ctx), "resume-dropped", [], {
-          detail: `resume of the dev phase dropped: status is now "${status}", not "${ctx.research.claimStatus.to}" (${tag})`,
-        });
-        ctx.log(`[worker] ${f.ticket}: ${record.detail}`);
-        healed = { kind: "did", record };
+        healed = await dropResume(ctx, f.ticket, `resume of the dev phase dropped: status is now "${status}", not "${ctx.research.claimStatus.to}" (${tag})`);
         continue;
       }
       const pr = status === null ? null : await openPr(ctx, f.ticket);
       if (pr) {
-        healed = await selfHeal(ctx, f.ticket, pr, f.runDir, f.since);
+        healed = await selfHeal(ctx, f.ticket, pr, f.runDir, f.since, true);
         continue;
       }
     }
@@ -150,17 +199,16 @@ export async function resumeNext(ctx: Ctx, researchThenDev: Runner, devOnly: Run
     return null;
   }
   const expected = ctx.research.claimStatus.to;
+  if (next.role === "dev" && status === ctx.dev.statusNames.prOpen) {
+    return resolveAtCodeReview(ctx, next.ticket, next.runDir, next.since, "");
+  }
   if (status !== expected) {
-    const record = await append(ctx, next.ticket, nowIso(ctx), "resume-dropped", [], {
-      detail: `resume of the ${next.role} phase dropped: status is now "${status}", not "${expected}"`,
-    });
-    ctx.log(`[worker] ${next.ticket}: ${record.detail}`);
-    return { kind: "did", record };
+    return dropResume(ctx, next.ticket, `resume of the ${next.role} phase dropped: status is now "${status}", not "${expected}"`);
   }
   ctx.log(`[worker] ${next.ticket}: resuming the ${next.role} phase (no claim)`);
   if (next.role === "dev") {
     const pr = await openPr(ctx, next.ticket);
-    if (pr) return selfHeal(ctx, next.ticket, pr, next.runDir, next.since);
+    if (pr) return selfHeal(ctx, next.ticket, pr, next.runDir, next.since, true);
   }
   const label = next.role === "research" ? ctx.research.triggerLabel : ctx.dev.triggerLabel;
   const t = knownTicket(ctx, next.ticket, [label]);

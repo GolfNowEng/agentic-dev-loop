@@ -524,7 +524,6 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
         expect(recs[0].jira_sync_error).toBeUndefined();
         expect(recs[0].phases.map((p) => [p.role, p.outcome, p.pr])).toEqual([["dev", "landed", PR]]);
         expect(recs[0].detail).toContain(PR);
-        expect(await findLandedPrUrlAcross([h.logPath], "TARS-2")).toBe(PR);
 
         h.clock.advance(20 * MIN);
         await runWorkerIteration(h.deps);

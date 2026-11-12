@@ -16,6 +16,13 @@
 set -u
 . "$(dirname "$0")/lib.sh"
 
+# A live run is paid and writes real Jira tickets and sandbox PRs: never from
+# inside a Claude Code session (CLAUDECODE is set there, including for a
+# `claude -p` agent whose cwd is this repo). Dry mode still runs (M5).
+if [ "$EVAL_MODE" = live ] && [ -n "${CLAUDECODE+set}" ]; then
+  die "DRY_RUN=0 (live) refused: CLAUDECODE is set, so this is running inside a Claude Code session; a human must run live evals from their own shell"
+fi
+
 SCENARIOS="clean ambiguous dev-bounce blocked queue"
 # research 120 + dev 75 min runTimeoutMin, plus slack.
 RUN_TIMEOUT_S="${EVAL_RUN_TIMEOUT_S:-12600}"
