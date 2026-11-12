@@ -94,3 +94,14 @@ describe("preflight", () => {
     expect(preflight(mgmt, "dev", "2.0.0")).toEqual({ warnings: [] });
   });
 });
+
+describe("parseArgs: --sandbox", () => {
+  it("reads --sandbox=<name>; absent is undefined", () => {
+    expect(parseArgs(["--project=p", "--sandbox=none"]).sandbox).toBe("none");
+    expect(parseArgs(["--project=p"]).sandbox).toBeUndefined();
+  });
+
+  it("refuses the space form with the replacement", () => {
+    expect(() => parseArgs(["--project=p", "--sandbox", "none"])).toThrow("use --sandbox=none");
+  });
+});
