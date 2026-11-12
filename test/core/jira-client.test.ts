@@ -327,6 +327,29 @@ describe("RealJiraClient", () => {
     });
   });
 
+  it("getStatus GETs the status field and returns the status name", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ fields: { status: { name: "Blocked", statusCategory: { key: "indeterminate" } } } }), { status: 200 }),
+    );
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    await expect(client.getStatus("PROJ-1")).resolves.toBe("Blocked");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://example.atlassian.net/rest/api/3/issue/PROJ-1?fields=status");
+    expect(init.method ?? "GET").toBe("GET");
+  });
+
+  it("getStatus rejects on a non-2xx response", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("nope", { status: 500 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+    await expect(client.getStatus("PROJ-1")).rejects.toThrow();
+  });
+
+  it("StubJiraClient.getStatus throws not-configured", async () => {
+    await expect(new StubJiraClient({ blockedBy: {} }).getStatus("PROJ-1")).rejects.toThrow(/getStatus/);
+  });
+
   it("swapLabel PUTs the labels field with a remove/add op pair", async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
     const client = new RealJiraClient(CREDENTIALS, makeConfig());

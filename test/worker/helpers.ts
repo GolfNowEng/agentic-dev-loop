@@ -35,6 +35,9 @@ export class FakeJira extends StubJiraClient {
   assignImpl: (key: string) => Promise<void> = async () => {};
   commentImpl: (key: string) => Promise<void> = async () => {};
   comments: Array<{ key: string; body: Record<string, unknown> }> = [];
+  /** Live status by key; unknown keys read "In Progress" (the claim target). */
+  statuses: Record<string, string> = {};
+  statusImpl: (key: string) => Promise<void> = async () => {};
 
   constructor(events: Event[]) {
     super({ blockedBy: {} });
@@ -86,6 +89,12 @@ export class FakeJira extends StubJiraClient {
 
   async removeLabel(key: string, label: string): Promise<void> {
     this.events.push(["removeLabel", key, label]);
+  }
+
+  async getStatus(key: string): Promise<string> {
+    this.events.push(["getStatus", key]);
+    await this.statusImpl(key);
+    return this.statuses[key] ?? "In Progress";
   }
 
   async getBlockedBy(key: string): Promise<string[]> {

@@ -420,6 +420,87 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
     expect(h.jira.calls("claimTicket")).toEqual([]);
   });
 
+  describe("resume re-reads the Jira status first (M5)", () => {
+    const researchFlight = () =>
+      makeSession("dev-1", { ticket: "TARS-1", role: "research", runDir: v2RunDir("repo", "dev-1", "TARS-1", "research", "20261111T110000Z"), since: "2026-11-11T11:00:00.000Z" });
+    const devFlight = (interrupted = false) =>
+      makeSession("dev-1", { ticket: "TARS-2", role: "dev", runDir: v2RunDir("repo", "dev-1", "TARS-2", "dev", "20261111T110000Z"), since: "2026-11-11T11:00:00.000Z", ...(interrupted ? { interrupted } : {}) });
+
+    it("(a) research flight, status now Done -> resume-dropped, no run, no claim, not resumed again", async () => {
+      h = await harness({ session: researchFlight() });
+      h.jira.statuses["TARS-1"] = "Done";
+
+      const result = await runWorkerIteration(h.deps);
+
+      expect(result.kind).toBe("did");
+      expect(runSkillCalls(h)).toEqual([]);
+      expect(h.jira.calls("claimTicket")).toEqual([]);
+      const recs = await records(h);
+      expect(recs).toHaveLength(2);
+      expect(recs[1]).toMatchObject({
+        ticket: "TARS-1",
+        outcome: "resume-dropped",
+        phases: [],
+        detail: 'resume of the research phase dropped: status is now "Done", not "In Progress"',
+      });
+      expect(recs[1].resume).toBeUndefined();
+
+      h.clock.advance(20 * MIN);
+      await runWorkerIteration(h.deps);
+      expect(runSkillCalls(h)).toEqual([]);
+      expect((await records(h)).filter((r) => r.outcome === "resume-dropped")).toHaveLength(1);
+    });
+
+    it("(b) interrupted dev flight, status Blocked -> dropped, no open-PR lookup, no run", async () => {
+      const findOpenPrUrl = vi.fn(async () => "https://github.com/org/repo/pull/9");
+      h = await harness({ session: devFlight(true), deps: { findOpenPrUrl } });
+      h.jira.statuses["TARS-2"] = "Blocked";
+
+      await runWorkerIteration(h.deps);
+
+      expect(runSkillCalls(h)).toEqual([]);
+      expect(h.jira.calls("transitionStatus")).toEqual([]);
+      const recs = await records(h);
+      expect(recs.at(-1)).toMatchObject({
+        ticket: "TARS-2",
+        outcome: "resume-dropped",
+        phases: [],
+        detail: 'resume of the dev phase dropped: status is now "Blocked", not "In Progress"',
+      });
+      expect(findOpenPrUrl).not.toHaveBeenCalled();
+    });
+
+    it("(c) status In Progress -> resumes as before", async () => {
+      h = await harness({ session: researchFlight() });
+      h.jira.statuses["TARS-1"] = "In Progress";
+      await runWorkerIteration(h.deps);
+      expect(runSkillCalls(h)[0].slice(1, 3)).toEqual(["research", "TARS-1"]);
+      expect((await records(h)).some((r) => r.outcome === "resume-dropped")).toBe(false);
+    });
+
+    it("(d) getStatus throws -> no record, nothing resumed, ticket not claimed/run; next iteration resumes", async () => {
+      h = await harness({ session: researchFlight() });
+      h.jira.research = [ticket("TARS-1")];
+      h.jira.statusImpl = async () => {
+        throw new Error("jira 503");
+      };
+
+      await runWorkerIteration(h.deps);
+
+      const recs = await records(h);
+      expect(recs).toHaveLength(1); // only the recorded crash flight
+      expect(recs[0]).toMatchObject({ ticket: "TARS-1", resume: "research" });
+      expect(runSkillCalls(h)).toEqual([]);
+      expect(h.jira.calls("claimTicket")).toEqual([]);
+
+      h.jira.statusImpl = async () => {};
+      h.clock.advance(20 * MIN);
+      await runWorkerIteration(h.deps);
+      expect(runSkillCalls(h)[0].slice(1, 3)).toEqual(["research", "TARS-1"]);
+      expect(h.jira.calls("claimTicket")).toEqual([]);
+    });
+  });
+
   it("orphanedInFlight records are resumed after the primary one, one per iteration, never dropped", async () => {
     const rd = (k: string, r: "research" | "dev") => v2RunDir("repo", "dev-1", k, r, "20261111T110000Z");
     h = await harness({
