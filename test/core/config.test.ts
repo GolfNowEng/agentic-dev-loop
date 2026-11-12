@@ -642,6 +642,10 @@ describe("validateConfig: optional sandbox block", () => {
     );
   });
 
+  it("rejects a non-string adapter with a type error", () => {
+    expect(() => validateConfig(withSandbox({ adapter: 5 }))).toThrow("sandbox.adapter must be a non-empty string");
+  });
+
   it("rejects a bad mode", () => {
     expect(() => validateConfig(withSandbox({ adapter: "none", mode: "loud" }))).toThrow(
       'sandbox.mode must be "discover" or "enforce" (got "loud")',
