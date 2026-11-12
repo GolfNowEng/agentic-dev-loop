@@ -187,11 +187,12 @@ the repo root). v2: `runs/v2/<project>.jsonl`; run dirs
 `.pipeline/v2/<project>/<session>/<ticket>/<phase>-<runId>/` (raw usage is
 `usage.json` inside); clone `.pipeline/v2/<project>/repo`; `.../sessions`.
 v1 archive: `runs/v1/<role>/<project>.jsonl`. `--phase research|dev` write
-v2 records to `runs/v2/<project>.jsonl` (2.0.0 Task 13). Until Task 15 the
-skills still create their own run dir under the cwd-relative legacy
-`.pipeline/<slug>/runs/`, where main.ts finds `verdict.json` (the
-`legacyRunDirs` function, the only legacy path left); raw claude usage goes
-to `usage.json` in the v2 run dir. Reset works on the v2 layout only
+v2 records to `runs/v2/<project>.jsonl` (2.0.0 Task 13). The runner passes
+each skill its v2 run dir as `run-dir=` (absolute) and its target checkout as
+`repo-dir=` (Task 15, `docs/skills.md` "Invocation contract"); the skill writes
+`progress.jsonl`, `draft-spec.md` and `verdict.json` there, and raw claude
+usage goes to `usage.json` beside them. No skill derives a run path, and the
+cwd-relative legacy path functions are gone. Reset works on the v2 layout only
 (`docs/reset.md`); `runs/v2/<project>.reset-archive.jsonl` holds what it
 archived.
 

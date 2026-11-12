@@ -43,32 +43,3 @@ export async function hasLandedRun(filePath: string, ticketKey: string): Promise
   }
   return lines.some((line) => line.ticket === ticketKey && line.outcome === "landed");
 }
-
-/**
- * Find the most recent run for this ticket key in runs.jsonl that has a
- * PR URL attached -- "landed" (fully succeeded) or "bounced" (intake
- * found a pre-existing PR already open, nothing new to do; see
- * roles/dev/phase.ts's bounced-with-existing-PR branch). Widened beyond
- * "landed" so reset-project's --close-remote can find and close any open
- * PR for a ticket being torn down, not just one from a run that fully
- * landed -- per this session's decision that a reset should close
- * whatever PR exists, regardless of whether that specific run succeeded.
- * Used by reset-project's remote-close module (both roles: a research
- * runs.jsonl always has `pr: null`, so this returns null there). Moved
- * here from roles/dev/reconcile.ts so core never imports a role module;
- * reconcile and the dev landed-ticket guard use findLandedPrUrl /
- * findLandedTickets instead.
- */
-export async function findOpenPrUrl(runsLogPath: string, ticketKey: string): Promise<string | null> {
-  let lines: RunLogLine[];
-  try {
-    lines = await readRunLog(runsLogPath);
-  } catch {
-    return null;
-  }
-  const openPrLines = lines.filter(
-    (l) => l.ticket === ticketKey && (l.outcome === "landed" || l.outcome === "bounced") && l.pr,
-  );
-  const last = openPrLines[openPrLines.length - 1];
-  return last?.pr ?? null;
-}

@@ -181,7 +181,7 @@ async function main(): Promise<void> {
     const credentials = credentialsFromEnv();
     const jiraClient = new RealJiraClient(credentials, config);
     const githubClient = new RealGitHubClient(config.github, realExecGh());
-    const remoteSummary = await executeRemoteClose(remotePlan, { jiraClient, githubClient, runsLogPath: plan.runsLogPath });
+    const remoteSummary = await executeRemoteClose(remotePlan, { jiraClient, githubClient });
     console.log(describeRemoteCloseSummary(remoteSummary));
   }
 

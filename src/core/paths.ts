@@ -14,8 +14,6 @@ export const SESSION_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 export const PROJECT_SLUG = /^[a-z0-9-]+$/;
 /** The format runIdNow() produces. */
 export const RUN_ID = /^\d{8}T\d{6}Z$/;
-/** v1 slugs come from repoSlugFromUrl (any repo name): a single safe segment. */
-const LEGACY_SLUG = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 
 export class UnsafePathError extends Error {
   constructor(message: string) {
@@ -120,16 +118,4 @@ export function resolveRepoPath(rel: string): string {
   if (isAbsolute(rel)) throw new UnsafePathError(`path ${JSON.stringify(rel)} must be repo-relative`);
   contain(rel, REPO_ROOT, [...V2, "runs/v1", ...PRE_CUTOVER]);
   return resolve(REPO_ROOT, rel);
-}
-
-// ---- v1 --phase runner verdict discovery: RELATIVE, resolved against process.cwd() ----
-
-/**
- * .pipeline/<slug>/runs, relative to cwd: where the skills still write their
- * own RUN_DIR, so main.ts's RunSkillFn can find the verdict.
- * @deprecated — v1 layout; only main.ts's v1 verdict discovery uses it, until Task 15 (Ruling 17)
- */
-export function legacyRunDirs(slug: string): string {
-  check("slug", slug, LEGACY_SLUG);
-  return contain(`.pipeline/${slug}/runs`, process.cwd(), [".pipeline"]);
 }

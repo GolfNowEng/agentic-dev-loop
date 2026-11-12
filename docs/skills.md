@@ -1,11 +1,48 @@
 # Skills
 
 > Merged in dev-loop 2.0.0: one repo, two phases. `## Research phase` is the
-> former research-loop doc (`--phase research`); `## Dev phase` is the former
-> dev-loop doc (`--phase dev`). Wording inside each section still describes its
+> former research-loop doc; `## Dev phase` is the former dev-loop doc. Wording inside each section still describes its
 > repo as it was; "this repo" / "the sibling repo" there means that phase, and
 > paths like `src/types.ts` map to `src/core/` and `src/roles/<phase>/` now.
 > See `docs/migration-ledger.md`.
+
+## Invocation contract (2.0.0, both skills)
+
+The loop runner (`src/worker/skill-runner.ts`) invokes each skill as
+
+```
+/<ticket-refine|ticket-to-pr> <KEY> run-dir=<abs RUN_DIR> repo-dir=<abs REPO_DIR>
+```
+
+- `RUN_DIR` is `resolveRepoPath(v2RunDir(...))`:
+  `<repo>/.pipeline/v2/<project>/<session>/<KEY>/<role>-<RUN_ID>`. The runner
+  creates it before spawning and afterwards reads `RUN_DIR/verdict.json`, the
+  only place a verdict is read. Raw claude usage goes to `RUN_DIR/usage.json`.
+- `REPO_DIR` is `targetRepo.path` when set, else the absolute v2 clone
+  (`v2CloneDir`). The skill clones it if it has no `.git` yet, and creates its
+  per-run worktree inside it: `<REPO_DIR>/.claude/worktrees/<KEY>-<RUN_ID>`
+  (ticket-to-pr) or `...-<RUN_ID>-ground` (ticket-refine). `RUN_ID` is the last
+  segment of `RUN_DIR` after its `<role>-` prefix.
+- `src/core/build-prompt.ts` builds the line from validated values only (the
+  key through `TICKET_KEY`, absolute normalized paths with no whitespace, a
+  run dir ending in `/<KEY>/<role>-<RUN_ID>` under `/.pipeline/v2/`) and throws
+  otherwise. The skills check again: a missing or malformed `run-dir=`/
+  `repo-dir=` (not absolute, or no `/.pipeline/v2/`) means write no files and
+  stop with `agent_error`. Skills never derive a run path.
+- Both roles spawn with cwd = the repo root. Research adds
+  `--settings {"claudeMdExcludes":["<repo>/CLAUDE.md"]}` (the root CLAUDE.md
+  is the dev stance) and `--append-system-prompt <src/roles/research/stance.md>`
+  (the skeptic stance; formerly `research-loop/CLAUDE.md`, which is gone).
+- Every spawn: `--max-budget-usd`, a kill at the role's `runTimeoutMin`, and
+  `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = runTimeoutMin × 60000`.
+- The contract strings (`✅ research-loop -`, `❌ research-loop -`) are
+  `CONTRACT` in `src/core/contract.ts`; `test/core/contract.test.ts` pins them
+  byte-for-byte in both SKILL.md files. `test/structure.test.ts` checks every
+  path `.claude/**` names exists and that no skill or agent hardcodes
+  `.pipeline/`.
+
+Where the sections below say "invoked as `claude -p "/ticket-refine <KEY>"`"
+or name `.pipeline/<slug>/...` paths, read the contract above.
 
 ## Research phase
 

@@ -1,30 +1,29 @@
 /**
  * CLI entrypoint:
- *   `node --env-file=.env src/main.ts --phase research|dev --project <name> [--session <name>] [--once] [--stream]`
+ *   `node --env-file=.env src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--once] [--stream]`
  * `--config <path>` also works as a fallback for an arbitrary path outside
- * the naming convention; passing both --project and --config is an error.
- * `--phase` is required until Task 15 adds worker mode (both roles).
+ * the naming convention; passing both --project and --config is an error
+ * (src/core/cli-args.ts parses and tests all of it).
  *
- * Both phases load the one v2 project config and the repo-root
- * `pipeline.loop.config.json`, acquire a worker session
- * (`.pipeline/v2/<slug>/sessions`, one live worker per project), and loop on
- * `runWorkerIteration` (src/worker/cycle.ts) restricted to one role:
- *   - research: claim + ticket-refine; a green ticket is left with a pending
- *     handoff for a dev-enabled worker (no label swap, no dev).
- *   - dev: completes pending handoffs, then polls the dev JQL and runs
- *     ticket-to-pr; plus the merged-PR reconciliation pass over the v1 and
- *     v2 landed logs.
- * Each writes one v2 iteration record per ticket iteration to
- * `runs/v2/<slug>.jsonl`; an idle iteration writes nothing.
+ * `--phase worker` (the default) runs both roles on one session:
+ * `runWorkerIteration` claims a ticket, runs ticket-refine, hands it off and
+ * runs ticket-to-pr on it, plus the merged-PR reconciliation pass.
+ * `--phase research|dev` run the same cycle restricted to one role (kept
+ * for regression).
  *
- * Until Task 15 the skills still derive their own RUN_DIR as
- * `.pipeline/<SLUG>/runs/<KEY>-<RUN_ID>` relative to their cwd, so runSkill
- * reads the verdict the v1 way (snapshot/newest run dir), and the research
- * process still chdirs into `research-loop/` (its CLAUDE.md and the
- * `.claude` symlink live there). The cycle's v2 run dir is used for the
- * in-flight record, PhaseEntry.run_dir and `usage.json` (raw claude usage).
- * Every spawn gets `--max-budget-usd` from the cycle (Ruling 16) and a hard
- * kill at the role's `runTimeoutMin`.
+ * Startup order: resolve the config path -> loadConfig -> preflight
+ * (requiredPlaceholderFree(phase), then in worker mode the label-version
+ * guard: a v1-labelled project such as catalog-ui-* exits 1, a minor/patch
+ * difference is a warning) -> credentials -> acquireSession (one live worker
+ * per project; a second start names the live session and exits 1) ->
+ * record the adopted in-flight runs -> loop. SIGINT/SIGTERM release the lock
+ * unless a phase is mid-run (then its flight is marked interrupted).
+ *
+ * Every spawn runs from the repo root and gets
+ * `/<skill> <KEY> run-dir=<abs RUN_DIR> repo-dir=<abs REPO_DIR>`
+ * (src/worker/skill-runner.ts); the verdict is read from RUN_DIR/verdict.json
+ * only. Research excludes the root CLAUDE.md and appends
+ * src/roles/research/stance.md as its system prompt.
  *
  * This file is deliberately the untested composition root -- every piece of
  * logic it uses already has vitest coverage against injected fakes; this is
@@ -32,18 +31,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import {
-  loadConfig,
-  loadLoopConfig,
-  requiredPlaceholderFree,
-  roleView,
-  repoSlugFromUrl,
-  targetRepoAddDir,
-  resolveProjectConfigPath,
-} from "./core/config.ts";
-import type { Config, LoopConfig, RoleLimits } from "./core/types.ts";
+import { resolve } from "node:path";
+import { loadConfig, loadLoopConfig, repoSlugFromUrl, resolveProjectConfigPath } from "./core/config.ts";
+import type { Config, LoopConfig, Role } from "./core/types.ts";
 import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./core/jira-client.ts";
 import type { JiraCredentials } from "./core/jira-client.ts";
 import {
@@ -53,91 +43,25 @@ import {
   realExecGhFindMergedPr,
   realFindOpenPrUrl,
 } from "./core/github-client.ts";
-import { snapshotRunDirs, findNewestRunDir } from "./core/run-dirs.ts";
 import { redactSensitive } from "./core/redact.ts";
 import { decideNextAction, type PollResultKind } from "./core/poll-loop.ts";
-import { PROJECT_SLUG, legacyRunDirs, resolveRepoPath, v2RunsLog, v2SessionsDir } from "./core/paths.ts";
-import { acquireSession, isProcessAlive, type Session } from "./core/session.ts";
+import { PROJECT_SLUG, resolveRepoPath, v2RunsLog, v2SessionsDir } from "./core/paths.ts";
+import { acquireSession, isProcessAlive, LiveWorkerError } from "./core/session.ts";
 import { trackSession, type TrackedSession } from "./worker/signal.ts";
 import { findLandedPrUrlAcross, hasLandedV1 } from "./core/iteration-log.ts";
-import type { RunSkillFn, RunSkillResult } from "./core/run-skill.ts";
-import { spawnClaudeRun, startProgressTail } from "./core/spawn-claude.ts";
+import { parseArgs, preflight, type Phase } from "./core/cli-args.ts";
+import { SKILL_NAME } from "./core/build-prompt.ts";
+import { spawnClaudeRun } from "./core/spawn-claude.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
+import { makeRunSkill } from "./worker/skill-runner.ts";
 import { reconcileMergedTickets } from "./roles/dev/reconcile.ts";
-import { ALLOWED_TOOLS as DEV_ALLOWED_TOOLS } from "./roles/dev/tools.ts";
-import { devEarlySkillResult } from "./roles/dev/spawn-result.ts";
-import { ALLOWED_TOOLS as RESEARCH_ALLOWED_TOOLS } from "./roles/research/tools.ts";
-import { researchEarlySkillResult } from "./roles/research/spawn-result.ts";
-import {
-  assertResearchRoot,
-  researchClaudeMdExcludes,
-  REFINE_SKILL_MD_PATH,
-} from "./roles/research/startup.ts";
+import { loadResearchStance, REFINE_SKILL_MD_PATH } from "./roles/research/startup.ts";
 import pkg from "../package.json" with { type: "json" };
 
-type Phase = "research" | "dev";
-
-const MODEL = "sonnet";
-const SKILL_NAME: Record<Phase, string> = { research: "ticket-refine", dev: "ticket-to-pr" };
 const DEV_SKILL_MD_PATH = ".claude/skills/ticket-to-pr/SKILL.md";
 const LOOP_VERSION: string = pkg.version;
-
-/**
- * Each phase's v1 root, relative to the repo root: the process chdirs here
- * before anything else, so every relative path below (config, runs/,
- * .pipeline/) and the spawned claude's cwd match that role's v1 checkout.
- */
-const PHASE_ROOT: Record<Phase, string> = { research: "research-loop", dev: "." };
-
-
-/**
- * Reads a flag's value in either `--name value` (space-separated) or
- * `--name=value` (equals-separated) form -- the latter lets a value-taking
- * flag sit next to a boolean one (`--stream --project=webtarsthree`)
- * without the space-separated form's visual ambiguity about which token
- * belongs to which flag.
- */
-function getArgValue(argv: string[], name: string): string | undefined {
-  const eqPrefix = `${name}=`;
-  const eqArg = argv.find((arg) => arg.startsWith(eqPrefix));
-  if (eqArg !== undefined) return eqArg.slice(eqPrefix.length);
-  const index = argv.indexOf(name);
-  return index !== -1 ? argv[index + 1] : undefined;
-}
-
-function parseArgs(argv: string[]): {
-  phase: Phase;
-  project?: string;
-  configPath?: string;
-  session?: string;
-  once: boolean;
-  stream: boolean;
-} {
-  const phase = getArgValue(argv, "--phase");
-  if (phase !== "research" && phase !== "dev") {
-    throw new Error(
-      `main.ts requires --phase research|dev${phase === undefined ? "" : ` (got "${phase}")`}.`,
-    );
-  }
-  const project = getArgValue(argv, "--project");
-  const configPath = getArgValue(argv, "--config");
-  if (project && configPath) {
-    throw new Error("main.ts: pass either --project <name> or --config <path>, not both.");
-  }
-  if (!project && !configPath) {
-    throw new Error(
-      "main.ts requires --project <name> (or --config <path-to-pipeline.<project>.config.json> as a fallback).",
-    );
-  }
-  return {
-    phase,
-    project,
-    configPath,
-    session: getArgValue(argv, "--session"),
-    once: argv.includes("--once"),
-    stream: argv.includes("--stream"),
-  };
-}
+/** The repo root: both roles spawn here, and every relative path resolves against it. */
+const REPO_ROOT = resolve(import.meta.dirname, "..");
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -162,46 +86,18 @@ function logError(message: string): void {
 function gitFileSha(relativePath: string): string {
   return execFileSync("git", ["log", "-1", "--format=%H", "--", relativePath], {
     encoding: "utf8",
+    cwd: REPO_ROOT,
   }).trim();
 }
 
-/** Prints claude's own result text and permission denials when a run left no usable verdict. */
-function logNoVerdictDiagnostics(skill: string, ticketKey: string, stdout: string): void {
-  try {
-    const parsed = JSON.parse(stdout) as {
-      result?: string;
-      permission_denials?: Array<{ tool_name: string }>;
-    } | null;
-    if (parsed?.result) {
-      logError(`[${skill}] ${ticketKey}: claude's own result text: ${parsed.result}`);
-    }
-    if (parsed?.permission_denials?.length) {
-      const denied = parsed.permission_denials.map((d) => d.tool_name).join(", ");
-      logError(`[${skill}] ${ticketKey}: permission denials: ${denied}`);
-    }
-  } catch {
-    // Diagnostic logging must never itself crash the loop.
-  }
-}
-
-/** The env both phases spawn claude with (childEnv() in spawn-claude strips the JIRA_* creds). */
-function claudeEnvFor(limits: RoleLimits): NodeJS.ProcessEnv {
-  // Align the CLI's own internal background-task wait ceiling with this
-  // project's own runTimeoutMin ceiling, computed from config so the two
-  // can never drift out of sync -- without this, a subagent that
-  // legitimately runs long gets its whole headless session killed at the
-  // CLI's 600s default, well before this project's own timeout would have
-  // caught it.
-  return {
-    ...process.env,
-    CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(limits.runTimeoutMin * 60_000),
-  };
-}
+const rolesOf = (phase: Phase): Role[] => (phase === "worker" ? ["research", "dev"] : [phase]);
+const prefixOf = (phase: Phase): string => (phase === "worker" ? "worker" : SKILL_NAME[phase]);
 
 // ---------------------------------------------------------------------------
 
-interface PhaseContext {
+interface LoopContext {
   phase: Phase;
+  roles: Role[];
   config: Config;
   loopConfig: LoopConfig;
   once: boolean;
@@ -210,14 +106,11 @@ interface PhaseContext {
   jiraClient: RealJiraClient;
   githubClient: RealGitHubClient;
   slug: string;
-  /** v1 run-dir root the skill still writes to (cwd-relative), for verdict discovery. */
-  runsBaseDir: string;
-  /** CLAUDE.md files the spawned claude must not load (research: dev's root CLAUDE.md). */
-  excludeClaudeMd: string[];
+  researchStance: string;
 }
 
 /** Research only: find or create the ticket's mirror GitHub Issue before the run. Never throws. */
-async function ensureMirrorIssue(ctx: PhaseContext, ticketKey: string): Promise<void> {
+async function ensureMirrorIssue(ctx: LoopContext, ticketKey: string): Promise<void> {
   const skill = SKILL_NAME.research;
   try {
     const existing = await ctx.githubClient.findIssueByJiraKey(ticketKey);
@@ -237,65 +130,9 @@ async function ensureMirrorIssue(ctx: PhaseContext, ticketKey: string): Promise<
   }
 }
 
-/** The real RunSkillFn: one `claude -p` spawn, verdict read the v1 way (Ruling 17). Never throws for a run failure. */
-function makeRunSkill(ctx: PhaseContext): RunSkillFn {
-  const skillVersion: Record<Phase, string> = {
-    research: ctx.phase === "research" ? gitFileSha(REFINE_SKILL_MD_PATH) : "",
-    dev: ctx.phase === "dev" ? gitFileSha(DEV_SKILL_MD_PATH) : "",
-  };
-  return async ({ role, ticketKey, runDir, maxBudgetUsd }): Promise<RunSkillResult> => {
-    const skill = SKILL_NAME[role];
-    const view = roleView(ctx.config, role);
-    if (role === "research") await ensureMirrorIssue(ctx, ticketKey);
-
-    const before = await snapshotRunDirs(ctx.runsBaseDir, ticketKey);
-    log(`[${skill}] ${ticketKey}: running (run dir ${runDir}, budget $${maxBudgetUsd})...`);
-    const tail = startProgressTail(ctx.runsBaseDir, ticketKey, before, skill, log);
-    const run = await spawnClaudeRun(
-      {
-        prompt: `/${skill} ${ticketKey}`,
-        model: MODEL,
-        allowedTools: role === "research" ? RESEARCH_ALLOWED_TOOLS : DEV_ALLOWED_TOOLS,
-        // ticket-to-pr's worktrees live inside targetRepo.path: without
-        // --add-dir every Edit/Write there is denied (TARS-1393).
-        addDir: role === "dev" ? targetRepoAddDir(ctx.config) : null,
-        excludeClaudeMd: role === "research" ? ctx.excludeClaudeMd : [],
-        timeoutMin: view.limits.runTimeoutMin,
-        maxBudgetUsd,
-        stream: ctx.stream,
-        ticketKey,
-        rawUsagePath: join(resolveRepoPath(runDir), "usage.json"),
-        env: claudeEnvFor(view.limits),
-      },
-      { logPrefix: skill, log, logError },
-    );
-    await tail.stop();
-
-    const base = { skillVersion: skillVersion[role], model: MODEL };
-    const early =
-      role === "research"
-        ? researchEarlySkillResult(run, base, view.limits.runTimeoutMin)
-        : devEarlySkillResult(run, base, view.limits.runTimeoutMin);
-    if (early) return early;
-
-    const runDirName = await findNewestRunDir(ctx.runsBaseDir, ticketKey, before);
-    let verdictRaw: string | undefined;
-    if (runDirName) {
-      try {
-        // Redacted before it leaves here: the skill's self-report lands in the record's detail.
-        verdictRaw = redactSensitive(await readFile(join(ctx.runsBaseDir, runDirName, "verdict.json"), "utf8"));
-      } catch {
-        verdictRaw = undefined;
-      }
-    }
-    if (verdictRaw === undefined) logNoVerdictDiagnostics(skill, ticketKey, run.stdout);
-    return { ...base, verdictRaw, started: run.started, ended: run.ended, costUsd: run.usage.costUsd, tokens: run.usage.tokens };
-  };
-}
-
 /** Dev only: the merged-PR reconciliation pass over the v1 and v2 landed logs. Never throws. */
 async function reconcile(
-  ctx: PhaseContext,
+  ctx: LoopContext,
   session: string,
   execGhPrView: ReturnType<typeof realExecGhPrView>,
   reconciled: Set<string>,
@@ -306,7 +143,7 @@ async function reconcile(
       jiraClient: ctx.jiraClient,
       githubClient: ctx.githubClient,
       config: ctx.config,
-      slug: v2Slug(ctx.slug),
+      slug: ctx.slug,
       session,
       execGhPrView,
       execGhFindMergedPr: realExecGhFindMergedPr(ctx.config.github.repo),
@@ -319,33 +156,48 @@ async function reconcile(
   }
 }
 
-async function runPhaseLoop(ctx: PhaseContext, tracked: TrackedSession, assigneeAccountId: string): Promise<void> {
+async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccountId: string): Promise<void> {
   const session = tracked.session;
-  const prefix = SKILL_NAME[ctx.phase];
-  const { config, loopConfig, once } = ctx;
-  const projectSlug = v2Slug(ctx.slug);
+  const prefix = prefixOf(ctx.phase);
+  const { config, loopConfig, once, slug } = ctx;
   const execGhPrView = realExecGhPrView();
+  const runsResearch = ctx.roles.includes("research");
+  const runsDev = ctx.roles.includes("dev");
   const deps: WorkerDeps = {
     jira: ctx.jiraClient,
     github: ctx.githubClient,
     config,
-    slug: projectSlug,
+    slug,
     session,
     loopVersion: LOOP_VERSION,
-    runSkill: makeRunSkill(ctx),
-    logPath: resolveRepoPath(v2RunsLog(projectSlug)),
+    runSkill: makeRunSkill({
+      config,
+      slug,
+      repoRoot: REPO_ROOT,
+      stream: ctx.stream,
+      researchStance: ctx.researchStance,
+      skillVersion: {
+        research: runsResearch ? gitFileSha(REFINE_SKILL_MD_PATH) : "",
+        dev: runsDev ? gitFileSha(DEV_SKILL_MD_PATH) : "",
+      },
+      spawn: (opts) => spawnClaudeRun(opts, { logPrefix: opts.prompt.split(" ")[0].slice(1), log, logError }),
+      beforeRun: (_role, key) => ensureMirrorIssue(ctx, key),
+      log,
+      logError,
+    }),
+    logPath: resolveRepoPath(v2RunsLog(slug)),
     now: () => new Date(),
     assigneeAccountId,
     gate: {
-      findLandedPrUrl: (key) => findLandedPrUrlAcross(projectSlug, key),
+      findLandedPrUrl: (key) => findLandedPrUrlAcross(slug, key),
       execGhPrView,
       execGhFindMergedPr: realExecGhFindMergedPr(config.github.repo),
       mergedCache: new Map(),
     },
     findOpenPrUrl: realFindOpenPrUrl(config.github.repo),
-    roles: [ctx.phase],
+    roles: ctx.roles,
     // Never re-refine a ticket the v1 research runner already refined.
-    hasLandedResearchV1: ctx.phase === "research" ? (key) => hasLandedV1("research", projectSlug, key) : undefined,
+    hasLandedResearchV1: runsResearch ? (key) => hasLandedV1("research", slug, key) : undefined,
     log,
   };
 
@@ -353,10 +205,10 @@ async function runPhaseLoop(ctx: PhaseContext, tracked: TrackedSession, assignee
   await recordAdoptedFlights(deps);
   tracked.markFlightsRecorded();
 
-  log(`[${prefix}] session ${session.name}: loop started, polling every ${loopConfig.pollIntervalSec}s (project: ${ctx.slug})`);
+  log(`[${prefix}] session ${session.name}: loop started (roles: ${ctx.roles.join(", ")}), polling every ${loopConfig.pollIntervalSec}s (project: ${slug})`);
   const reconciled = new Set<string>();
   for (;;) {
-    if (ctx.phase === "dev") await reconcile(ctx, session.name, execGhPrView, reconciled);
+    if (runsDev) await reconcile(ctx, session.name, execGhPrView, reconciled);
     const result = await runWorkerIteration(deps);
     let kind: PollResultKind;
     switch (result.kind) {
@@ -382,14 +234,6 @@ async function runPhaseLoop(ctx: PhaseContext, tracked: TrackedSession, assignee
   }
 }
 
-/** v1 slugs (repoSlugFromUrl) may have characters v2 paths reject; v2 paths need PROJECT_SLUG. */
-function v2Slug(slug: string): string {
-  if (!PROJECT_SLUG.test(slug)) {
-    throw new Error(`project slug ${JSON.stringify(slug)} (from targetRepo.url) must match ${PROJECT_SLUG} for the v2 log and run dirs`);
-  }
-  return slug;
-}
-
 // ---------------------------------------------------------------------------
 
 let activePhase: Phase | null = null;
@@ -397,37 +241,43 @@ let activePhase: Phase | null = null;
 async function main(): Promise<void> {
   const { phase, project, configPath, session: requestedSession, once, stream } = parseArgs(process.argv.slice(2));
   activePhase = phase;
+  const prefix = prefixOf(phase);
+  const roles = rolesOf(phase);
 
-  // Resolve and load everything repo-root-relative before the research
-  // phase chdirs into its v1 root (--config is relative to the caller's cwd).
-  const repoRoot = process.cwd();
-  const resolvedConfigPath = resolve(configPath ?? (await resolveProjectConfigPath(project)));
+  // --config is relative to the caller's cwd; --project looks in the repo root.
+  const resolvedConfigPath = configPath ? resolve(configPath) : await resolveProjectConfigPath(project, REPO_ROOT);
   const config = await loadConfig(resolvedConfigPath);
-  requiredPlaceholderFree(config, phase);
-  const loopConfig = await loadLoopConfig(resolve("pipeline.loop.config.json"));
-  // Fail loudly, before any Jira/GitHub I/O, if the research root no longer
-  // has the skill claude -p needs (e.g. .claude/ moved but PHASE_ROOT didn't).
-  if (phase === "research") assertResearchRoot(PHASE_ROOT.research);
-  // v1 research ran from its own repo and loaded only research-loop/CLAUDE.md;
-  // here the parent dev CLAUDE.md would load too, so exclude it.
-  const excludeClaudeMd =
-    phase === "research" ? researchClaudeMdExcludes(repoRoot, PHASE_ROOT.research) : [];
+  for (const warning of preflight(config, phase, LOOP_VERSION).warnings) logError(`[${prefix}] WARNING: ${warning}`);
+  const loopConfig = await loadLoopConfig(resolve(REPO_ROOT, "pipeline.loop.config.json"));
+  const slug = repoSlugFromUrl(config.targetRepo.url);
+  if (!PROJECT_SLUG.test(slug)) {
+    throw new Error(`project slug ${JSON.stringify(slug)} (from targetRepo.url) must match ${PROJECT_SLUG} for the v2 log and run dirs`);
+  }
+  // Fail before any I/O if the research stance is missing (it replaces the excluded root CLAUDE.md).
+  const researchStance = roles.includes("research") ? await loadResearchStance(REPO_ROOT) : "";
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();
   const jiraClient = new RealJiraClient(credentials, config);
   const githubClient = new RealGitHubClient(config.github, realExecGh());
-  const slug = repoSlugFromUrl(config.targetRepo.url);
 
-  // One live worker per project. v2 paths are absolute (resolveRepoPath), so
-  // the chdir below doesn't move them.
-  const session = await acquireSession({
-    dir: resolveRepoPath(v2SessionsDir(v2Slug(slug))),
-    requested: requestedSession,
-    pid: process.pid,
-    isAlive: isProcessAlive,
-    now: new Date(),
-  });
+  // One live worker per project. Test seams (_hooks) are never passed here.
+  let session;
+  try {
+    session = await acquireSession({
+      dir: resolveRepoPath(v2SessionsDir(slug)),
+      requested: requestedSession,
+      pid: process.pid,
+      isAlive: isProcessAlive,
+      now: new Date(),
+    });
+  } catch (err) {
+    if (err instanceof LiveWorkerError) {
+      logError(`[${prefix}] refusing to start: ${err.message}. Stop session "${err.liveSession}" first.`);
+      process.exit(1);
+    }
+    throw err;
+  }
   const tracked = trackSession(session, logError);
   const onSignal = (sig: NodeJS.Signals) => {
     // Mid-phase: keep the lock, its inFlight marked interrupted (the next start
@@ -436,11 +286,11 @@ async function main(): Promise<void> {
   };
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
-  log(`[${SKILL_NAME[phase]}] acquired session ${session.name}`);
+  log(`[${prefix}] acquired session ${session.name}`);
 
-  process.chdir(PHASE_ROOT[phase]);
-  const ctx: PhaseContext = {
+  const ctx: LoopContext = {
     phase,
+    roles,
     config,
     loopConfig,
     once,
@@ -449,19 +299,19 @@ async function main(): Promise<void> {
     jiraClient,
     githubClient,
     slug,
-    runsBaseDir: legacyRunDirs(slug),
-    excludeClaudeMd,
+    researchStance,
   };
   try {
-    await runPhaseLoop(ctx, tracked, assigneeAccountId);
+    await runLoop(ctx, tracked, assigneeAccountId);
   } finally {
     // Never release while an adopted flight is only in the lock, or a phase is mid-run.
     if (tracked.canRelease()) await session.release();
   }
+  log(`[${prefix}] session ${session.name}: released, exiting`);
 }
 
 main().catch((err) => {
-  const prefix = activePhase ? SKILL_NAME[activePhase] : "main";
+  const prefix = activePhase ? prefixOf(activePhase) : "main";
   logError(`[${prefix}] fatal error: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
   process.exit(1);
 });

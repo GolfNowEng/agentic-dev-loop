@@ -1,12 +1,14 @@
 #!/bin/bash
 # block-unsafe-git.sh — PreToolUse hook for every Bash call.
 #
-# Design constraint A4 as a runtime guard, not just prompt text: denies
-# (exit 2) any force push (`--force`, `-f`, `--force-with-lease`,
-# `--force-if-includes`, `+refspec`, `--mirror`), any hook bypass
-# (`--no-verify`, `git commit -n`, `git push -n`, `core.hooksPath`
-# overrides, `HUSKY=0`), and `gh stack push|sync|submit` -- including inside
-# `&&`/`||`/`;`/`|` chains, subshells, `$( )`, `bash -c "..."`, `eval`, and
+# Design constraint A4 as a runtime guard, not just prompt text. Banned,
+# denied with exit 2:
+#   - banned force pushes: `--force`, `-f`, `--force-with-lease`,
+#     `--force-if-includes` (banned), `+refspec`, `--mirror`;
+#   - banned hook bypasses: `--no-verify`, `git commit -n`, `git push -n`,
+#     `core.hooksPath` overrides, `HUSKY=0`;
+#   - banned: `gh stack push|sync|submit`;
+# including inside `&&`/`||`/`;`/`|` chains, subshells, `$( )`, `bash -c "..."`, `eval`, and
 # behind env assignments or wrappers like `env`/`nohup`/`timeout`. `-n` is
 # denied only as a flag of `git commit`/`git push`, so `git grep -n` and
 # `git log -n 5` are allowed. All parsing lives in the checker,
@@ -48,10 +50,9 @@ if [ "$TOOL_NAME" != "Bash" ]; then
 fi
 
 # The checker is found relative to this script's own physical location
-# (.claude/hooks/ -> ../../scripts/), never via $CLAUDE_PROJECT_DIR: a
-# v1 `--phase research` spawn runs with CLAUDE_PROJECT_DIR=research-loop/
-# and reaches this file through the research-loop/.claude -> ../.claude
-# symlink. `pwd -P` resolves that symlink. If any of this fails, CHECKER
+# (.claude/hooks/ -> ../../scripts/), never via $CLAUDE_PROJECT_DIR, so it
+# resolves even when the project dir is unset or wrong; `pwd -P` also
+# resolves any symlinked path to this file. If any of this fails, CHECKER
 # points nowhere and the "check failed" branch below denies.
 HOOK_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || HOOK_DIR=""
 CHECKER="${HOOK_DIR:-/nonexistent}/../../scripts/check-unsafe-git-in-tool-input.ts"
@@ -72,7 +73,15 @@ case "$EXIT_CODE" in
     exit 2
     ;;
   2)
-    echo "BLOCKED: could not verify this command is free of force pushes and hook bypasses (${DETAIL:-the check failed}) -- denying to stay fail-closed. Rewrite it with every git/gh flag spelled out literally (no variables for flags or refspecs), or report this to a human if it keeps failing." >&2
+    case "$DETAIL" in
+      *"git push argument only known at run time"*)
+        HOW="For the push target, spell the branch name literally, or use HEAD (e.g. git push -u origin HEAD) -- never a variable or \$(...)."
+        ;;
+      *)
+        HOW="Rewrite it with every git/gh flag spelled out literally (no variables for flags or refspecs)."
+        ;;
+    esac
+    echo "BLOCKED: could not verify this command is free of force pushes and hook bypasses (${DETAIL:-the check failed}) -- denying to stay fail-closed. $HOW Report this to a human if it keeps failing." >&2
     exit 2
     ;;
   *)

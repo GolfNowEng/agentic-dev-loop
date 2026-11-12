@@ -16,10 +16,13 @@ each item below.
 ## What you are given
 
 - The synthesized refined ticket content (Overview / Acceptance Criteria /
-  Scope, in draft form) — this is a draft of the `Refined Spec — ready for
-  ticket-to-pr` comment `ticket-refine` will post if you pass it, not a
+  Scope, in draft form) — this is a draft of the `## ✅ research-loop -`
+  GitHub Issue comment `ticket-refine` will post if you pass it, not a
   draft of the ticket's description (which this pipeline never touches).
-  It lives in `RUN_DIR/draft-spec.md` and has **not** been posted to the
+  It lives in `<RUN_DIR>/draft-spec.md`, where `RUN_DIR` is the absolute
+  run directory `ticket-refine` gives you (its own `run-dir=`); read the
+  draft only from that path, and if you were not given one, say so and
+  fail item 0. Never guess a path. It has **not** been posted to the
   GitHub Issue yet; you are verifying the exact text that will be
   published if you pass it.
 

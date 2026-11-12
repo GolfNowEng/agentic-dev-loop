@@ -25,6 +25,7 @@ import type { Config } from "../../core/types.ts";
 import { roleView } from "../../core/config.ts";
 import { findLandedTicketsAcross } from "../../core/iteration-log.ts";
 import { withSessionSuffixText } from "./code-review.ts";
+import { CONTRACT } from "../../core/contract.ts";
 
 /** How far back a "landed" line still counts as a candidate. */
 const LANDED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
@@ -70,7 +71,7 @@ interface GhPrViewResult {
 }
 
 /** The v1 role labels, removed too so a ticket labelled before the cutover ends up clean. */
-const V1_PIPELINE_LABELS = ["pipeline:research", "pipeline:dev"];
+const V1_PIPELINE_LABELS = [CONTRACT.v1ResearchLabel, CONTRACT.v1DevLabel];
 
 /** Every pipeline label reconcile strips from a merged ticket, de-duplicated. */
 export function pipelineLabels(config: Config): string[] {

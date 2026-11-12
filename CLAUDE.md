@@ -1,13 +1,15 @@
 # CLAUDE.md — dev-loop
 
-One repo, two phases of an agentic Jira pipeline, selected with
-`--phase research|dev`. Each phase has its own stance. Apply the stance of the
-phase/skill you are working in, not the other.
+One repo, two phases of an agentic Jira pipeline. The default `--phase worker`
+runs both on one session (research, then dev, on the same ticket);
+`--phase research|dev` runs one. Each phase has its own stance. Apply the stance
+of the phase/skill you are working in, not the other.
 
-## Research phase (`ticket-refine`, run from `research-loop/`)
+## Research phase (`ticket-refine`)
 
-The stance lives in `research-loop/CLAUDE.md`; research spawns load that file
-and exclude this one.
+The research spawn runs from this repo root but excludes this file
+(`claudeMdExcludes`) and loads its stance from `src/roles/research/stance.md`
+via `--append-system-prompt`. Edit the stance there, not here.
 
 - **Treat every raw ticket as an unverified claim.** Produce a ticket a
   literal-minded Sonnet-tier implementer can execute without asking a question,
@@ -47,7 +49,9 @@ and exclude this one.
 Each doc has `## Research phase` and `## Dev phase` sections.
 
 - `docs/config.md` — config shape, Appendix A, adding a new project.
-- `docs/skills.md` — what each phase's skills and subagents do, verdict.json contract.
+- `docs/skills.md` — what each phase's skills and subagents do, the invocation
+  contract (`/<skill> <KEY> run-dir=<abs> repo-dir=<abs>`), verdict.json contract.
+- `src/roles/research/stance.md` — the research phase's stance (its CLAUDE.md).
 - `docs/logging.md` — `runs/<project>.jsonl`, per-run `progress.jsonl`,
   `.pipeline/` layout, the `stats` script.
 - `docs/reset.md` — `npm run reset-project`; use it to start a ticket or project

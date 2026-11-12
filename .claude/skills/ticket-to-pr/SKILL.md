@@ -7,7 +7,15 @@ description: Turn a single ready Jira ticket into a PR against the target repo (
 
 ## Arguments
 
-`$ARGUMENTS` — a single Jira ticket key, e.g. `TARS-1301`. Required.
+`$ARGUMENTS` — exactly `<TICKET> run-dir=<RUN_DIR> repo-dir=<REPO_DIR>`,
+e.g. `TARS-1301 run-dir=<abs path ending in /TARS-1301/dev-20261111T010203Z> repo-dir=<abs checkout path>`.
+All three are required. The loop runner builds this line (see "Invocation"
+below); never derive any of the three yourself.
+
+- `<TICKET>` — the Jira ticket key.
+- `run-dir=` — this run's directory (`RUN_DIR` below).
+- `repo-dir=` — the target repo checkout this run works against
+  (`REPO_DIR` below).
 
 ## Role: the executor
 
@@ -46,17 +54,26 @@ implementation is its worst failure mode.
 
 Before phase 0, establish:
 
-1. `RUN_ID` = current UTC timestamp as `YYYYMMDDTHHMMSSZ`.
-2. `SLUG` = the project slug derived from `pipeline.<project>.config.json`'s
-   `targetRepo.url` (same derivation as `repoSlugFromUrl` in `src/core/config.ts`
-   — the last path segment, minus a trailing `.git`), e.g. `webtarsthree`.
-3. `RUN_DIR` = `.pipeline/<SLUG>/runs/<TICKET>-<RUN_ID>/` (relative to this
-   repo's root, i.e. `dev-loop/`, NOT the target repo checkout). Create it.
-   Namespacing by `SLUG` lets multiple projects' runs coexist under one
-   `dev-loop` checkout without collision.
+1. **Use the `run-dir=` and `repo-dir=` you were given.** `run-dir` must be
+   absolute and contain `/.pipeline/v2/`. If either is missing or
+   malformed, write no files and stop with an `agent_error` verdict.
+   Never guess a path. (With no usable `RUN_DIR` there is nowhere to write
+   `verdict.json`; the loop runner records the missing verdict as
+   `agent_error` itself. Print the always-emitted result line,
+   `RESULT: error — missing or malformed run-dir=/repo-dir=`, and stop.)
+   `RUN_DIR` = the `run-dir=` value; `REPO_DIR` = the `repo-dir=` value.
+   Both are absolute; use them exactly as given.
+2. `RUN_ID` = the part of `RUN_DIR`'s last path segment after its first
+   `-`. The last segment is `dev-<RUN_ID>`, so for
+   `.../TARS-1301/dev-20261111T010203Z`, `RUN_ID` is `20261111T010203Z`.
+   It names this run's worktree (see "Target repo" below).
+3. `DEVLOOP_DIR` = `RUN_DIR` up to, not including, its `/.pipeline/v2/`
+   (the dev-loop checkout this run was started from). `RUN_DIR` already
+   exists (the loop runner creates it). Write only inside it — never
+   anywhere else in the dev-loop checkout.
 4. Every phase transition appends one JSON line to `RUN_DIR/progress.jsonl`
    (create the file with the first append). Never rewrite or delete existing
-   lines — append-only, same discipline as `runs/<SLUG>.jsonl`. Each line:
+   lines — append-only. Each line:
    ```json
    {"ts": "<ISO-8601 UTC>", "phase": "intake|plan|red|green|verify|pr", "event": "phase_start|phase_end|note", "detail": "one line"}
    ```
@@ -95,62 +112,53 @@ file.
 
 ## Target repo
 
-This repo's `pipeline.<project>.config.json`'s `targetRepo` field names the
-codebase this skill operates on — currently `pipeline.webtarsthree.config.json`
-points at `webtarsthree` (`git@github.com:fandango/webtarsthree.git`, default
-branch `master`). This is **not** the `dev-loop` repo itself; `dev-loop` only
-orchestrates. Adding a second project later means adding a second
-`pipeline.<project>.config.json` — no code or skill changes.
+The project config (`pipeline.<project>.config.json` at the dev-loop
+checkout's root, `DEVLOOP_DIR`) names the codebase this skill operates on
+in `targetRepo` — currently `pipeline.webtarsthree.config.json` points at
+`webtarsthree` (`git@github.com:fandango/webtarsthree.git`, default branch
+`master`). This is **not** the `dev-loop` repo itself; `dev-loop` only
+orchestrates. `REPO_DIR` (from `repo-dir=`) is that codebase's checkout on
+this machine: `targetRepo.path` when the config sets it (its `origin`
+remote is the real GitHub remote, so `git push`/`gh pr create` in Phase 5
+need no extra setup), otherwise a shared fetch-only clone the loop runner
+points you at. Read `targetRepo.url` and `targetRepo.defaultBranch` from
+the config; take the checkout's location only from `REPO_DIR`.
 
-**Per-run worktree, nested inside the target repo itself — never work
-directly in a shared checkout.** At the start of Phase 0, create an
-isolated worktree for this run, on its own branch, **inside** the target
-repo's own directory tree (`<targetRepo.path>/.claude/worktrees/...`, not a
+**Per-run worktree, nested inside `REPO_DIR` itself — never work directly
+in a shared checkout.** At the start of Phase 0, create an isolated
+worktree for this run, on its own branch, **inside** `REPO_DIR`'s own
+directory tree (`<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>`, not a
 sibling path elsewhere), so tools like `direnv` that activate by walking
 up from the current directory pick up the target repo's own
 `.envrc`/local env automatically — a worktree living outside that tree
-never can. `targetRepo.path`, if set in config, is a local checkout that
-already exists on this machine (its `origin` remote is the real GitHub
-remote, so `git push`/`gh pr create` in Phase 5 need no extra setup).
-Never work directly in `targetRepo.path` itself, since a human may `cd`
+never can. Never work directly in `REPO_DIR` itself, since a human may `cd`
 into it or be mid-inspection of a prior run's worktree at any moment
-while this loop runs unattended in the background:
+while this loop runs unattended in the background.
+
+If `REPO_DIR` has no `.git` yet (the shared clone was never made on this
+machine), clone it first; otherwise skip straight to the fetch:
 
 ```bash
-git -C <targetRepo.path> fetch origin
-git -C <targetRepo.path> worktree add \
-  <targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID> \
+if [ ! -d <REPO_DIR>/.git ]; then
+  git clone <targetRepo.url> <REPO_DIR>
+fi
+git -C <REPO_DIR> fetch origin
+git -C <REPO_DIR> worktree add \
+  <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID> \
   -b <TICKET>-<slug> origin/<targetRepo.defaultBranch>
-cd <targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>
+cd <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>
 ```
 
-`<targetRepo.path>/.claude/worktrees/` is expected to be listed in that repo's
+`<REPO_DIR>/.claude/worktrees/` is expected to be listed in that repo's
 own `.git/info/exclude` (a machine-local, never-committed ignore rule) —
 not this skill's job to add, but don't be alarmed that it's untracked and
 outside this repo.
 
-If `targetRepo.path` is **not** set (no local checkout on this machine
-yet), fall back to a shared fetch-only clone instead, worktree nested the
-same way inside it:
-
-```bash
-mkdir -p .pipeline/<SLUG>
-if [ ! -d .pipeline/<SLUG>/repo/.git ]; then
-  git clone <targetRepo.url> .pipeline/<SLUG>/repo
-fi
-git -C .pipeline/<SLUG>/repo fetch origin
-git -C .pipeline/<SLUG>/repo worktree add \
-  .pipeline/<SLUG>/repo/.claude/worktrees/<TICKET>-<RUN_ID> \
-  -b <TICKET>-<slug> origin/<targetRepo.defaultBranch>
-cd .pipeline/<SLUG>/repo/.claude/worktrees/<TICKET>-<RUN_ID>
-```
-
-(Three distinct identifiers here: `<SLUG>` uppercase is the *project* slug
-from the config path; `<RUN_ID>` is this run's timestamp, keeping this run's
-worktree separate from any other run's, past or concurrent; `<slug>`
-lowercase in the branch name is the per-ticket kebab-case summary described
-next — the branch name itself has no `<RUN_ID>` in it, since it's what gets
-pushed and PR'd.)
+(Two distinct identifiers here: `<RUN_ID>` is this run's id from `RUN_DIR`,
+keeping this run's worktree separate from any other run's, past or
+concurrent; `<slug>` in the branch name is the per-ticket kebab-case
+summary described next — the branch name itself has no `<RUN_ID>` in it,
+since it's what gets pushed and PR'd.)
 
 `<slug>` is a short kebab-case summary derived from the ticket's summary
 (lowercase, non-alphanumeric → `-`, truncate to a reasonable length — e.g.
@@ -167,8 +175,7 @@ existing name.** Before the `worktree add` above, after the `fetch`:
 
 1. **Look for prior work.** List `<TICKET>-*` branches, local
    (`git branch --list '<TICKET>-*'`) and remote
-   (`git branch -r --list 'origin/<TICKET>-*'`) in the checkout the worktree
-   is created from. A branch only counts as prior work if it has commits not
+   (`git branch -r --list 'origin/<TICKET>-*'`) in `REPO_DIR`. A branch only counts as prior work if it has commits not
    on `origin/<defaultBranch>` (`git rev-list --count
    origin/<defaultBranch>..<branch>` > 0); a branch with zero commits ahead
    is stale and is ignored (never reused, never deleted). Don't change the
@@ -277,7 +284,7 @@ Each phase's `progress.jsonl` events use the phase name shown.
      `[GitHub Issue](url)` link whose Issue has no matching
      `## ✅ research-loop -` comment, or whose body is still the
      unfilled placeholder with no comment at all) — this ticket should
-     never have carried the `pipeline:dev` label — bounce immediately
+     never have carried the dev trigger label (`roles.dev.triggerLabel`) — bounce immediately
      with `failure_category: "spec_ambiguous"` and detail naming exactly
      which of the three cases applied. Do not attempt to proceed on an
      unreadied ticket.
@@ -364,8 +371,10 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
 4. Spawn `qa-agent` (see `.claude/agents/qa-agent.md`) as a genuine
    fresh-context subagent — it must not be told how the fix was
    implemented, only given the ticket and the diff. Pass it the ticket key,
-   the branch name, and the absolute path of this `dev-loop` checkout (your
-   own working directory, from `pwd`) so it can run `src/roles/dev/qa-browser.ts`.
+   the branch name, the worktree path
+   (`<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>`), and `DEVLOOP_DIR`
+   (from Setup; not `pwd`, which is the worktree by now) so it can run
+   `src/roles/dev/qa-browser.ts`.
    That path is for the subagent's tool calls only — never write it into
    the PR, Jira, `qa_notes`, or `verdict.json`. Each `qa-agent` invocation is one verify loop —
    increment `verify_loops` when it runs, not when a fix is committed. If
@@ -455,8 +464,12 @@ reorder, or "improve" the title or body here.
 1. Read `~/.claude/skills/push-branch/SKILL.md` with `Read` and follow it
    exactly, in its **content supplied** mode (`--title` + `Body:`), passing:
    the title and body from Phase 4 step 7 verbatim, and `--no-jira`
-   (`loop-runner.ts` owns the Jira transition and QA Notes field from
+   (the loop runner, `src/roles/dev/phase.ts`, owns the Jira transition and QA Notes field from
    `verdict.json`; `push-branch` must not also transition the ticket).
+   When that skill pushes, push with the literal branch name (e.g.
+   `git push -u origin TARS-1301-delete-tv-objects`) or `HEAD`, never a
+   shell variable: the unsafe-git hook denies a push argument it can only
+   know at run time.
    Read the file rather than invoking it as a skill: `Skill` is not in
    `ALLOWED_TOOLS` (`src/main.ts`), so a nested skill call is unavailable
    in this headless run. That skill lives on the operator's machine, not in
@@ -500,9 +513,8 @@ bounced at any phase, or error):
 2. **Remove this run's worktree** — with one exception:
    - If the run **landed** (branch pushed, PR open) or **bounced with all
      in-progress work already committed** — remove it:
-     `git -C <targetRepo.path or .pipeline/<SLUG>/repo, whichever it was
-     created from> worktree remove
-     <that checkout's path>/.claude/worktrees/<TICKET>-<RUN_ID>`. The branch
+     `git -C <REPO_DIR> worktree remove
+     <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>`. The branch
      itself lives on in the remote (landed) or in that checkout's branch
      list (bounced) either way — removing the worktree doesn't lose
      anything.
@@ -510,7 +522,7 @@ bounced at any phase, or error):
      tree** (e.g. mid-Green, or Red confirmed but not yet fully
      implemented) — **keep the worktree**, and say so explicitly in the
      bounce `detail` / result line (e.g. "worktree left at
-     `<targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>` for inspection") so a
+     `<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>` for inspection") so a
      human or `ticket-refine`'s revision pass can inspect exactly what was
      tried. This is the only case where cleanup is conditional — everything
      else removes the worktree unconditionally.
@@ -547,7 +559,7 @@ or `blocked` — the remaining categories (`subagent_stall`, `agent_error`,
 ## verdict.json schema
 
 Write to `RUN_DIR/verdict.json` (never elsewhere — the loop runner reads it
-from this exact path):
+from this exact path, and only from there):
 
 ```json
 {
@@ -584,9 +596,12 @@ this same list.
 ## Invocation (for the loop runner)
 
 ```
-claude -p "/ticket-to-pr <TICKET-KEY>" --model sonnet --permission-mode acceptEdits --output-format json
+claude -p "/ticket-to-pr <TICKET-KEY> run-dir=<abs RUN_DIR> repo-dir=<abs REPO_DIR>" --model sonnet --permission-mode acceptEdits --output-format json
 ```
 
+`src/worker/skill-runner.ts` builds this prompt from validated values only
+(`src/core/build-prompt.ts`), creates `RUN_DIR` first, spawns from the
+dev-loop checkout's root, and reads `RUN_DIR/verdict.json` afterwards.
 `--model sonnet` is explicit, not ambient-default — this skill is the
 literal-minded executor tier per the spec (§5.0), never the tier that
 questions the spec. `qa-agent` pins its own model in its frontmatter and does

@@ -1,14 +1,16 @@
 # dev-loop
 
-A local agentic Jira pipeline in one repo with two phases, selected with
-`--phase research|dev`. The phases coordinate through Jira ticket state
-(labels), not through any direct connection:
+A local agentic Jira pipeline in one repo with two phases. The default worker
+(`npm run loop -- --project <name>`, i.e. `--phase worker`) runs both on one
+session; `--phase research|dev` runs one. The phases coordinate through Jira
+ticket state (labels):
 
 - **research** (formerly the separate `research-loop` repo, "Terminal A")
   refines raw Jira tickets into tickets marked ready for dev.
 - **dev** ("Terminal B") picks up ready tickets and lands PRs from them.
 
-Each phase runs as its own long-lived loop in its own terminal. See
+One live worker per project (`--session <name>`, default `dev-<n>`); a second
+start on the same project names the live session and exits 1. See
 `CLAUDE.md` for working rules and `docs/` for how the pieces fit together.
 
 ## Phase: research (the skeptic)
@@ -26,9 +28,9 @@ A passing verdict means the ticket is ready for the human review gate, not
 ready for dev directly. Only after human review does a ticket's label swap from
 `pipeline:research` to `pipeline:dev`, the label the dev phase polls for. The
 skill is `ticket-refine` with subagents `recon-agent`, `devils-advocate-agent`
-and `verifier-agent`. Until the research runner moves under `src/roles/research`,
-it runs from `research-loop/`, which still holds the skeptic `CLAUDE.md` and
-the research `pipeline.*.config.json` files.
+and `verifier-agent`. It runs from the repo root like dev; its skeptic stance is
+`src/roles/research/stance.md` (appended to its system prompt), and the root
+`CLAUDE.md` (dev's stance) is excluded from it.
 
 ## Phase: dev (the executor)
 

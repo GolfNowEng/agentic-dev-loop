@@ -7,7 +7,7 @@ import type { Role } from "./types.ts";
 export interface RunSkillArgs {
   role: Role;
   ticketKey: string;
-  /** v2RunDir(...) for this phase run (repo-relative). Until Task 15 the skills still pick their own run dir. */
+  /** v2RunDir(...) for this phase run (repo-relative). The skill gets it, absolute, as `run-dir=`. */
   runDir: string;
   /** `--max-budget-usd` for this spawn (Ruling 16: the per-run cap, clipped to what is left of the per-ticket cap). */
   maxBudgetUsd: number;

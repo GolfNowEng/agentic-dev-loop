@@ -7,7 +7,15 @@ description: Refine a raw Jira ticket into a Sonnet-executor-ready spec for tick
 
 ## Arguments
 
-`$ARGUMENTS` — a single Jira ticket key, e.g. `TARS-1301`. Required.
+`$ARGUMENTS` — exactly `<TICKET> run-dir=<RUN_DIR> repo-dir=<REPO_DIR>`,
+e.g. `TARS-1301 run-dir=<abs path ending in /TARS-1301/research-20261111T010203Z> repo-dir=<abs checkout path>`.
+All three are required. The loop runner builds this line (see "Invocation"
+below); never derive any of the three yourself.
+
+- `<TICKET>` — the Jira ticket key.
+- `run-dir=` — this run's directory (`RUN_DIR` below).
+- `repo-dir=` — the target repo checkout this run grounds against
+  (`REPO_DIR` below).
 
 ## Role: the skeptic
 
@@ -65,15 +73,25 @@ comment**, never edits an existing one.
 
 ## Setup: run directories and progress logging
 
-Same discipline as `dev-loop`'s `ticket-to-pr`, for dashboard parity:
+Same discipline as the dev phase's `ticket-to-pr`, for dashboard parity:
 
-1. `RUN_ID` = current UTC timestamp as `YYYYMMDDTHHMMSSZ`.
-2. `SLUG` = the project slug derived from `pipeline.<project>.config.json`'s
-   `targetRepo.url` (same derivation as `repoSlugFromUrl` in `src/core/config.ts`
-   — the last path segment, minus a trailing `.git`), e.g. `webtarsthree`.
-3. `RUN_DIR` = `.pipeline/<SLUG>/runs/<TICKET>-<RUN_ID>/` (relative to this
-   repo's root). Create it. Namespacing by `SLUG` lets multiple projects'
-   runs coexist under one `research-loop` checkout without collision.
+1. **Use the `run-dir=` and `repo-dir=` you were given.** `run-dir` must be
+   absolute and contain `/.pipeline/v2/`. If either is missing or
+   malformed, write no files and stop with an `agent_error` verdict.
+   Never guess a path. (With no usable `RUN_DIR` there is nowhere to write
+   `verdict.json`; the loop runner records the missing verdict as
+   `agent_error` itself. Post nothing to Jira or GitHub, print the
+   always-emitted result line,
+   `RESULT: error — missing or malformed run-dir=/repo-dir=`, and stop.)
+   `RUN_DIR` = the `run-dir=` value; `REPO_DIR` = the `repo-dir=` value.
+   Both are absolute; use them exactly as given.
+2. `RUN_ID` = the part of `RUN_DIR`'s last path segment after its first
+   `-`. The last segment is `research-<RUN_ID>`, so for
+   `.../TARS-1301/research-20261111T010203Z`, `RUN_ID` is
+   `20261111T010203Z`. It names this run's worktree (see "Target repo"
+   below).
+3. `RUN_DIR` already exists (the loop runner creates it). Write only inside
+   it — never anywhere else in the dev-loop checkout.
 4. Append one JSON line per phase transition to `RUN_DIR/progress.jsonl`:
    ```json
    {"ts": "<ISO-8601 UTC>", "phase": "triage|interpret|ground|attack|scope|blocked-check|synthesize|verify", "event": "phase_start|phase_end|note", "detail": "one line"}
@@ -84,64 +102,54 @@ Same discipline as `dev-loop`'s `ticket-to-pr`, for dashboard parity:
 ## Target repo (grounding)
 
 The project config is `pipeline.<project>.config.json` at the dev-loop
-repo root, which is `../pipeline.<project>.config.json` from this skill's
-working directory (`research-loop/`); there is no copy under
-`research-loop/` (2.0.0). Its `targetRepo` and `github.repo` keys are the
-ones this skill reads. `targetRepo` names the
+repo root (this session's working directory). Its `targetRepo` and
+`github.repo` keys are the ones this skill reads. `targetRepo` names the
 codebase this skill grounds tickets against — currently
 `pipeline.webtarsthree.config.json` points at `webtarsthree`
-(`git@github.com:fandango/webtarsthree.git`, default branch `master`). This
-skill never commits — it only reads code (and, via a dev server, exercises
-it) to verify or contradict the ticket's claims. Adding a second project
-later means adding a second `pipeline.<project>.config.json` — no code or
-skill changes.
+(`git@github.com:fandango/webtarsthree.git`, default branch `master`).
+`REPO_DIR` (from `repo-dir=`) is that codebase's checkout on this machine:
+`targetRepo.path` when the config sets it, otherwise a shared fetch-only
+clone the loop runner points you at. Read `targetRepo.url` and
+`targetRepo.defaultBranch` from the config; take the checkout's location
+only from `REPO_DIR`. This skill never commits — it only reads code (and,
+via a dev server, exercises it) to verify or contradict the ticket's
+claims. Adding a second project later means adding a second
+`pipeline.<project>.config.json` — no code or skill changes.
 
-**Per-run worktree, nested inside the target repo itself — never work
-directly in a shared checkout.** At the start of Step 2 (Ground) — the
-only step that touches the target repo — create an isolated, detached
-worktree for this run **inside** the target repo's own directory tree
-(`<targetRepo.path>/.claude/worktrees/...`, not a sibling path elsewhere), so
-tools like `direnv` that activate by walking up from the current
-directory pick up the target repo's own `.envrc`/local env automatically
-— a worktree living outside that tree never can, no matter what. Never
-work directly in `targetRepo.path` itself, since a human may `cd` into it
-or be mid-inspection of a prior run's worktree at any moment while this
-loop runs unattended in the background:
+**Per-run worktree, nested inside `REPO_DIR` itself — never work directly
+in a shared checkout.** At the start of Step 2 (Ground) — the only step
+that touches the target repo — create an isolated, detached worktree for
+this run **inside** `REPO_DIR`'s own directory tree
+(`<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-ground`, not a sibling
+path elsewhere), so tools like `direnv` that activate by walking up from
+the current directory pick up the target repo's own `.envrc`/local env
+automatically — a worktree living outside that tree never can, no matter
+what. Never work directly in `REPO_DIR` itself, since a human may `cd`
+into it or be mid-inspection of a prior run's worktree at any moment while
+this loop runs unattended in the background.
+
+If `REPO_DIR` has no `.git` yet (the shared clone was never made on this
+machine), clone it first; otherwise skip straight to the fetch:
 
 ```bash
-git -C <targetRepo.path> fetch origin
-git -C <targetRepo.path> worktree add --detach \
-  <targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>-ground \
+if [ ! -d <REPO_DIR>/.git ]; then
+  git clone <targetRepo.url> <REPO_DIR>
+fi
+git -C <REPO_DIR> fetch origin
+git -C <REPO_DIR> worktree add --detach \
+  <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-ground \
   origin/<targetRepo.defaultBranch>
 ```
 
-`<targetRepo.path>/.claude/worktrees/` is expected to be listed in that repo's
+`<REPO_DIR>/.claude/worktrees/` is expected to be listed in that repo's
 own `.git/info/exclude` (a machine-local, never-committed ignore rule) —
 not this skill's job to add, but don't be alarmed that it's untracked and
 outside this repo.
 
-If `targetRepo.path` is **not** set (no local checkout on this machine
-yet), fall back to a shared fetch-only clone instead, worktree nested the
-same way inside it:
-
-```bash
-mkdir -p .pipeline/<SLUG>
-if [ ! -d .pipeline/<SLUG>/repo/.git ]; then
-  git clone <targetRepo.url> .pipeline/<SLUG>/repo
-fi
-git -C .pipeline/<SLUG>/repo fetch origin
-git -C .pipeline/<SLUG>/repo worktree add --detach \
-  .pipeline/<SLUG>/repo/.claude/worktrees/<TICKET>-<RUN_ID>-ground \
-  origin/<targetRepo.defaultBranch>
-```
-
 Ground, and every `recon-agent` it spawns, reads and executes only inside
-the `.claude/worktrees/<TICKET>-<RUN_ID>-ground` directory just created — never
-in `targetRepo.path` or `.pipeline/<SLUG>/repo` themselves. See "Cleanup"
-below for removing this worktree once Ground (and the rest of the run)
-concludes — the `git worktree remove` target is whichever checkout
-(`targetRepo.path` or `.pipeline/<SLUG>/repo`) the worktree was created
-from.
+the `<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-ground` directory just
+created — never in `REPO_DIR` itself. See "Cleanup" below for removing
+this worktree once Ground (and the rest of the run) concludes.
 
 ## Always-emitted result line
 
@@ -318,8 +326,9 @@ whether it actually holds.
    covered once for the whole run — see "Cleanup" below.)
 3. **Fan out one `recon-agent` per hypothesis, in parallel** (see
    `.claude/agents/recon-agent.md`) — each spawned to confirm or refute one
-   specific hypothesis against the worktree (and, if you started one, the
-   running dev server's local URL), not a generic "does the described
+   specific hypothesis against the worktree (pass it the absolute
+   worktree path, `<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-ground`,
+   and, if you started one, the running dev server's local URL), not a generic "does the described
    problem exist" pass. Parallel fan-out here is about testing competing
    explanations at once, not increasing scrutiny of a single explanation.
 4. Each `recon-agent` should actually try to confirm its hypothesis, not
@@ -395,6 +404,7 @@ single artifact Step 7 publishes. The description is never touched.
 
 Spawn a verifier subagent (see `.claude/agents/verifier-agent.md`) to check
 the synthesized ticket against the definition-of-ready checklist below.
+Pass it the absolute `RUN_DIR` (so it reads `<RUN_DIR>/draft-spec.md`).
 This must be a genuinely independent check, not the same reasoning that
 produced the ticket rubber-stamping itself.
 
@@ -405,10 +415,9 @@ produced the ticket rubber-stamping itself.
   2) — set `verdict.outcome: "ready"`. Nothing carrying the `✅` title is
   ever posted before this point, so a `✅` comment on the Issue always
   means "passed the verifier as written". The
-  ticket stays at `roles.research.triggerLabel`, refined and awaiting
-  human approval (the loop runner only swaps the label to
-  `roles.research.handoffLabel` if the ticket carries the `auto-promote`
-  label — this skill just reports the verdict either way). On this
+  ticket stays at `roles.research.triggerLabel`; the loop runner hands a
+  passing ticket off to `roles.research.handoffLabel` (the dev phase's
+  trigger) itself — this skill just reports the verdict. On this
   passing verifier run, it also reports a `size_trajectory` object
   (`step4_tshirt`, `delta`, `final_score` — see
   `.claude/agents/verifier-agent.md`'s "Size scoring" section); copy that
@@ -494,9 +503,8 @@ bounced at any step, or error):
    Confirm it's actually stopped (e.g. the port is free), not just that you
    sent a stop signal.
 2. **Remove this run's worktree**:
-   `git -C <targetRepo.path or .pipeline/<SLUG>/repo, whichever it was
-   created from> worktree remove
-   <that checkout's path>/.claude/worktrees/<TICKET>-<RUN_ID>-ground`. Since this
+   `git -C <REPO_DIR> worktree remove
+   <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-ground`. Since this
    skill never commits, there is no "uncommitted work worth keeping"
    exception here (unlike `ticket-to-pr` — see its own Cleanup section) —
    always remove it.
@@ -623,8 +631,8 @@ requirement).
 
    **Context:** <0-3 sentences max, plain language, what this ticket now
      does. Default to including this; omit it only in the rare case the
-     title plus Needs-decision bullets already give a reader everything
-     they need — that should be rare, not the default path.>
+     title alone already gives a reader everything they need — that
+     should be rare, not the default path.>
 
    [GitHub Issue](<url>)
    ```
@@ -637,7 +645,7 @@ requirement).
    its real work order, not this Jira comment; this comment's link is
    what a human clicks through to review the real content. The existing
    secret/credential and absolute-path redaction rules (items 7-8 below)
-   apply to this comment's Context/Needs-decision text exactly as they
+   apply to this comment's Context text exactly as they
    always have — nothing about this new shape changes what's safe to
    write here.
 3. **On a bounce**, write **one Jira comment**, titled `❌ research-loop -
@@ -770,7 +778,8 @@ runner's own failure modes.
 
 ## verdict.json schema
 
-Write to `RUN_DIR/verdict.json`:
+Write to `RUN_DIR/verdict.json` (never elsewhere — the loop runner reads it
+from this exact path, and only from there):
 
 ```json
 {
@@ -778,7 +787,7 @@ Write to `RUN_DIR/verdict.json`:
   "phase_reached": "intake | plan | red | green | verify | pr",
   "failure_category": null,
   "detail": "the always-emitted result line's content, without the RESULT: prefix",
-  "skill_version": "<git SHA of this SKILL.md's commit in research-loop>",
+  "skill_version": "<git SHA of this SKILL.md's commit>",
   "model": "sonnet",
   "cost_usd": 0,
   "tokens": { "in": 0, "out": 0 },
@@ -795,19 +804,27 @@ as `0`/zeros — the loop runner derives real values from `claude -p
 --output-format json`'s own usage report. `log_version` is always
 `"1.1"` as of this schema version — the loop runner stamps the same value
 onto the `RunLogLine` it derives, regardless of what this field says
-(`src/loop-runner.ts` owns `CURRENT_LOG_VERSION`, not this skill).
+(`src/core/types.ts` owns `CURRENT_LOG_VERSION`, not this skill).
 `size_trajectory` is only ever included on a passing (`outcome: "ready"`)
 verdict, copied verbatim from `verifier-agent`'s report — see
 `docs/skills.md`'s "Shadow-mode size telemetry" section. It is pure
-telemetry: `src/verdict.ts`'s `parseSizeTrajectory` validates it
+telemetry: `src/core/verdict.ts`'s `parseSizeTrajectory` validates it
 independently of the rest of this shape, and a malformed value is dropped
 before it ever reaches `runs.jsonl` — it can never affect `outcome`.
 
 ## Invocation (for the loop runner)
 
 ```
-claude -p "/ticket-refine <TICKET-KEY>" --model sonnet --permission-mode acceptEdits --output-format json
+claude -p "/ticket-refine <TICKET-KEY> run-dir=<abs RUN_DIR> repo-dir=<abs REPO_DIR>" --model sonnet --permission-mode acceptEdits --output-format json \
+  --settings '{"claudeMdExcludes":["<repo root>/CLAUDE.md"]}' --append-system-prompt "<src/roles/research/stance.md>"
 ```
+
+`src/worker/skill-runner.ts` builds this prompt from validated values only
+(`src/core/build-prompt.ts`), creates `RUN_DIR` first, spawns from the
+dev-loop repo root, and reads `RUN_DIR/verdict.json` afterwards. The repo
+root's `CLAUDE.md` is the dev phase's executor stance, so it is excluded;
+this phase's skeptic stance comes from `src/roles/research/stance.md`,
+appended to the system prompt.
 
 `--model sonnet` is explicit, not ambient-default. This skill originally ran
 on `--model opus` for its own judgment calls (Interpret, synthesizing

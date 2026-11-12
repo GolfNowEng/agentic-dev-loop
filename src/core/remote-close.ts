@@ -5,33 +5,30 @@
 // no injected clients) -- keeps the already-tested local-reset logic and
 // its temp-filesystem test setup completely untouched by this module's
 // very different test shape (injected mock JiraClient/GitHubClient, no
-// filesystem beyond a single runs.jsonl read for the PR-URL lookup).
+// filesystem at all).
 //
 // Every remote item (Jira, Issue, PR) is closed independently, wrapped in
 // its own try/catch -- one failing must never stop the others, same
 // error-isolation stance roles/dev/reconcile.ts already takes per-ticket.
 //
-// Shared by both roles. The PR step is dev-only in practice, with no role
-// parameter: it runs only when planRemoteClose recovers a PR URL from
-// runs.jsonl (findOpenPrUrl, core/runs-log.ts), and the research role
-// never opens a PR, so every research runs.jsonl line has `pr: null` and
-// the step reports "no-pr" without calling GitHub.
+// Shared by both roles. The PR step runs only when the plan carries a PR
+// URL, which reset-cli.ts looks up with findRecordedPrUrlAcross
+// (core/iteration-log.ts, v1 and v2 logs) before local reset archives
+// anything. Research never opens a PR, so a research-only ticket has no
+// URL and the step reports "no-pr" without calling GitHub.
 
 import type { JiraClient } from "./jira-client.ts";
 import type { GitHubClient } from "./github-client.ts";
-import { findOpenPrUrl } from "./runs-log.ts";
 
 export interface RemoteClosePlan {
   ticketKey: string;
-  /** From findOpenPrUrl -- null means no open PR was found locally, so the PR step is skipped entirely. */
+  /** From findRecordedPrUrlAcross -- null means no PR was found locally, so the PR step is skipped entirely. */
   prUrl: string | null;
 }
 
 export interface RemoteCloseDeps {
   jiraClient: JiraClient;
   githubClient: GitHubClient;
-  /** Read once, before local reset archives/trims it -- see reset-cli.ts's ordering. */
-  runsLogPath: string;
 }
 
 export interface RemoteCloseSummary {
@@ -43,20 +40,6 @@ export interface RemoteCloseSummary {
   issueDetail?: string;
   pr: "closed" | "already-closed" | "no-pr" | "error";
   prDetail?: string;
-}
-
-/**
- * Compute what a remote close would do: recover the ticket's open PR URL
- * (if any) from local run history. Read-only -- no network calls, no
- * writes. Called before executeReset so the PR-URL lookup sees runs.jsonl
- * before local reset archives/trims it.
- */
-export async function planRemoteClose(
-  ticketKey: string,
-  runsLogPath: string,
-): Promise<RemoteClosePlan> {
-  const prUrl = await findOpenPrUrl(runsLogPath, ticketKey);
-  return { ticketKey, prUrl };
 }
 
 /**

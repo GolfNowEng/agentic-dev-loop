@@ -3,7 +3,7 @@
 // RUN_DIR/verdict.json).
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeRunSkill, type SkillRunnerDeps } from "../../src/worker/skill-runner.ts";
@@ -41,6 +41,10 @@ describe("makeRunSkill", () => {
   afterEach(async () => {
     await rm(repo, { recursive: true, force: true });
     await rm(resolveRepoPath(`.pipeline/v2/${SLUG}`), { recursive: true, force: true });
+    // Leave no empty .pipeline/v2 or .pipeline behind (rmdir only removes an empty dir).
+    for (const d of [resolveRepoPath(`.pipeline/v2/${SLUG}`).replace(`/${SLUG}`, ""), resolveRepoPath(`.pipeline/v2/${SLUG}`).replace(`/v2/${SLUG}`, "")]) {
+      await rmdir(d).catch(() => {});
+    }
   });
 
   function deps(extra: Partial<SkillRunnerDeps> = {}): SkillRunnerDeps {

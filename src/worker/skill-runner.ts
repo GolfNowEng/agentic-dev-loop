@@ -1,0 +1,120 @@
+// The real RunSkillFn: one `claude -p` per phase run, over an injected spawn
+// so it is tested without a real claude.
+//
+//   1. Build the prompt from validated values only (build-prompt.ts):
+//      `/<skill> <KEY> run-dir=<abs RUN_DIR> repo-dir=<abs REPO_DIR>`.
+//   2. Create RUN_DIR.
+//   3. Spawn from the repo root, both roles. Research excludes the root
+//      CLAUDE.md and appends its stance (roles/research/startup.ts).
+//   4. Read RUN_DIR/verdict.json -- the only place a verdict is read.
+//
+// Never throws for a run failure (spawn error, timeout kill, no verdict);
+// it throws only for a runDir/key that fails validation, before spawning,
+// which the phase runner records as agent_error.
+
+import { mkdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { roleView, targetRepoAddDir } from "../core/config.ts";
+import type { Config, Role } from "../core/types.ts";
+import { resolveRepoPath } from "../core/paths.ts";
+import { buildSkillPrompt, claudeEnvFor, repoDirFor, SKILL_NAME } from "../core/build-prompt.ts";
+import { redactSensitive } from "../core/redact.ts";
+import type { RunSkillFn, RunSkillResult } from "../core/run-skill.ts";
+import { startProgressTail, type SpawnClaudeOpts, type SpawnClaudeResult } from "../core/spawn-claude.ts";
+import { ALLOWED_TOOLS as DEV_ALLOWED_TOOLS } from "../roles/dev/tools.ts";
+import { devEarlySkillResult } from "../roles/dev/spawn-result.ts";
+import { ALLOWED_TOOLS as RESEARCH_ALLOWED_TOOLS } from "../roles/research/tools.ts";
+import { researchEarlySkillResult } from "../roles/research/spawn-result.ts";
+import { researchClaudeMdExcludes } from "../roles/research/startup.ts";
+
+export const MODEL = "sonnet";
+
+export interface SkillRunnerDeps {
+  config: Config;
+  /** Project slug (PROJECT_SLUG). */
+  slug: string;
+  /** Absolute repo root: the spawn cwd for both roles. */
+  repoRoot: string;
+  stream: boolean;
+  /** The research stance text (loadResearchStance), appended to the research spawn's system prompt. */
+  researchStance: string;
+  /** Git SHA of each role's SKILL.md ("" for a role this process does not run). */
+  skillVersion: Record<Role, string>;
+  /** spawnClaudeRun in production. */
+  spawn: (opts: SpawnClaudeOpts) => Promise<SpawnClaudeResult>;
+  /** Research: find or create the mirror GitHub Issue before the run. Must not throw. */
+  beforeRun?: (role: Role, ticketKey: string) => Promise<void>;
+  log: (message: string) => void;
+  logError: (message: string) => void;
+}
+
+/** Prints claude's own result text and permission denials when a run left no usable verdict. */
+function logNoVerdictDiagnostics(logError: (m: string) => void, skill: string, ticketKey: string, stdout: string): void {
+  try {
+    const parsed = JSON.parse(stdout) as { result?: string; permission_denials?: Array<{ tool_name: string }> } | null;
+    if (parsed?.result) logError(`[${skill}] ${ticketKey}: claude's own result text: ${parsed.result}`);
+    if (parsed?.permission_denials?.length) {
+      logError(`[${skill}] ${ticketKey}: permission denials: ${parsed.permission_denials.map((d) => d.tool_name).join(", ")}`);
+    }
+  } catch {
+    // Diagnostic logging must never itself crash the loop.
+  }
+}
+
+export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
+  const repoDir = repoDirFor(deps.config, deps.slug);
+  // --add-dir: a targetRepo.path checkout sits outside the repo root, so
+  // without it every Edit/Write in the worktree is denied (TARS-1393). The
+  // v2 clone is under the repo root already.
+  const addDir = targetRepoAddDir(deps.config);
+
+  return async ({ role, ticketKey, runDir, maxBudgetUsd }): Promise<RunSkillResult> => {
+    const skill = SKILL_NAME[role];
+    const view = roleView(deps.config, role);
+    const absRunDir = resolveRepoPath(runDir);
+    const prompt = buildSkillPrompt({ role, ticketKey, runDir: absRunDir, repoDir });
+
+    if (deps.beforeRun && role === "research") await deps.beforeRun(role, ticketKey);
+    await mkdir(absRunDir, { recursive: true });
+
+    deps.log(`[${skill}] ${ticketKey}: running (run dir ${runDir}, budget $${maxBudgetUsd})...`);
+    const tail = startProgressTail(absRunDir, ticketKey, skill, deps.log);
+    let run: SpawnClaudeResult;
+    try {
+      run = await deps.spawn({
+        prompt,
+        model: MODEL,
+        allowedTools: role === "research" ? RESEARCH_ALLOWED_TOOLS : DEV_ALLOWED_TOOLS,
+        addDir,
+        cwd: deps.repoRoot,
+        excludeClaudeMd: role === "research" ? researchClaudeMdExcludes(deps.repoRoot) : [],
+        ...(role === "research" ? { appendSystemPrompt: deps.researchStance } : {}),
+        timeoutMin: view.limits.runTimeoutMin,
+        maxBudgetUsd,
+        stream: deps.stream,
+        ticketKey,
+        rawUsagePath: join(absRunDir, "usage.json"),
+        env: claudeEnvFor(view.limits, process.env),
+      });
+    } finally {
+      await tail.stop();
+    }
+
+    const base = { skillVersion: deps.skillVersion[role], model: MODEL };
+    const early =
+      role === "research"
+        ? researchEarlySkillResult(run, base, view.limits.runTimeoutMin)
+        : devEarlySkillResult(run, base, view.limits.runTimeoutMin);
+    if (early) return early;
+
+    let verdictRaw: string | undefined;
+    try {
+      // Redacted before it leaves here: the skill's self-report lands in the record's detail.
+      verdictRaw = redactSensitive(await readFile(join(absRunDir, "verdict.json"), "utf8"));
+    } catch {
+      verdictRaw = undefined;
+    }
+    if (verdictRaw === undefined) logNoVerdictDiagnostics(deps.logError, skill, ticketKey, run.stdout);
+    return { ...base, verdictRaw, started: run.started, ended: run.ended, costUsd: run.usage.costUsd, tokens: run.usage.tokens };
+  };
+}

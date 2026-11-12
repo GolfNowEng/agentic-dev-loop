@@ -348,8 +348,8 @@ export async function resolveProjectConfigPath(
  * regardless of `--permission-mode acceptEdits` (that flag only
  * auto-answers the permission *prompt* for Edit/Write, it doesn't grant
  * directory access). Returns null when `targetRepo.path` is unset, since
- * the clone-based flow's worktrees live under `.pipeline/<slug>/repo`,
- * already inside dev-loop's own cwd.
+ * the clone-based flow's worktrees live under the v2 clone
+ * (`v2CloneDir`), already inside dev-loop's own cwd. Both roles get it.
  */
 export function targetRepoAddDir(config: Config): string | null {
   return config.targetRepo.path ?? null;

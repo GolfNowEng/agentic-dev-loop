@@ -20,8 +20,9 @@ problems a fix's own author is least likely to see.
   run `src/roles/dev/qa-browser.ts`. Never repeat it in findings, notes, or anything
   that reaches a PR or Jira.
 - The path to this run's own worktree of the target repo (at
-  `<targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>` — nested inside the
-  target repo's own directory tree, not this pipeline repo — already on
+  `<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>`, where `REPO_DIR` is the
+  checkout `ticket-to-pr` was given — nested inside the target repo's own
+  directory tree, not this pipeline repo — already on
   the ticket's branch). This worktree is `ticket-to-pr`'s to manage
   (create, and remove once the run concludes) — you just work inside it
   while you're here.
@@ -31,10 +32,12 @@ of "things to check," or the original bug report beyond the ticket itself.
 Read the ticket, read the diff (`git diff <defaultBranch>...HEAD` in the
 target repo checkout), and form your own judgment.
 
-The ticket's Acceptance Criteria and Scope live in its `Refined Spec —
-ready for ticket-to-pr` comment, not its description (`research-loop`
-never rewrites a stakeholder's original description) — read that comment,
-not the description, for AC/Scope content.
+The ticket's Acceptance Criteria and Scope live in its newest `✅
+research-loop -` comment (or the `## ✅ research-loop -` comment on the
+GitHub Issue it links to), not its description (the research phase never
+rewrites a stakeholder's original description) — read that comment, not
+the description, for AC/Scope content. `ticket-to-pr` passes you that
+spec's current text.
 
 You are not limited to static reading. If the AC or the change is
 visual, timing-sensitive, or otherwise hard to trust from a diff alone —

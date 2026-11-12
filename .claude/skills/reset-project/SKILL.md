@@ -6,12 +6,13 @@ description: Deterministically wipe this repo's own v2 pipeline state (one role 
 # reset-project
 
 One skill, one script, for both roles. It resets this repo's **v2** state
-(`runs/v2/<project>.jsonl` records and `.pipeline/v2/<project>/` run
-dirs), with `--role research|dev|all` picking the role (default `all`).
+(`runs/v2/<project>.jsonl` records and the project's v2 run dirs, under
+the v2 state root, `v2ProjectDir` in `src/core/paths.ts`), with `--role research|dev|all` picking the role (default `all`).
 Paths are always repo-root-relative, so the directory you run it from does
 not matter. **v1 history is never touched**, in either layout:
-`runs/v1/`, `.pipeline/v1/`, the pre-cutover `runs/<slug>.jsonl` and
-`.pipeline/<slug>/`, `research-loop/runs/`, `research-loop/.pipeline/`.
+the v1 archive (`runs/v1/` and its run-state twin), the pre-cutover
+`runs/<slug>.jsonl` and per-slug run state, and the former research-loop
+checkout's `runs/` and run state. `docs/reset.md` lists the exact paths.
 
 ## Arguments
 
@@ -48,7 +49,7 @@ fixing a bug via a live ticket, the way TARS-1465 was used and then wiped
 clean — run the script directly. Do not improvise the equivalent by hand
 with `rm -rf`/`grep -v`/one-off `gh`/Jira calls — this script already
 handles the "don't touch any other ticket's data," "don't delete another
-project's `.pipeline/` directory," and "don't silently drop a failed
+project's run-state directory," and "don't silently drop a failed
 remote close" cases correctly, with test coverage
 (`test/core/reset-project.test.ts`, `test/core/reset-cli.test.ts`,
 `test/core/remote-close.test.ts`) backing every guarantee.
@@ -60,7 +61,7 @@ local, gitignored v2 state** for the chosen role(s) — see
 `docs/reset.md` for the exact rationale. It never touches Jira, GitHub, or
 the target repo's git history, and never touches another ticket's or
 another project's data. It also never swaps the ticket's
-`pipeline:research`/`pipeline:dev` label.
+pipeline labels (`roles.research.triggerLabel`, `roles.research.handoffLabel`).
 
 ## `--close-remote`: closing the real ticket, Issue, and PR
 
@@ -140,7 +141,7 @@ before a non-dry run. If the plan warns that a session lock is present,
 a worker may be running for the project: stop it first (a real run
 refuses while the holder is alive). `REFUSED` lines are records kept on
 purpose (see `--include-cross-role`). `WARNING: skipped symlink` means a
-symlinked dir under `.pipeline/v2/<project>/` was not followed or
+symlinked dir under the project's v2 state root was not followed or
 deleted; inspect it by hand.
 
 ## What gets deleted locally (per-ticket)
@@ -149,7 +150,7 @@ deleted; inspect it by hand.
    — appended to `runs/v2/<project>.reset-archive.jsonl` first
    (append-only, never overwritten), then removed from the live log.
    Every other record is preserved, in order.
-2. Every `.pipeline/v2/<project>/<session>/<TICKET>/<role>-<RUN_ID>/`
+2. Every `<v2 state root>/<session>/<TICKET>/<role>-<RUN_ID>/`
    directory for that ticket and role, in every session.
 3. Leftover worktrees under `<targetRepo.path>/.claude/worktrees/` (or the
    v2 clone's when `targetRepo.path` is unset) named `<TICKET>-*`:
@@ -163,7 +164,7 @@ removed (the live log is deleted when that empties it), and every matching
 run dir of every ticket is deleted. With `--role all` only, session-dir
 leftovers are pruned too: `*.lock.adopted-*`, `.acquire.stale-*`,
 `.acquire.reclaim-*`, `.acquire.release-*`, `.tmp-*` — never a `*.lock`,
-a `*.lock.stale-*`, or `.acquire`. The clone `.pipeline/v2/<project>/repo`
+a `*.lock.stale-*`, or `.acquire`. The clone (`<v2 state root>/repo`)
 is kept. Worktrees are **not** swept in this mode — see `docs/reset.md`.
 
 ## Recovering archived history

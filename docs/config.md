@@ -71,8 +71,10 @@ below names a v1 key, the mapping is: `jira.triggerLabel` (research) →
   `catalog-ui-*` configs keep the v1 labels (`pipeline:research` /
   `pipeline:dev`) until cutover. `checkLabelVersion(config, pkgVersion)`
   refuses an unversioned or other-major trigger label, and warns on a
-  minor/patch difference. Worker mode enforces it (Task 15); `--phase
-  research|dev` does not.
+  minor/patch difference. Worker mode (`--phase worker`, the default) enforces
+  it at startup, after the placeholder check: ok:false exits 1 (so the
+  `catalog-ui-*` configs are refused until cutover), a warning is logged.
+  `--phase research|dev` do not.
 - `pipeline.loop.config.json` (poll interval, post-run delay) is unchanged and
   is read from the repo root by both phases.
 

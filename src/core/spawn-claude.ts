@@ -4,6 +4,8 @@
  * src/main.ts and research-loop's src/main.ts, identical modulo the skill
  * name in log prefixes): spawnClaude, spawnClaudeStreaming,
  * printStreamEvent, startProgressTail, onLines, and raw-usage persistence.
+ * The progress tail reads the run dir the runner passed the skill
+ * (`run-dir=`, 2.0.0); v1 discovered it by diffing directory snapshots.
  *
  * New in v2 (both enforced during the run, where v1 only checked after it
  * ended): every spawn gets `--max-budget-usd`, and a run still going at
@@ -24,7 +26,6 @@ import { dirname, join } from "node:path";
 import { extractUsage } from "./claude-usage.ts";
 import type { UsageResult } from "./claude-usage.ts";
 import { redactSensitive } from "./redact.ts";
-import { findNewestRunDir } from "./run-dirs.ts";
 import type { ExecutorVerdict } from "./types.ts";
 
 /** Grace period between SIGTERM and SIGKILL on a timeout kill. */
@@ -54,6 +55,14 @@ export interface SpawnClaudeOpts {
    * setting, verified in 2.1.322). Omitted or empty: no --settings flag.
    */
   excludeClaudeMd?: string[];
+  /**
+   * Text appended to the default system prompt (`--append-system-prompt`,
+   * a Claude Code flag, verified in 2.1.322). The research spawn passes its
+   * stance here. Omitted or empty: no flag.
+   */
+  appendSystemPrompt?: string;
+  /** The child's working directory. Omitted: this process's cwd. */
+  cwd?: string;
 }
 
 export interface SpawnClaudeResult {
@@ -204,27 +213,20 @@ export function printStreamEvent(
  * by phase, while it works) and prints each new line as it appears -- so a
  * human watching the foreground process sees the phases scroll by instead
  * of a silent multi-minute gap between "claimed" and the final result.
- * `before` is the run-dir snapshot taken just before spawning, same as
- * run-dirs.ts's own before/after discovery.
+ * `runDir` is the absolute RUN_DIR the skill was given.
  */
 export function startProgressTail(
-  runsBaseDir: string,
+  runDir: string,
   ticketKey: string,
-  before: Set<string>,
   logPrefix: string,
   log: (message: string) => void = defaultLog,
 ): { stop: () => Promise<void> } {
-  let runDirName: string | null = null;
   let linesPrinted = 0;
 
   async function poll(): Promise<void> {
-    if (!runDirName) {
-      runDirName = await findNewestRunDir(runsBaseDir, ticketKey, before);
-      if (!runDirName) return;
-    }
     let raw: string;
     try {
-      raw = await readFile(join(runsBaseDir, runDirName, "progress.jsonl"), "utf8");
+      raw = await readFile(join(runDir, "progress.jsonl"), "utf8");
     } catch {
       return;
     }
@@ -268,6 +270,7 @@ function buildArgs(opts: SpawnClaudeOpts): string[] {
     ...(opts.excludeClaudeMd && opts.excludeClaudeMd.length > 0
       ? ["--settings", JSON.stringify({ claudeMdExcludes: opts.excludeClaudeMd })]
       : []),
+    ...(opts.appendSystemPrompt ? ["--append-system-prompt", opts.appendSystemPrompt] : []),
     ...(opts.stream
       ? ["--output-format", "stream-json", "--verbose"]
       : ["--output-format", "json"]),
@@ -309,6 +312,7 @@ function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promi
       child = deps.spawn("claude", buildArgs(opts), {
         stdio: ["ignore", "pipe", "pipe"],
         env: childEnv(opts.env),
+        ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
       });
     } catch (err) {
       settle({ stdout: "", spawnError: err instanceof Error ? err.message : String(err), killedTimeout: false });
