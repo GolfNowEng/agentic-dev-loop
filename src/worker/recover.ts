@@ -85,7 +85,23 @@ export async function recordFlights(ctx: Ctx, flights: InFlight[]): Promise<Work
     const tag = flightTag(f);
     if (ctx.records.some((r) => r.ticket === f.ticket && r.resume === f.role && (r.detail ?? "").includes(tag))) continue;
     if (f.role === "dev" && ctx.roles.has("dev") && !f.interrupted) {
-      const pr = await openPr(ctx, f.ticket);
+      // Same status gate as resumeNext: a moved ticket is not self-healed back to Code Review.
+      // A failed lookup falls through to the normal flight record, so resumeNext re-checks it.
+      let status: string | null = null;
+      try {
+        status = await ctx.deps.jira.getStatus(f.ticket);
+      } catch (err) {
+        ctx.log(`[worker] ${f.ticket}: status lookup failed, recording the flight for a later resume: ${errorMessage(err)}`);
+      }
+      if (status !== null && status !== ctx.research.claimStatus.to) {
+        const record = await append(ctx, f.ticket, nowIso(ctx), "resume-dropped", [], {
+          detail: `resume of the dev phase dropped: status is now "${status}", not "${ctx.research.claimStatus.to}" (${tag})`,
+        });
+        ctx.log(`[worker] ${f.ticket}: ${record.detail}`);
+        healed = { kind: "did", record };
+        continue;
+      }
+      const pr = status === null ? null : await openPr(ctx, f.ticket);
       if (pr) {
         healed = await selfHeal(ctx, f.ticket, pr, f.runDir, f.since);
         continue;

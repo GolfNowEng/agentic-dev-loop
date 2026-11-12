@@ -229,6 +229,13 @@ iteration writes nothing. The steps run in this order:
      `skipped-pr-exists` with a `landed` dev phase carrying the PR (this
      resets attempts and teaches the landed lookup), no rebuild.
 
+   Before either a self-heal or a resume, the ticket's live Jira status is
+   re-read: only `claimStatus.to` (In Progress) proceeds. Any other status
+   appends a phase-less `resume-dropped` record (not an attempt, no `resume`,
+   so it resolves the pending resume); a failed lookup leaves the resume
+   pending, keeps the ticket out of this iteration's polls, and retries next
+   iteration.
+
    Then, every iteration, one ticket whose latest record has `resume` set to
    a role this process runs, and that is below both the attempt cap and that
    role's `maxRunsPerDay`, is re-run without a claim. A research phase that

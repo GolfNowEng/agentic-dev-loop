@@ -500,6 +500,13 @@ export class RealJiraClient implements JiraClient {
     });
   }
 
+  /** The ticket's current Jira status name. */
+  async getStatus(ticketKey: string): Promise<string> {
+    const response = await this.request(`/rest/api/3/issue/${ticketKey}?fields=status`);
+    const data = (await response.json()) as JiraStatusFieldResponse;
+    return data.fields.status.name;
+  }
+
   /**
    * Close a ticket, walking through up to MAX_INTERMEDIATE_HOPS
    * intermediate forward-progress statuses first when no done-category
@@ -515,12 +522,6 @@ export class RealJiraClient implements JiraClient {
    * checking the live transitions list until a done-category one
    * appears, or the unambiguous trail runs out."
    */
-  async getStatus(ticketKey: string): Promise<string> {
-    const response = await this.request(`/rest/api/3/issue/${ticketKey}?fields=status`);
-    const data = (await response.json()) as JiraStatusFieldResponse;
-    return data.fields.status.name;
-  }
-
   async closeTicket(ticketKey: string): Promise<CloseTicketResult> {
     const statusResponse = await this.request(
       `/rest/api/3/issue/${ticketKey}?fields=status`,
