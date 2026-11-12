@@ -144,6 +144,12 @@ describe("check-dev-bounce", () => {
     expect(r.pass).toBe(false);
   });
 
+  it("fails: dev opened a PR and then bounced", () => {
+    const r = gradeDevBounce({ records: [devBounced()], pr: openPr(), jira: { key: A, status: "Blocked" } });
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join("\n")).toMatch(/PR/);
+  });
+
   it("fails: dev landed", () => {
     expect(gradeDevBounce({ records: [landedClean()], pr: openPr(), jira: { key: A, status: "Code Review" } }).pass).toBe(false);
   });

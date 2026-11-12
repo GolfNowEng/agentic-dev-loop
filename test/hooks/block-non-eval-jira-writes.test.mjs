@@ -77,14 +77,37 @@ for (const [name, input] of WRITES) {
   check("set: link with a foreign outward end denied", outward.status === 2, `got ${outward.status}`);
 }
 
-// createJiraIssue: allowed only with the [dev-loop-eval] summary prefix.
+// createJiraIssue: allowed only when ALL hold: project TARS, the
+// [dev-loop-eval] summary prefix, the dev-loop-eval label, no parent (or a
+// listed one), and no transition.
 {
-  const ok = run(mcp("createJiraIssue", { projectKey: "TARS", issueTypeName: "Task", summary: "[dev-loop-eval] follow-up" }));
-  check("set: createJiraIssue with the prefix allowed", ok.status === 0, `got ${ok.status}, stderr: ${ok.stderr}`);
-  const no = run(mcp("createJiraIssue", { projectKey: "TARS", issueTypeName: "Task", summary: "follow-up [dev-loop-eval]" }));
-  check("set: createJiraIssue with the prefix not at the start denied", no.status === 2, `got ${no.status}`);
-  const missing = run(mcp("createJiraIssue", { projectKey: "TARS", issueTypeName: "Task" }));
-  check("set: createJiraIssue with no summary denied", missing.status === 2, `got ${missing.status}`);
+  const GOOD = {
+    cloudId: "x",
+    projectKey: "TARS",
+    issueTypeName: "Task",
+    summary: "[dev-loop-eval] follow-up",
+    additional_fields: { labels: ["repo:webtarsthree", "dev-loop-eval"] },
+  };
+  const create = (patch) => run(mcp("createJiraIssue", { ...GOOD, ...patch }));
+  const allow = (name, r) => check(`set: createJiraIssue ${name} allowed`, r.status === 0, `got ${r.status}, stderr: ${r.stderr}`);
+  const deny = (name, r) => check(`set: createJiraIssue ${name} denied`, r.status === 2, `got ${r.status}`);
+
+  allow("with project, prefix and label", create({}));
+  allow("with a listed parent", create({ issueTypeName: "Sub-task", parent: "TARS-9001" }));
+  allow("with project in additional_fields.project", create({ projectKey: undefined, additional_fields: { ...GOOD.additional_fields, project: { key: "TARS" } } }));
+
+  deny("with the prefix not at the start", create({ summary: "follow-up [dev-loop-eval]" }));
+  deny("with no summary", create({ summary: undefined }));
+  deny("in another project", create({ projectKey: "MC" }));
+  deny("with no project", create({ projectKey: undefined }));
+  deny("with projectKey TARS but additional_fields.project elsewhere", create({ additional_fields: { ...GOOD.additional_fields, project: { key: "MC" } } }));
+  deny("without the dev-loop-eval label", create({ additional_fields: { labels: ["repo:webtarsthree"] } }));
+  deny("with no labels at all", create({ additional_fields: undefined }));
+  deny("with labels not an array", create({ additional_fields: { labels: "dev-loop-eval" } }));
+  deny("with a foreign parent", create({ issueTypeName: "Sub-task", parent: "TARS-1381" }));
+  deny("with a parent in additional_fields", create({ additional_fields: { ...GOOD.additional_fields, parent: { key: "TARS-1381" } } }));
+  deny("with a transition", create({ transition: { id: "31" } }));
+  deny("with a transition even when empty", create({ transition: {} }));
 }
 
 // Reads always allowed, even on foreign keys.

@@ -16,11 +16,17 @@ import { join, relative, resolve } from "node:path";
 import { loadConfig } from "../../src/core/config.ts";
 import { checkEvalConfig, SANDBOX_REPO } from "../../evals/config-guard.mjs";
 import { summarize } from "../../evals/report.mjs";
+import { createIssueBody, STORY_POINTS_FIELD, EVAL_STORY_POINTS } from "../../evals/jira.mjs";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const rel = (p: string) => relative(ROOT, p);
 const EVAL_CONFIG = join(ROOT, "pipeline.eval.config.json");
 const STUBS = ["gh", "claude", "curl", "npm"] as const;
+
+/** An env override of `undefined` means "unset this variable". */
+function withoutUndefined(env: Record<string, string | undefined>): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined));
+}
 
 describe("pipeline.eval.config.json", () => {
   it("loads via the real loader and passes the preflight guard", async () => {
@@ -87,11 +93,11 @@ describe("evals harness, dry run", () => {
 
   afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
-  const run = (script: string, args: string[], env: Record<string, string> = {}) =>
+  const run = (script: string, args: string[], env: Record<string, string | undefined> = {}) =>
     spawnSync("bash", [join(ROOT, "evals", script), ...args], {
       cwd: ROOT,
       encoding: "utf8",
-      env: {
+      env: withoutUndefined({
         PATH: `${stubDir}:${process.env.PATH ?? ""}`,
         HOME: process.env.HOME ?? tmp,
         DRY_RUN: "1",
@@ -101,7 +107,7 @@ describe("evals harness, dry run", () => {
         // credentials are in this env at all).
         DEVLOOP_ENV_FILE: join(tmp, "no-such.env"),
         ...env,
-      },
+      }),
     });
 
   const stubsCalled = () => readdirSync(markers);
@@ -148,6 +154,34 @@ describe("evals harness, dry run", () => {
       .split("\n")
       .filter((l) => l.includes("npm run loop"));
     expect(queueLoops.length).toBe(2);
+  });
+
+  it("DRY_RUN unset or empty means dry: run.sh clean runs no stub", () => {
+    for (const value of [undefined, ""]) {
+      const r = run("run.sh", ["clean"], { DRY_RUN: value });
+      expect(r.status, `DRY_RUN=${JSON.stringify(value)}: ${r.stderr}`).toBe(0);
+      expect(r.stdout + r.stderr).toContain("DRY: ");
+      expect(r.stdout + r.stderr).toContain("mode: dry");
+      expect(stubsCalled()).toEqual([]);
+    }
+  });
+
+  it("DRY_RUN values other than 0, 1 or empty are refused before anything runs", () => {
+    for (const value of ["true", "yes", "false", "00", " 0", "1 "]) {
+      for (const script of ["run.sh", "reset.sh", "preflight.sh"]) {
+        const r = run(script, script === "run.sh" ? ["clean"] : [], { DRY_RUN: value });
+        expect(r.status, `${script} DRY_RUN=${JSON.stringify(value)}`).not.toBe(0);
+        expect(r.stdout + r.stderr).toMatch(/DRY_RUN/);
+        expect(r.stdout + r.stderr).not.toContain("DRY: ");
+      }
+    }
+    expect(stubsCalled()).toEqual([]);
+  });
+
+  it("run.sh's usage names DRY_RUN=0 as the live mode", () => {
+    const r = run("run.sh", []);
+    expect(r.status).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain("DRY_RUN=0");
   });
 
   it("run.sh with no args, an unknown name, or two names exits non-zero", () => {
@@ -211,6 +245,43 @@ describe("evals lib guards", () => {
     expect(sh(`assert_repo fandango/webtarsthree && echo ok`).status).not.toBe(0);
   });
 
+  it("eval_mode parses DRY_RUN: unset/empty/1 -> dry, 0 -> live, anything else refused", () => {
+    const mode = (value: string | undefined) =>
+      spawnSync("bash", ["-c", `. "${lib}" && eval_mode`], {
+        encoding: "utf8",
+        env: withoutUndefined({ PATH: process.env.PATH ?? "", DRY_RUN: value }),
+      });
+    expect(mode(undefined).stdout.trim()).toBe("dry");
+    expect(mode("").stdout.trim()).toBe("dry");
+    expect(mode("1").stdout.trim()).toBe("dry");
+    // Parsed only: nothing outward is called here.
+    expect(mode("0").stdout.trim()).toBe("live");
+    for (const v of ["true", "TRUE", "no", "2", "0 "]) {
+      const r = mode(v);
+      expect(r.status, v).not.toBe(0);
+      expect(r.stdout.trim(), v).not.toBe("live");
+      expect(r.stderr, v).toMatch(/DRY_RUN/);
+    }
+  });
+
+  it("outward refuses a DRY_RUN changed to a bad value after sourcing, and runs nothing", () => {
+    const r = sh(`DRY_RUN=true outward echo LEAKED`);
+    expect(r.stdout).not.toContain("LEAKED");
+    expect(r.status).not.toBe(0);
+  });
+
+  it("api asserts the repo it actually calls (EVAL_REPO), before any outward command", () => {
+    const ok = sh(`api GET pulls`);
+    expect(ok.stderr).toContain("DRY: gh api -X GET repos/JustinChan-fd/dev-loop-eval-sandbox/pulls");
+    const bad = spawnSync("bash", ["-c", `. "${lib}"; api GET pulls; echo after`], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", DRY_RUN: "1", EVAL_REPO: "fandango/webtarsthree" },
+    });
+    expect(bad.status).not.toBe(0);
+    expect(bad.stderr).not.toContain("DRY: ");
+    expect(bad.stdout).not.toContain("after");
+  });
+
   it("assert_clone refuses a clone whose origin is not the sandbox", () => {
     const dir = mkdtempSync(join(tmpdir(), "eval-clone-"));
     try {
@@ -218,6 +289,13 @@ describe("evals lib guards", () => {
       spawnSync("git", ["-C", dir, "remote", "add", "origin", "git@github.com:fandango/webtarsthree.git"]);
       expect(sh(`assert_clone "${dir}" && echo ok`).status).not.toBe(0);
       spawnSync("git", ["-C", dir, "remote", "set-url", "origin", "git@github.com:JustinChan-fd/dev-loop-eval-sandbox.git"]);
+      expect(sh(`assert_clone "${dir}" && echo ok`).stdout).toContain("ok");
+      // A foreign push URL with the sandbox fetch URL is refused.
+      spawnSync("git", ["-C", dir, "remote", "set-url", "--push", "origin", "git@github.com:fandango/webtarsthree.git"]);
+      const pushBad = sh(`assert_clone "${dir}" && echo ok`);
+      expect(pushBad.status).not.toBe(0);
+      expect(pushBad.stderr).toMatch(/push/);
+      spawnSync("git", ["-C", dir, "remote", "set-url", "--push", "origin", "https://github.com/JustinChan-fd/dev-loop-eval-sandbox.git"]);
       expect(sh(`assert_clone "${dir}" && echo ok`).stdout).toContain("ok");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -304,5 +382,25 @@ describe("evals/report.mjs", () => {
       { scenario: "clean", ticket: "TARS-1", outcome: "landed", phases: "research:landed dev:landed", cost_usd: 10.5, minutes: 30 },
       { scenario: "blocked", ticket: "TARS-2", outcome: "skipped-blocked", phases: "", cost_usd: 0, minutes: null },
     ]);
+  });
+});
+
+describe("evals/jira.mjs create request body", () => {
+  it("sets Story Points (so the To Do -> In Progress claim is not refused), labels and the TARS project", () => {
+    expect(STORY_POINTS_FIELD).toBe("customfield_10002");
+    expect(EVAL_STORY_POINTS).toBe(1);
+    const body = createIssueBody("[dev-loop-eval] x", "line one\n\nline two", true);
+    expect(body.fields.customfield_10002).toBe(1);
+    expect(body.fields.project).toEqual({ key: "TARS" });
+    expect(body.fields.summary).toBe("[dev-loop-eval] x");
+    expect(body.fields.labels).toEqual(["repo:webtarsthree", "dev-loop-eval", "pipeline:v2.0.0"]);
+    expect(body.fields.description.content).toHaveLength(2);
+    expect(body).not.toHaveProperty("transition");
+    expect(body.fields).not.toHaveProperty("parent");
+  });
+
+  it("omits the trigger label without --trigger, and refuses a summary without the prefix", () => {
+    expect(createIssueBody("[dev-loop-eval] b", "d", false).fields.labels).toEqual(["repo:webtarsthree", "dev-loop-eval"]);
+    expect(() => createIssueBody("no prefix", "d", false)).toThrow(/dev-loop-eval/);
   });
 });
