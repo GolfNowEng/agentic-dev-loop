@@ -13,7 +13,7 @@ History before 2.0.0 lives in two files, one per former repo:
 - [docs/changelog/dev-loop-legacy.md](docs/changelog/dev-loop-legacy.md)
 - [docs/changelog/research-loop-legacy.md](docs/changelog/research-loop-legacy.md)
 
-## [2.0.0] — unreleased
+## [2.0.0] — 2026-11-12
 
 dev-loop and research-loop are now one repo with two phases. Run
 `npm run loop -- --project <name>` (worker mode, both roles) or add
