@@ -23,7 +23,9 @@ export type FailureCategory =
   | "subagent_stall"
   | "merge_conflict"
   | "agent_error"
-  | "killed_ceiling";
+  | "killed_ceiling"
+  /** An enforcing sandbox refused the run (network, credential, infra): the ticket is parked, not judged. */
+  | "sandbox_denied";
 
 /**
  * The set of terminal outcomes a run can have.

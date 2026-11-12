@@ -44,6 +44,8 @@ export interface WorkerDeps {
   roles?: Role[];
   /** v1 research "landed" lookup (the research log the v1 runner wrote), so a v1-refined ticket is never re-refined. */
   hasLandedResearchV1?: (key: string) => Promise<boolean>;
+  /** Desktop notification (notify() from core/notify.ts in production); fire-and-forget. */
+  notify?: (title: string, body: string) => void;
   log?: (message: string) => void;
 }
 
@@ -120,7 +122,7 @@ export async function append(
   started: string,
   outcome: IterationOutcome,
   phases: PhaseEntry[],
-  extra: Partial<Pick<IterationRecord, "blocked_by" | "detail" | "jira_sync_error" | "resume">> = {},
+  extra: Partial<Pick<IterationRecord, "blocked_by" | "detail" | "jira_sync_error" | "resume" | "parked">> = {},
 ): Promise<IterationRecord> {
   const rec: IterationRecord = {
     ticket,

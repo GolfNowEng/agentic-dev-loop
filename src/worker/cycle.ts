@@ -15,7 +15,7 @@ import type { IterationOutcome, IterationRecord, PhaseEntry } from "../core/iter
 import { readIterations, recentlyEnded } from "../core/iteration-log.ts";
 import { errorMessage } from "../core/run-skill.ts";
 import { buildPollJql, excludeKeysFromJql } from "../core/jql.ts";
-import { append, makeCtx, nowIso, roleCapped, runsToday, workerState, type Ctx, type WorkerDeps, type WorkerIterationResult } from "./context.ts";
+import { append, latestRecord, makeCtx, nowIso, roleCapped, runsToday, workerState, type Ctx, type WorkerDeps, type WorkerIterationResult } from "./context.ts";
 import { completePendingHandoffs } from "./handoff.ts";
 import { enforceAttemptCap } from "./attempts.ts";
 import { recordFlights, resumeNext } from "./recover.ts";
@@ -28,6 +28,7 @@ import {
   postPhaseBreach,
   researchBudget,
   runPhase,
+  type PhaseParked,
 } from "./cycle-steps.ts";
 
 export type { WorkerDeps, WorkerIterationResult } from "./context.ts";
@@ -96,8 +97,11 @@ async function iterate(ctx: Ctx): Promise<WorkerIterationResult> {
   // 1. Pending handoffs (not in research-only mode: there the handoff is left pending).
   if (ctx.roles.has("dev")) await completePendingHandoffs(ctx);
 
-  // 2. EXCLUDE: recently ended (survives restarts; Jira index lag) ∪ attempt-capped.
+  // 2. EXCLUDE: recently ended (survives restarts; Jira index lag) ∪ parked ∪ attempt-capped.
   for (const k of recent) ctx.exclude.add(k);
+  for (const k of new Set(ctx.records.map((r) => r.ticket))) {
+    if (latestRecord(ctx.records, k)?.outcome === "parked") ctx.exclude.add(k);
+  }
   await enforceAttemptCap(ctx);
 
   const enabled = [...ctx.roles];
@@ -184,11 +188,38 @@ async function finish(
   return { kind: "did", record };
 }
 
+/**
+ * A run the sandbox refused: one "parked" record (resume set, not an attempt,
+ * no Jira write; `prior` keeps a landed research), a notification, and the
+ * loop carries on. A lost session lock still pauses, after the record.
+ */
+async function park(
+  ctx: Ctx,
+  t: JiraTicket,
+  started: string,
+  role: "research" | "dev",
+  parked: PhaseParked,
+  prior: PhaseEntry[],
+  syncErrors: string[],
+  fatal: string | undefined,
+): Promise<WorkerIterationResult> {
+  const { denied, approveHint, cost_usd, run_dir } = parked;
+  const record = await append(ctx, t.key, started, "parked", prior, {
+    ...extra(syncErrors, `sandbox refused: ${denied.map((d) => `${d.kind} ${d.target}`).join(", ")}`),
+    resume: role,
+    parked: { role, failure_category: "sandbox_denied", denied, ...(approveHint !== undefined ? { approveHint } : {}), cost_usd, run_dir },
+  });
+  ctx.deps.notify?.(`dev-loop: ${t.key} parked`, `sandbox refused ${denied.map((d) => d.target).join(", ")}; run npm run sandbox:approvals`);
+  if (fatal) return { kind: "paused", reason: fatal, record };
+  return { kind: "did", record };
+}
+
 /** A dev phase on a ticket that is already past research (resume, step-1 handoff, dev poll). */
 export async function devOnly(ctx: Ctx, t: JiraTicket, started: string, syncErrors: string[] = []): Promise<WorkerIterationResult> {
   const run = await runPhase(ctx, "dev", t, devBudget(ctx));
   // In-flight couldn't be recorded: nothing ran, and the ticket is still in the dev poll (or its resume is still pending).
   if (run.entry === null) return { kind: "paused", reason: run.fatal };
+  if (run.parked) return park(ctx, t, started, "dev", run.parked, [], syncErrors, run.fatal);
   return finish(ctx, t.key, started, run.entry.outcome, [run.entry], syncErrors, run.fatal);
 }
 
@@ -211,6 +242,7 @@ export async function researchThenDev(
     });
     return { kind: "paused", reason: r.fatal, record };
   }
+  if (r.parked) return park(ctx, t, started, "research", r.parked, [], syncErrors, r.fatal);
   const research = r.entry;
   if (research.outcome !== "landed" || r.fatal) {
     // Ruling 20: an error/killed research leaves the ticket claimed (In Progress), out of
@@ -257,5 +289,6 @@ export async function researchThenDev(
     // Research and its cost are recorded first; the handed-off ticket is in the dev poll.
     return finish(ctx, t.key, started, "landed", [handed], syncErrors, d.fatal, "research landed and handed off; dev not started (session lock)");
   }
+  if (d.parked) return park(ctx, t, started, "dev", d.parked, [handed], syncErrors, d.fatal);
   return finish(ctx, t.key, started, d.entry.outcome, [handed, d.entry], syncErrors, d.fatal);
 }

@@ -146,7 +146,7 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
     if (deps.sandbox && denied.length > 0) {
       const refused = denied.map((d) => `${d.kind} ${d.target}`).join(", ");
       if (deps.sandbox.mode === "enforce") {
-        deps.log(`[${skill}] ${ticketKey}: sandbox refused ${refused}; parking`);
+        deps.log(redactSensitive(`[${skill}] ${ticketKey}: sandbox refused ${refused}; parking`));
         const approveHint = run.sandbox!.report.approveHint;
         return {
           ...base,
@@ -158,7 +158,7 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
           tokens: run.usage.tokens,
         };
       }
-      deps.log(`[${skill}] ${ticketKey}: sandbox refused ${refused}; discover mode, not parking`);
+      deps.log(redactSensitive(`[${skill}] ${ticketKey}: sandbox refused ${refused}; discover mode, not parking`));
     }
     const early =
       role === "research"

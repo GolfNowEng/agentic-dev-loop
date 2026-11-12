@@ -63,6 +63,7 @@ import { parseArgs, preflight, type Phase } from "./core/cli-args.ts";
 import { FlagError } from "./core/flags.ts";
 import { checkAbsPath, checkRepoDirPlacement, repoDirFor, SKILL_NAME } from "./core/build-prompt.ts";
 import { killActiveChild, spawnClaudeRun } from "./core/spawn-claude.ts";
+import { notify } from "./core/notify.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
 import { makeRunSkill, sandboxMounts } from "./worker/skill-runner.ts";
 import { reconcileMergedTickets } from "./roles/dev/reconcile.ts";
@@ -213,6 +214,7 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
     roles: ctx.roles,
     // Never re-refine a ticket the v1 research runner already refined.
     hasLandedResearchV1: runsResearch ? (key) => hasLandedV1("research", slug, key) : undefined,
+    notify: (title, body) => notify(title, body),
     log,
   };
 

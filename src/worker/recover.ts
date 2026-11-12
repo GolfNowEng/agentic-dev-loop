@@ -178,6 +178,7 @@ export function pendingResumes(ctx: Ctx): Array<{ ticket: string; role: Role; ru
     const latest = latestRecord(ctx.records, r.ticket);
     const role = latest?.resume;
     if (!latest || !role || !ctx.roles.has(role)) continue;
+    if (latest.outcome === "parked") continue; // held until sandbox:approvals --clear writes "unparked"
     if (failedAttempts(ctx.records, r.ticket, role) >= cap) continue;
     if (roleCapped(ctx, role)) continue; // maxRunsPerDay applies to resumes like to polls
     out.push({ ticket: r.ticket, role, runDir: latest.phases[0]?.run_dir ?? "", since: latest.phases[0]?.started ?? latest.started });
