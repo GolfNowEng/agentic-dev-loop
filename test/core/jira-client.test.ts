@@ -48,6 +48,10 @@ describe("credentialsFromEnv", () => {
       /JIRA_BASE_URL.*JIRA_EMAIL.*JIRA_API_TOKEN/s,
     );
   });
+
+  it("names DEVLOOP_ENV_FILE as the way to keep the env file outside the repo", () => {
+    expect(() => credentialsFromEnv({} as NodeJS.ProcessEnv)).toThrow(/DEVLOOP_ENV_FILE/);
+  });
 });
 
 describe("assigneeAccountIdFromEnv", () => {
@@ -62,6 +66,10 @@ describe("assigneeAccountIdFromEnv", () => {
     expect(() => assigneeAccountIdFromEnv({} as NodeJS.ProcessEnv)).toThrow(
       /JIRA_ASSIGNEE_ACCOUNT_ID/,
     );
+  });
+
+  it("names DEVLOOP_ENV_FILE as the way to keep the env file outside the repo", () => {
+    expect(() => assigneeAccountIdFromEnv({} as NodeJS.ProcessEnv)).toThrow(/DEVLOOP_ENV_FILE/);
   });
 });
 

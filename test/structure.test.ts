@@ -3,6 +3,7 @@
 // pipeline's own code or prose reaches for a banned git/gh flag.
 
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
@@ -302,6 +303,35 @@ describe("structure: final-review fixes stay wired", () => {
   it("main.ts's signal handler stops the running claude -p child (I5)", () => {
     const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
     expect(main).toMatch(/stopOnSignal\(sig, \{[^}]*killChild: \(\) => killActiveChild\(\)/s);
+  });
+
+  it("every --env-file script reads DEVLOOP_ENV_FILE, defaulting to .env (I4)", () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
+    const withEnvFile = Object.entries(pkg.scripts).filter(([, cmd]) => cmd.includes("--env-file"));
+    expect(withEnvFile.map(([name]) => name).sort()).toEqual(["check-auth", "cutover:relabel", "loop", "reset-project:remote"]);
+    for (const [, cmd] of withEnvFile) {
+      expect(cmd).toContain('--env-file="${DEVLOOP_ENV_FILE:-.env}"');
+      expect(cmd).not.toContain("--env-file=.env");
+    }
+  });
+
+  it("main.ts warns about a leftover root .env, after config load and before the session (I4)", () => {
+    const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
+    const load = main.indexOf("await loadConfig(");
+    const warn = main.indexOf("envFileWarning(process.env.DEVLOOP_ENV_FILE");
+    const acquire = main.indexOf("await acquireSession(");
+    expect(load).toBeGreaterThan(-1);
+    expect(warn).toBeGreaterThan(load);
+    expect(acquire).toBeGreaterThan(warn);
+  });
+
+  it("check-jira-auth's missing-var hint names DEVLOOP_ENV_FILE (I4)", () => {
+    const result = spawnSync(process.execPath, [join(ROOT, "scripts/check-jira-auth.mjs")], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "" },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("DEVLOOP_ENV_FILE");
   });
 
   it("the throwaway v1 size-checkpoint script is gone (M3)", () => {
