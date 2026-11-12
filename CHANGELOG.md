@@ -22,6 +22,7 @@ Not built yet. Design: [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-d
   spike, a run with no credential hung for about 3 min, then exited 0 with
   `terminal_reason: api_error`. Today's loop would record that as a
   success.
+- `[core]` A claude -p run that exits 0 but reports a failed result (is_error, a terminal_reason other than "completed", or no result at all) is now an agent_error instead of a silent success.
 - `[core]` Pluggable sandbox adapter for agent spawns: `--sandbox=<name>`
   or `sandbox.adapter` in project config. The default `none` keeps
   today's behavior exactly. The first adapter is `sbx` (Docker Sandboxes

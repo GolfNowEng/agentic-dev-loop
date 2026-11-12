@@ -23,7 +23,9 @@
  * is still awaiting cannot start a child that would outlive the process.
  *
  * `spawnClaudeRun` never throws. A spawn failure (spawn() throwing, the
- * child's 'error' event, a nonzero exit) comes back as `spawnError` -- with
+ * child's 'error' event, a nonzero exit, or a 0 exit whose final result is
+ * missing, `is_error`, or has a `terminal_reason` outside
+ * ALLOWED_TERMINAL_REASONS) comes back as `spawnError` -- with
  * the parsed usage whenever the child printed any stdout; a
  * timeout kill comes back as `killedTimeout: true`, which the caller maps to
  * outcome "killed" / failure_category "killed_ceiling"
@@ -38,6 +40,9 @@ import { extractUsage } from "./claude-usage.ts";
 import type { UsageResult } from "./claude-usage.ts";
 import { redactSensitive } from "./redact.ts";
 import type { ExecutorVerdict } from "./types.ts";
+
+/** `terminal_reason` values of a successful run (every real local run reported "completed"). */
+export const ALLOWED_TERMINAL_REASONS: readonly string[] = ["completed"];
 
 /** Grace period between SIGTERM and SIGKILL on a timeout kill. */
 export const KILL_GRACE_MS = 30_000;
@@ -100,6 +105,8 @@ export interface SpawnClaudeResult {
   /** ISO-8601 UTC. */
   ended: string;
   spawnError?: string;
+  /** The parsed final result's error fields; set whenever a result object was parsed. */
+  resultError?: { is_error: boolean; terminal_reason?: string };
   killedTimeout: boolean;
 }
 
@@ -559,6 +566,26 @@ export async function spawnClaudeRun(
     usageRaw = null;
   }
 
+  let spawnError = outcome.spawnError;
+  let resultError: SpawnClaudeResult["resultError"];
+  const parsedResult =
+    typeof usageRaw === "object" && usageRaw !== null && (usageRaw as { type?: unknown }).type === "result"
+      ? (usageRaw as { is_error?: unknown; terminal_reason?: unknown })
+      : null;
+  if (parsedResult !== null) {
+    const isError = parsedResult.is_error === true;
+    const reason = typeof parsedResult.terminal_reason === "string" ? parsedResult.terminal_reason : undefined;
+    resultError = { is_error: isError, ...(reason !== undefined ? { terminal_reason: reason } : {}) };
+    if (spawnError === undefined && !outcome.killedTimeout && (isError || (reason !== undefined && !ALLOWED_TERMINAL_REASONS.includes(reason)))) {
+      spawnError = `claude reported a failed result (is_error=${isError}, terminal_reason=${reason})`;
+    }
+  } else if (spawnError === undefined && !outcome.killedTimeout) {
+    spawnError = "claude exited 0 without a result";
+  }
+  if (spawnError !== undefined && outcome.spawnError === undefined) {
+    deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: spawn failed: ${spawnError}`);
+  }
+
   // A nonzero exit that still printed a result (e.g. the --max-budget-usd
   // cap) keeps its real cost, so the ceilings and runs.jsonl never
   // undercount the most expensive runs; spawnError is still reported.
@@ -567,7 +594,8 @@ export async function spawnClaudeRun(
     usage: extractUsage(usageRaw),
     started,
     ended,
-    ...(outcome.spawnError !== undefined ? { spawnError: outcome.spawnError } : {}),
+    ...(spawnError !== undefined ? { spawnError } : {}),
+    ...(resultError !== undefined ? { resultError } : {}),
     killedTimeout: outcome.killedTimeout,
   };
 }

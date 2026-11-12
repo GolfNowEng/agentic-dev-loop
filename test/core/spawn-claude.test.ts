@@ -193,6 +193,9 @@ describe("spawnClaudeRun", () => {
 
   it("writes raw stdout, redacted, to rawUsagePath before parsing it, and extracts usage", async () => {
     const stdout = JSON.stringify({
+      type: "result",
+      is_error: false,
+      terminal_reason: "completed",
       total_cost_usd: 1.5,
       usage: { input_tokens: 10, output_tokens: 3 },
       result: "found API_TOKEN=abcdefghijklmnop1234 in .env",
@@ -649,7 +652,7 @@ describe("stopping (post-merge fix 3: no spawn once a signal is received)", () =
     const spawn: SpawnFn = () => {
       spawned++;
       const child = new FakeChild();
-      child.finish("{}");
+      child.finish('{"type":"result","is_error":false,"terminal_reason":"completed"}');
       return child as never;
     };
     stopSpawning();
