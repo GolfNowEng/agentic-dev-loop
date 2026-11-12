@@ -36,10 +36,12 @@ write while a loop runs.
 
 ## 2. Move the v1 folders
 
+Run from `$V2`: until the merge, `$DEV` has v1 code and no `cutover:*` scripts.
+
 Dry run (prints one `move` line per move, sorted; moves nothing):
 
 ```
-cd $DEV && npm run cutover:migrate -- --dev-root $DEV --research-root $RESEARCH
+cd $V2 && npm run cutover:migrate -- --dev-root $DEV --research-root $RESEARCH
 ```
 
 Everything lands under `$DEV`: `runs/*.jsonl` to `runs/v1/{dev,research}/`,
@@ -51,7 +53,7 @@ cross-filesystem move is refused).
 **Ask before** `--write`:
 
 ```
-cd $DEV && npm run cutover:migrate -- --dev-root $DEV --research-root $RESEARCH --write
+cd $V2 && npm run cutover:migrate -- --dev-root $DEV --research-root $RESEARCH --write
 ```
 
 ## 3. One real ticket, end to end, from the worktree

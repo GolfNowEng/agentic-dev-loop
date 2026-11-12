@@ -66,6 +66,12 @@
  *   - Disabling the hooks on disk: `rm -rf .git/hooks`, `rm .husky/pre-push`,
  *     `chmod -x .husky/pre-commit`, overwriting a hook file with an editor
  *     or `>` redirection, editing `.git/config` directly.
+ *   - A guarded call hidden in one quoted argument of an unknown wrapper
+ *     (`npx sh -c 'git push -f'`, `watch 'git push -f'`, `ssh host '...'`),
+ *     a script piped or redirected into a shell (`echo ... | sh`, `bash <<<`),
+ *     variables set without an assignment word (`printf -v HUSKY`, `read`),
+ *     and git's own exec hooks (`rebase --exec`, `submodule foreach`,
+ *     `bisect run`).
  *   - Anything whose text only exists at run time beyond the cases above
  *     (a command read from a file, `source`d scripts, aliases defined
  *     elsewhere).
