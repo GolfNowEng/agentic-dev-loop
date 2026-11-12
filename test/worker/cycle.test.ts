@@ -1284,4 +1284,111 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       expect(runSkillCalls(h)[0].slice(1, 3)).toEqual(["research", "TARS-1"]);
     });
   });
+
+  describe("parked: an enforcing sandbox refused the run (spec 4.6)", () => {
+    const denied = [{ kind: "network" as const, target: "evil.example" }];
+    const parkedStep = (o: Record<string, unknown> = {}) => ({
+      verdictRaw: undefined,
+      parked: { denied, approveHint: "allow evil.example" },
+      costUsd: 0.5,
+      ...o,
+    });
+    const after = (x: Harness, i: number, names: string[]) => x.events.slice(i + 1).filter((e) => names.includes(e[0] as string));
+    const JIRA_WRITES = ["transitionStatus", "addComment", "swapLabel", "removeLabel", "assignTicket", "claimTicket", "gh.addComment"];
+
+    it("a parked dev run appends one parked record with resume dev and no phases, and notifies", async () => {
+      const notify = vi.fn();
+      h = await harness({ script: { dev: [parkedStep()] }, deps: { notify } });
+      h.jira.dev = [devTicket("TARS-3")];
+
+      const result = await runWorkerIteration(h.deps);
+
+      const recs = await records(h);
+      expect(recs).toHaveLength(1);
+      expect(recs[0]).toMatchObject({
+        ticket: "TARS-3",
+        outcome: "parked",
+        phases: [],
+        resume: "dev",
+        detail: "sandbox refused: network evil.example",
+        parked: { role: "dev", failure_category: "sandbox_denied", denied, approveHint: "allow evil.example", cost_usd: 0.5 },
+      });
+      expect(recs[0].parked!.run_dir).toBe(runSkillCalls(h)[0][4]);
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(notify).toHaveBeenCalledWith("dev-loop: TARS-3 parked", "sandbox refused evil.example; run npm run sandbox:approvals");
+      expect(result).toEqual({ kind: "did", record: recs[0] });
+      expect(h.session.current).toBeNull();
+    });
+
+    it("a parked dev after a landed research keeps the research phase in the parked record", async () => {
+      h = await harness({ script: { research: [{ costUsd: 2 }], dev: [parkedStep()] } });
+      h.jira.research = [ticket("TARS-1")];
+
+      const result = await runWorkerIteration(h.deps);
+
+      const recs = await records(h);
+      expect(recs).toHaveLength(1);
+      expect(recs[0]).toMatchObject({ ticket: "TARS-1", outcome: "parked", resume: "dev", parked: { role: "dev", cost_usd: 0.5 } });
+      expect(recs[0].phases.map((p) => [p.role, p.outcome, p.handoff, p.cost_usd])).toEqual([["research", "landed", "done", 2]]);
+      expect(result.kind).toBe("did");
+    });
+
+    it("a parked research run appends parked with resume research", async () => {
+      h = await harness({ script: { research: [parkedStep()] } });
+      h.jira.research = [ticket("TARS-1")];
+
+      const result = await runWorkerIteration(h.deps);
+
+      const recs = await records(h);
+      expect(recs).toHaveLength(1);
+      expect(recs[0]).toMatchObject({
+        ticket: "TARS-1",
+        outcome: "parked",
+        phases: [],
+        resume: "research",
+        parked: { role: "research", failure_category: "sandbox_denied", denied },
+      });
+      expect(runSkillCalls(h).map((e) => e[1])).toEqual(["research"]);
+      expect(result.kind).toBe("did");
+    });
+
+    it("a parked ticket is excluded from the next iteration's poll and not resumed", async () => {
+      h = await harness({ script: { dev: [parkedStep()] } });
+      h.jira.dev = [devTicket("TARS-3")];
+      await runWorkerIteration(h.deps);
+      expect((await records(h))[0].outcome).toBe("parked");
+
+      // Past the recently-ended window: only the parked exclusion keeps it out.
+      h.clock.advance(11 * MIN);
+      const mark = h.events.length;
+      const result = await runWorkerIteration(h.deps);
+
+      expect(result).toEqual({ kind: "idle" });
+      expect(runSkillCalls(h)).toHaveLength(1);
+      const later = h.events.slice(mark);
+      expect(later.filter((e) => e[0] === "getStatus")).toEqual([]); // resumeNext never picked it
+      const devPolls = later.filter((e) => e[0] === "poll" && String(e[1]).includes(`"${DEV_LABEL}"`));
+      expect(devPolls.length).toBeGreaterThan(0);
+      for (const p of devPolls) expect(p[1]).toContain('key not in ("TARS-3")');
+      expect(await records(h)).toHaveLength(1);
+    });
+
+    it("a parked run makes no Jira transition or comment", async () => {
+      h = await harness({ script: { research: [parkedStep()] } });
+      h.jira.research = [ticket("TARS-1")];
+      await runWorkerIteration(h.deps);
+      const claim = idx(h, (e) => e[0] === "claimTicket");
+      expect(claim).toBeGreaterThan(-1);
+      expect(h.jira.calls("claimTicket")).toHaveLength(1);
+      expect(after(h, claim, JIRA_WRITES)).toEqual([]);
+      await h.cleanup();
+
+      // Dev (no claim at all): nothing is written to Jira or GitHub.
+      h = await harness({ script: { dev: [parkedStep()] } });
+      h.jira.dev = [devTicket("TARS-3")];
+      await runWorkerIteration(h.deps);
+      expect(after(h, -1, JIRA_WRITES)).toEqual([]);
+      expect(h.github.comments).toEqual([]);
+    });
+  });
 });

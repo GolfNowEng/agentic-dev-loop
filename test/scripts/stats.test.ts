@@ -126,6 +126,28 @@ describe("scripts/stats.mjs", () => {
     expect(out).toMatch(/v1 research: no log/);
   });
 
+  it("v2 counts tickets currently parked (latest record parked), not windowed", async () => {
+    await mkdir(join(root, "runs/v2"), { recursive: true });
+    const park = (ticket: string, ended: string) =>
+      rec(ticket, "parked", [], { ended, resume: "dev", parked: { role: "dev", failure_category: "sandbox_denied", denied: [], cost_usd: 0, run_dir: "d" } });
+    await writeFile(
+      join(root, "runs/v2/proj.jsonl"),
+      jsonl([
+        park("TARS-1", OLD),
+        park("TARS-2", recent(25)),
+        rec("TARS-2", "unparked", [], { ended: recent(10), resume: "dev" }),
+        rec("TARS-3", "landed", [phase("dev", "landed", 1)]),
+      ]),
+    );
+    const out = await stats();
+    expect(out).toMatch(/dev: 1 phase\(s\)[^\n]*\n  parked: 1 ticket\(s\) currently parked/);
+  });
+
+  it("v2 prints no parked line when nothing is parked", async () => {
+    await fixtures();
+    expect(await stats()).not.toContain("parked");
+  });
+
   it("no logs at all: says so, exit 0", async () => {
     expect(await stats()).toMatch(/no v2 log/i);
   });
