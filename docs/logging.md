@@ -161,7 +161,7 @@ The two v1 `npm run stats` sections above describe the pre-2.0.0 script.
   **phase entries** (not records): phases run, landed, bounced,
   error/killed, cost sum, and a `failure_category` histogram. A phase is
   in the window when its `started` is within `--days`. Records with no
-  phases (`handoff-done`, `interrupted`, `skipped-*`) add nothing.
+  phases (`handoff-done`, `interrupted`, `resume-dropped`, `skipped-*`) add nothing.
 - **`--v1`:** v1 dev and v1 research reported separately. Each reads
   `runs/v1/<role>/<project>.jsonl` when it exists, else the pre-cutover
   live log (dev: `runs/<project>.jsonl`, research:

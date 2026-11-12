@@ -124,6 +124,23 @@ export function pendingResumes(ctx: Ctx): Array<{ ticket: string; role: Role; ru
 export async function resumeNext(ctx: Ctx, researchThenDev: Runner, devOnly: Runner): Promise<WorkerIterationResult | null> {
   const next = pendingResumes(ctx)[0];
   if (!next) return null;
+  let status: string;
+  try {
+    status = await ctx.deps.jira.getStatus(next.ticket);
+  } catch (err) {
+    // Left pending (no record appended); keep step 2/3 from claiming or running it this iteration.
+    ctx.exclude.add(next.ticket);
+    ctx.log(`[worker] ${next.ticket}: status lookup failed, resume left pending: ${errorMessage(err)}`);
+    return null;
+  }
+  const expected = ctx.research.claimStatus.to;
+  if (status !== expected) {
+    const record = await append(ctx, next.ticket, nowIso(ctx), "resume-dropped", [], {
+      detail: `resume of the ${next.role} phase dropped: status is now "${status}", not "${expected}"`,
+    });
+    ctx.log(`[worker] ${next.ticket}: ${record.detail}`);
+    return { kind: "did", record };
+  }
   ctx.log(`[worker] ${next.ticket}: resuming the ${next.role} phase (no claim)`);
   if (next.role === "dev") {
     const pr = await openPr(ctx, next.ticket);

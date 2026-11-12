@@ -128,6 +128,9 @@ export interface JiraClient {
    */
   closeTicket(ticketKey: string): Promise<CloseTicketResult>;
 
+  /** The ticket's current Jira status name (`GET issue?fields=status`). */
+  getStatus(ticketKey: string): Promise<string>;
+
   /**
    * Keys of the tickets this one "is blocked by": issue links whose
    * `type.inward` is "is blocked by" and that carry an `inwardIssue`.
@@ -215,6 +218,10 @@ export class StubJiraClient implements JiraClient {
 
   async closeTicket(_ticketKey: string): Promise<CloseTicketResult> {
     throw StubJiraClient.notConfigured("closeTicket");
+  }
+
+  async getStatus(_ticketKey: string): Promise<string> {
+    throw StubJiraClient.notConfigured("getStatus");
   }
 
   async getBlockedBy(ticketKey: string): Promise<string[]> {
@@ -508,6 +515,12 @@ export class RealJiraClient implements JiraClient {
    * checking the live transitions list until a done-category one
    * appears, or the unambiguous trail runs out."
    */
+  async getStatus(ticketKey: string): Promise<string> {
+    const response = await this.request(`/rest/api/3/issue/${ticketKey}?fields=status`);
+    const data = (await response.json()) as JiraStatusFieldResponse;
+    return data.fields.status.name;
+  }
+
   async closeTicket(ticketKey: string): Promise<CloseTicketResult> {
     const statusResponse = await this.request(
       `/rest/api/3/issue/${ticketKey}?fields=status`,

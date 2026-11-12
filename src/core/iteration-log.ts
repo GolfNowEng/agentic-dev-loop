@@ -49,7 +49,9 @@ export type IterationOutcome =
   /** Step 1 completed a pending research -> dev label handoff (phases: []). */
   | "handoff-done"
   /** A phase run stopped by SIGINT/SIGTERM; not a failed attempt (phases: [], resume set). */
-  | "interrupted";
+  | "interrupted"
+  /** A pending resume whose ticket left <claimStatus.to>; phases: [], no resume (resolves the pending one), not an attempt. */
+  | "resume-dropped";
 
 export interface IterationRecord {
   ticket: string;
