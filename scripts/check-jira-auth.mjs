@@ -1,5 +1,5 @@
 // One-off read-only auth check: confirms JIRA_BASE_URL / JIRA_EMAIL /
-// JIRA_API_TOKEN (loaded via --env-file=.env) work against the real Jira
+// JIRA_API_TOKEN (loaded via --env-file, from DEVLOOP_ENV_FILE or .env) work against the real Jira
 // instance, without touching any tickets. Run with:
 //   npm run check-auth
 
@@ -15,7 +15,7 @@ const missing = [
 
 if (missing.length > 0) {
   console.error(`Missing env var(s): ${missing.join(", ")}`);
-  console.error("Copy .env.example to .env and fill in real values.");
+  console.error("Copy .env.example to .env and fill in real values, or set DEVLOOP_ENV_FILE to keep the file outside the repo.");
   process.exit(1);
 }
 

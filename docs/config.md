@@ -218,6 +218,17 @@ setting like `JIRA_EMAIL`/`JIRA_API_TOKEN`, not per-project wiring. Read via
 `credentialsFromEnv()`. Find your own account ID via the Atlassian REST API
 (`GET /rest/api/3/myself`) or your Jira profile URL.
 
+**Env file location.** The npm scripts that need credentials (`loop`,
+`check-auth`, `cutover:relabel`, `reset-project:remote`) load
+`--env-file="${DEVLOOP_ENV_FILE:-.env}"`, so with the variable unset they
+read `.env` in the repo root, as before. Recommended:
+`DEVLOOP_ENV_FILE=$HOME/.config/dev-loop/.env` (export it in your shell
+profile). Why: the repo root is the `claude -p` spawn cwd, so a `.env` there
+is one `cat .env` away from every run (settings deny `Read`, not a Bash
+`cat`). Move the file yourself; nothing in this repo moves or creates it.
+When `DEVLOOP_ENV_FILE` is set and a `.env` still exists in the repo root,
+`npm run loop` logs a warning at startup.
+
 The assign call is wrapped in try/catch and surfaced via the existing
 `jiraSyncError` result field — a failed assignment never blocks the actual
 work or crashes the loop.
@@ -462,7 +473,9 @@ The human's Jira account ID (`JIRA_ASSIGNEE_ACCOUNT_ID`) lives in `.env`, not
 setting like `JIRA_EMAIL`/`JIRA_API_TOKEN`, not per-project wiring. Read via
 `assigneeAccountIdFromEnv()` in `src/core/jira-client.ts`, same pattern as
 `credentialsFromEnv()`. Find your own account ID via the Atlassian REST API
-(`GET /rest/api/3/myself`) or your Jira profile URL.
+(`GET /rest/api/3/myself`) or your Jira profile URL. Where that env file
+lives: see "Env file location" under the research phase's Assignee
+bookkeeping above.
 
 The assign call is wrapped in try/catch and surfaced via the existing
 `jiraSyncError` result field — a failed assignment never blocks the actual

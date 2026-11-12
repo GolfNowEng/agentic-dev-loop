@@ -250,8 +250,8 @@ export function credentialsFromEnv(env: NodeJS.ProcessEnv = process.env): JiraCr
   if (missing.length > 0) {
     throw new Error(
       `RealJiraClient: missing required env var(s): ${missing.join(", ")}. ` +
-        `Set them in a gitignored .env (see .env.example) and run with ` +
-        `"node --env-file=.env ...".`,
+        `Set them in a gitignored .env (see .env.example) and run via the npm scripts, ` +
+        `which load DEVLOOP_ENV_FILE (default .env); set DEVLOOP_ENV_FILE to keep the file outside the repo.`,
     );
   }
   return { baseUrl: baseUrl!, email: email!, apiToken: apiToken! };
@@ -269,8 +269,8 @@ export function assigneeAccountIdFromEnv(env: NodeJS.ProcessEnv = process.env): 
   if (!accountId) {
     throw new Error(
       "RealJiraClient: missing required env var JIRA_ASSIGNEE_ACCOUNT_ID. " +
-        "Set it in a gitignored .env (see .env.example) and run with " +
-        '"node --env-file=.env ...".',
+        "Set it in a gitignored .env (see .env.example) and run via the npm scripts, " +
+        "which load DEVLOOP_ENV_FILE (default .env); set DEVLOOP_ENV_FILE to keep the file outside the repo.",
     );
   }
   return accountId;

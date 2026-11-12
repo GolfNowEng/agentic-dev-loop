@@ -14,7 +14,8 @@
  * Startup order: resolve the config path -> loadConfig -> preflight
  * (requiredPlaceholderFree(phase), then in worker mode the label-version
  * guard: a v1-labelled project such as catalog-ui-* exits 1, a minor/patch
- * difference is a warning) -> credentials -> acquireSession (one live worker
+ * difference is a warning) -> leftover root .env warning (DEVLOOP_ENV_FILE
+ * set) -> credentials -> acquireSession (one live worker
  * per project; a second start names the live session and exits 1) ->
  * record the adopted in-flight runs -> loop. REPO_DIR must be absolute and
  * normalized, and may not be the dev-loop root, an ancestor of it, or inside
@@ -35,7 +36,9 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { envFileWarning } from "./core/env-file.ts";
 import { loadConfig, loadLoopConfig, repoSlugFromUrl, resolveProjectConfigPath } from "./core/config.ts";
 import type { Config, LoopConfig, Role } from "./core/types.ts";
 import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./core/jira-client.ts";
@@ -254,6 +257,9 @@ async function main(): Promise<void> {
   const resolvedConfigPath = configPath ? resolve(configPath) : await resolveProjectConfigPath(project, REPO_ROOT);
   const config = await loadConfig(resolvedConfigPath);
   for (const warning of preflight(config, phase, LOOP_VERSION).warnings) logError(`[${prefix}] WARNING: ${warning}`);
+  // Only existence is checked: the root .env is never read here.
+  const envWarning = envFileWarning(process.env.DEVLOOP_ENV_FILE, existsSync(resolve(REPO_ROOT, ".env")));
+  if (envWarning !== null) logError(`[${prefix}] WARNING: ${envWarning}`);
   const loopConfig = await loadLoopConfig(resolve(REPO_ROOT, "pipeline.loop.config.json"));
   const slug = repoSlugFromUrl(config.targetRepo.url);
   if (!PROJECT_SLUG.test(slug)) {

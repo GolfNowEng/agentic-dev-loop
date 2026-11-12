@@ -223,7 +223,7 @@ already takes per-ticket.
 
 **Credentials**: `--close-remote` needs real `JIRA_BASE_URL`/
 `JIRA_EMAIL`/`JIRA_API_TOKEN` and `gh` auth — use
-`npm run reset-project:remote` (which runs with `--env-file=.env`), not
+`npm run reset-project:remote` (which loads `DEVLOOP_ENV_FILE`, default `.env`), not
 the plain `reset-project` script, which deliberately never loads `.env`
 so a purely local reset never needs credentials to exist at all. Real
 Jira/GitHub clients are constructed in `reset-cli.ts` only inside the
@@ -423,7 +423,7 @@ takes per-ticket.
 
 **Credentials**: `--close-remote` needs real `JIRA_BASE_URL`/
 `JIRA_EMAIL`/`JIRA_API_TOKEN` and `gh` auth — use
-`npm run reset-project:remote` (which runs with `--env-file=.env`), not
+`npm run reset-project:remote` (which loads `DEVLOOP_ENV_FILE`, default `.env`), not
 the plain `reset-project` script, which deliberately never loads `.env`
 so a purely local reset never needs credentials to exist at all. Real
 Jira/GitHub clients are constructed in `reset-cli.ts` only inside the

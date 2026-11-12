@@ -77,7 +77,7 @@ on a yes.
 ## 5. Relabel refined-but-unpromoted tickets
 
 Needs `.env` (JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN,
-JIRA_ASSIGNEE_ACCOUNT_ID). Selects tickets labelled `pipeline:research` and
+JIRA_ASSIGNEE_ACCOUNT_ID), or the file `DEVLOOP_ENV_FILE` names. Selects tickets labelled `pipeline:research` and
 `<jira.repoLabel>`, In Progress, whose latest research comment is a
 `✅ research-loop -` comment authored by JIRA_ASSIGNEE_ACCOUNT_ID. It adds
 `roles.dev.triggerLabel` (`pipeline:v2.0.0:dev`), which only the 2.0.0 dev
