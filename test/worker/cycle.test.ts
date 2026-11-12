@@ -505,6 +505,103 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       expect(recs[0]).toMatchObject({ ticket: "TARS-2", outcome: "error", resume: "dev" });
     });
 
+    describe("dev resume at Code Review (Ruling 51)", () => {
+      const PR = "https://github.com/org/repo/pull/9";
+
+      it("(g) crashed dev flight, status Code Review, open PR -> one skipped-pr-exists record with the PR, no transition, no run", async () => {
+        h = await harness({ session: devFlight(), deps: { findOpenPrUrl: async (k) => (k === "TARS-2" ? PR : null) } });
+        h.jira.statuses["TARS-2"] = "Code Review";
+
+        const result = await runWorkerIteration(h.deps);
+
+        expect(result.kind).toBe("did");
+        expect(h.jira.calls("transitionStatus")).toEqual([]);
+        expect(runSkillCalls(h)).toEqual([]);
+        const recs = await records(h);
+        expect(recs).toHaveLength(1);
+        expect(recs[0]).toMatchObject({ ticket: "TARS-2", outcome: "skipped-pr-exists" });
+        expect(recs[0].resume).toBeUndefined();
+        expect(recs[0].jira_sync_error).toBeUndefined();
+        expect(recs[0].phases.map((p) => [p.role, p.outcome, p.pr])).toEqual([["dev", "landed", PR]]);
+        expect(recs[0].detail).toContain(PR);
+        expect(await findLandedPrUrlAcross([h.logPath], "TARS-2")).toBe(PR);
+
+        h.clock.advance(20 * MIN);
+        await runWorkerIteration(h.deps);
+        expect(runSkillCalls(h)).toEqual([]);
+        expect((await records(h)).filter((r) => r.outcome === "skipped-pr-exists")).toHaveLength(1);
+      });
+
+      it("(h) interrupted dev flight resumed through resumeNext, status Code Review, open PR -> skipped-pr-exists, no transition, no run", async () => {
+        h = await harness({ session: devFlight(true), deps: { findOpenPrUrl: async (k) => (k === "TARS-2" ? PR : null) } });
+        h.jira.statuses["TARS-2"] = "Code Review";
+
+        await runWorkerIteration(h.deps);
+
+        expect(h.jira.calls("transitionStatus")).toEqual([]);
+        expect(runSkillCalls(h)).toEqual([]);
+        const recs = await records(h);
+        expect(recs.map((r) => r.outcome)).toEqual(["interrupted", "skipped-pr-exists"]);
+        expect(recs[1].ticket).toBe("TARS-2");
+        expect(recs[1].resume).toBeUndefined();
+        expect(recs[1].phases.map((p) => [p.role, p.outcome, p.pr])).toEqual([["dev", "landed", PR]]);
+      });
+
+      it("(i) crashed dev flight, status Code Review, no open PR -> resume-dropped naming it, no run", async () => {
+        h = await harness({ session: devFlight() });
+        h.jira.statuses["TARS-2"] = "Code Review";
+
+        await runWorkerIteration(h.deps);
+
+        expect(runSkillCalls(h)).toEqual([]);
+        expect(h.jira.calls("transitionStatus")).toEqual([]);
+        const recs = await records(h);
+        expect(recs).toHaveLength(1);
+        expect(recs[0]).toMatchObject({ ticket: "TARS-2", outcome: "resume-dropped", phases: [] });
+        expect(recs[0].resume).toBeUndefined();
+        expect(recs[0].detail).toContain("Code Review with no open PR");
+      });
+
+      it("(j) interrupted dev flight, status Code Review, open-PR lookup fails -> resume-dropped, no run", async () => {
+        h = await harness({
+          session: devFlight(true),
+          deps: {
+            findOpenPrUrl: async () => {
+              throw new Error("gh 502");
+            },
+          },
+        });
+        h.jira.statuses["TARS-2"] = "Code Review";
+
+        await runWorkerIteration(h.deps);
+
+        expect(runSkillCalls(h)).toEqual([]);
+        expect(h.jira.calls("transitionStatus")).toEqual([]);
+        const recs = await records(h);
+        expect(recs.map((r) => r.outcome)).toEqual(["interrupted", "resume-dropped"]);
+        expect(recs[1].detail).toContain("Code Review with no open PR");
+
+        h.clock.advance(20 * MIN);
+        await runWorkerIteration(h.deps);
+        expect(runSkillCalls(h)).toEqual([]);
+      });
+
+      it("(k) research flight, status Code Review -> resume-dropped as before (research is unchanged)", async () => {
+        h = await harness({ session: researchFlight() });
+        h.jira.statuses["TARS-1"] = "Code Review";
+
+        await runWorkerIteration(h.deps);
+
+        expect(runSkillCalls(h)).toEqual([]);
+        const recs = await records(h);
+        expect(recs.at(-1)).toMatchObject({
+          ticket: "TARS-1",
+          outcome: "resume-dropped",
+          detail: 'resume of the research phase dropped: status is now "Code Review", not "In Progress"',
+        });
+      });
+    });
+
     it("(c) status In Progress -> resumes as before", async () => {
       h = await harness({ session: researchFlight() });
       h.jira.statuses["TARS-1"] = "In Progress";

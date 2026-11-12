@@ -203,6 +203,28 @@ describe("evals harness, dry run", () => {
     expect(stubsCalled()).toEqual([]);
   });
 
+  it("run.sh refuses LIVE mode (DRY_RUN=0) when CLAUDECODE is set, before anything runs (M5)", () => {
+    for (const value of ["1", ""]) {
+      const r = run("run.sh", ["clean"], { DRY_RUN: "0", CLAUDECODE: value });
+      expect(r.status, `CLAUDECODE=${JSON.stringify(value)}`).not.toBe(0);
+      const out = r.stdout + r.stderr;
+      expect(out).toMatch(/CLAUDECODE/);
+      expect(out).toMatch(/a human must run live evals from their own shell/);
+      expect(out).not.toContain("DRY: ");
+      expect(out).not.toContain("scenario clean");
+      expect(existsSync(stateDir)).toBe(false);
+    }
+    expect(stubsCalled()).toEqual([]);
+  });
+
+  it("run.sh dry mode still works when CLAUDECODE is set (M5)", () => {
+    const r = run("run.sh", ["clean"], { CLAUDECODE: "1" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout + r.stderr).toContain("mode: dry");
+    expect(r.stdout + r.stderr).toContain("DRY: ");
+    expect(stubsCalled()).toEqual([]);
+  });
+
   it("reset.sh without --write lists eligible keys and closes nothing", () => {
     mkdirSync(stateDir, { recursive: true });
     writeFileSync(join(stateDir, "keys"), "TARS-9001\nTARS-9002\n");
@@ -310,6 +332,63 @@ describe("evals lib guards", () => {
   it("run_to kills a command past its wall-clock limit", () => {
     const r = spawnSync("bash", ["-c", `. "${lib}"; run_to 1 sleep 5`], { encoding: "utf8" });
     expect(r.status).not.toBe(0);
+  });
+
+  describe("run_to kills the whole process tree (I2)", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "eval-run-to-"));
+    });
+    afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    /** Poll briefly: a killed grandchild can linger as a zombie until init reaps it. */
+    const goneSoon = (pid: number) => {
+      const end = Date.now() + 1500;
+      while (alive(pid) && Date.now() < end) spawnSync("sleep", ["0.05"]);
+      return !alive(pid);
+    };
+    // An npm-like wrapper: a shell that starts a long-lived grandchild and
+    // waits on it, so a signal to the wrapper alone leaves the grandchild.
+    const wrapper = (grandchild: string) => {
+      const pidFile = join(dir, "grandchild.pid");
+      const w = join(dir, "npm-like.sh");
+      writeFileSync(w, `#!/bin/sh\n${grandchild} &\necho $! > "${pidFile}"\nwait\n`);
+      chmodSync(w, 0o755);
+      return { w, pidFile };
+    };
+
+    it("a grandchild started through an npm-like wrapper is gone after run_to returns", () => {
+      const { w, pidFile } = wrapper("sleep 30");
+      const t0 = Date.now();
+      const r = spawnSync("bash", ["-c", `. "${lib}"; RUN_TO_GRACE_S=1 run_to 1 "${w}"`], { encoding: "utf8", timeout: 10_000 });
+      const pid = Number(readFileSync(pidFile, "utf8").trim());
+      expect(r.status).not.toBe(0);
+      expect(Date.now() - t0).toBeLessThan(5_000);
+      expect(goneSoon(pid)).toBe(true);
+    });
+
+    it("a grandchild that ignores SIGTERM is SIGKILLed after the grace", () => {
+      const { w, pidFile } = wrapper(`sh -c 'trap "" TERM; sleep 30'`);
+      const t0 = Date.now();
+      const r = spawnSync("bash", ["-c", `. "${lib}"; RUN_TO_GRACE_S=1 run_to 1 "${w}"`], { encoding: "utf8", timeout: 10_000 });
+      const pid = Number(readFileSync(pidFile, "utf8").trim());
+      expect(r.status).not.toBe(0);
+      expect(Date.now() - t0).toBeLessThan(6_000);
+      expect(goneSoon(pid)).toBe(true);
+    });
+
+    it("a command that finishes in time keeps its exit status and output", () => {
+      expect(sh(`run_to 5 sh -c 'echo hi; exit 3'`)).toMatchObject({ status: 3, stdout: "hi\n" });
+      expect(sh(`run_to 5 true`).status).toBe(0);
+    });
   });
 
   it("no evals/*.sh line calls gh/curl/npm/claude except through outward", () => {
