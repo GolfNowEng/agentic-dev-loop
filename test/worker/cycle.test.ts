@@ -213,6 +213,7 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       h.clock.advance(11 * MIN);
       await runWorkerIteration(h.deps);
 
+      expect((await records(h)).filter((r) => r.ticket === "TARS-1" && r.outcome === "claim-error")).toHaveLength(2);
       expect(h.jira.comments.filter((c) => c.key === "TARS-1")).toHaveLength(1);
     });
 
@@ -234,16 +235,43 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       h = await harness();
       h.jira.research = [ticket("TARS-1"), ticket("TARS-3")];
       h.jira.claimImpl = missing(["Story Points"]);
+      let attempts = 0;
       h.jira.addComment = async () => {
+        attempts++;
         throw new Error("comment API down");
       };
 
       await runWorkerIteration(h.deps);
 
-      expect((await records(h)).map((r) => [r.ticket, r.outcome])).toEqual([
+      expect(attempts).toBe(1);
+      const recs = await records(h);
+      expect(recs.map((r) => [r.ticket, r.outcome])).toEqual([
         ["TARS-1", "claim-error"],
         ["TARS-3", "landed"],
       ]);
+      expect(recs[0].jira_sync_error).toMatch(/comment API down/);
+    });
+
+    it("(d2) a failed comment is retried next iteration: 2 attempts, 1 posted", async () => {
+      h = await harness();
+      h.jira.research = [ticket("TARS-1")];
+      h.jira.claimImpl = missing(["Story Points"]);
+      const realAdd = h.jira.addComment.bind(h.jira);
+      let attempts = 0;
+      h.jira.addComment = async (k, b) => {
+        attempts++;
+        if (attempts === 1) throw new Error("comment API down");
+        return realAdd(k, b);
+      };
+
+      await runWorkerIteration(h.deps);
+      h.clock.advance(11 * MIN);
+      await runWorkerIteration(h.deps);
+      h.clock.advance(11 * MIN);
+      await runWorkerIteration(h.deps);
+
+      expect(attempts).toBe(2);
+      expect(h.jira.comments.filter((c) => c.key === "TARS-1")).toHaveLength(1);
     });
 
     it("(e) a plain claim Error keeps the old detail and posts no comment", async () => {
