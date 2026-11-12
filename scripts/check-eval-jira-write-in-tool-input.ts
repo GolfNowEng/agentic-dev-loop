@@ -12,8 +12,13 @@
  *     names (`issueIdOrKey`, `issueKey`; at least one) is in the list;
  *   - `createIssueLink` is allowed only when both `inwardIssue` and
  *     `outwardIssue` are in the list;
- *   - `createJiraIssue` is allowed only when `summary` starts with
- *     `[dev-loop-eval]` (a follow-up ticket filed during an eval);
+ *   - `createJiraIssue` (a follow-up ticket filed during an eval) is
+ *     allowed only when ALL hold (allowedCreate): the project is TARS
+ *     (`projectKey` and/or `additional_fields.project`; at least one, and
+ *     every one given); `summary`
+ *     starts with `[dev-loop-eval]`; `additional_fields.labels` includes
+ *     `dev-loop-eval` (so evals/reset.sh can find it); no parent, or a
+ *     listed one (`parent`, `additional_fields.parent`); no `transition`;
  *   - any other atlassian tool (Confluence writes, a tool added later) is
  *     denied: unknown means unverified.
  *
@@ -28,6 +33,8 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export const EVAL_SUMMARY_PREFIX = "[dev-loop-eval]";
+export const EVAL_LABEL = "dev-loop-eval";
+export const EVAL_PROJECT_KEY = "TARS";
 
 const P = "mcp__atlassian__";
 
@@ -76,6 +83,27 @@ export function parseKeys(raw: string): Set<string> {
 
 const listed = (keys: Set<string>, v: unknown): boolean => typeof v === "string" && keys.has(v);
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** A Jira ref given as a key string or `{ key }`. */
+const refKey = (v: unknown): unknown => (isRecord(v) ? v.key : v);
+
+/** The createJiraIssue rule (see the header): every condition must hold. */
+function allowedCreate(ti: Record<string, unknown>, keys: Set<string>): boolean {
+  const extra = ti.additional_fields;
+  if (extra !== undefined && !isRecord(extra)) return false;
+  const af = extra ?? {};
+  const projects = [...("projectKey" in ti ? [ti.projectKey] : []), ...("project" in af ? [refKey(af.project)] : [])];
+  if (projects.length === 0 || !projects.every((p) => p === EVAL_PROJECT_KEY)) return false;
+  if (typeof ti.summary !== "string" || !ti.summary.startsWith(EVAL_SUMMARY_PREFIX)) return false;
+  if (!Array.isArray(af.labels) || !af.labels.includes(EVAL_LABEL)) return false;
+  for (const parent of [ti.parent, af.parent]) {
+    if (parent !== undefined && !listed(keys, refKey(parent))) return false;
+  }
+  if ("transition" in ti || "transition" in af) return false;
+  return true;
+}
+
 /** Pure decision. `stdin` is the hook's raw JSON; `keysEnv` is DEVLOOP_EVAL_KEYS. */
 export function decideExitCode(stdin: string, keysEnv: string): 0 | 1 | 2 {
   if (typeof stdin !== "string" || stdin.trim().length === 0) return 2;
@@ -106,9 +134,7 @@ export function decideExitCode(stdin: string, keysEnv: string): 0 | 1 | 2 {
     if (toolName === LINK_TOOL) {
       return listed(keys, ti.inwardIssue) && listed(keys, ti.outwardIssue) ? 0 : 1;
     }
-    if (toolName === CREATE_TOOL) {
-      return typeof ti.summary === "string" && ti.summary.startsWith(EVAL_SUMMARY_PREFIX) ? 0 : 1;
-    }
+    if (toolName === CREATE_TOOL) return allowedCreate(ti, keys) ? 0 : 1;
     return 1;
   } catch {
     return 2;

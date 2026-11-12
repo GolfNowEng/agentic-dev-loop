@@ -18,13 +18,22 @@ carry the `dev-loop-eval` label and a `[dev-loop-eval]` summary prefix.
 
 ## Running
 
+**Dry is the default. A real run needs exactly `DRY_RUN=0`.**
+
+| `DRY_RUN` | mode |
+|---|---|
+| unset, empty, or `1` | dry: every outward command is printed as `DRY: …`, none runs |
+| exactly `0` | LIVE: real Jira tickets, real sandbox PRs, paid `claude -p` runs |
+| anything else (`true`, `yes`, `false`, …) | refused, exit 1, nothing runs |
+
 ```sh
-DRY_RUN=1 npm run eval -- clean     # print every outward command, run none
-npm run eval -- clean               # one scenario, for real
-npm run eval -- --all               # all five, in order; stops at the first failure
-node evals/report.mjs               # outcome / phases / cost / minutes per scenario
-bash evals/reset.sh                 # list what would be closed
-bash evals/reset.sh --write         # close it
+npm run eval -- clean                       # dry (default): print every outward command, run none
+DRY_RUN=0 npm run eval -- clean             # LIVE: one scenario, for real
+DRY_RUN=0 npm run eval -- --all             # LIVE: all five, in order; stops at the first failure
+node evals/report.mjs                       # outcome / phases / cost / minutes per scenario
+bash evals/reset.sh                         # dry: list what would be closed
+DRY_RUN=0 bash evals/reset.sh               # LIVE: list (checks eligibility on Jira)
+DRY_RUN=0 bash evals/reset.sh --write       # LIVE: close it
 ```
 
 One scenario per call. `--all` is required for all five. A failed scenario
@@ -55,14 +64,15 @@ ticket itself.
   reasons }` (shared pieces in `grade-lib.mjs`). Run directly, they
   gather real state through `gather.mjs`.
 - `jira.mjs`: the only Jira client in `evals/`. Every write refuses a
-  non-eval ticket.
+  non-eval ticket. Creates set Story Points (`STORY_POINTS_FIELD`), which
+  the claim transition requires.
 - `report.mjs`: the summary table.
 - `reset.sh`: closes eval tickets and their sandbox PRs.
 
 ## Boundaries (enforced, not convention)
 
-- **Dry run.** With `DRY_RUN=1`, `outward` prints `DRY: <cmd>` and runs
-  nothing. Every gh, Jira, loop and grader call in `evals/*.sh` goes
+- **Dry run.** Unless `DRY_RUN` is exactly `0`, `outward` prints `DRY: <cmd>` and runs
+  nothing. It re-parses `DRY_RUN` on every call, so an invalid value refuses there too. Every gh, Jira, loop and grader call in `evals/*.sh` goes
   through it. `test/evals/harness.test.ts` checks this two ways. First,
   it scans the scripts for any gh/curl/npm/claude call outside `outward`.
   Second, it runs the scripts with stub `gh`/`claude`/`curl`/`npm` first
@@ -76,10 +86,15 @@ ticket itself.
 - **Jira writes.** `run.sh` exports `DEVLOOP_EVAL_KEYS`, which the
   spawned `claude -p` inherits. While it is set,
   `.claude/hooks/block-non-eval-jira-writes.sh` denies any
-  `mcp__atlassian__` write to a key outside the list, and any
-  `createJiraIssue` without the `[dev-loop-eval]` prefix.
-- **GitHub.** `run.sh` exports `GH_REPO=<sandbox>`. `api` and `reset.sh`
-  touch only the sandbox, behind `assert_repo`.
+  `mcp__atlassian__` write to a key outside the list. It allows a
+  `createJiraIssue` only when all of these hold:
+  - the project is TARS;
+  - the summary has the `[dev-loop-eval]` prefix;
+  - the labels include `dev-loop-eval`;
+  - there is no parent, or the parent is a listed key;
+  - there is no transition.
+- **GitHub.** `run.sh` exports `GH_REPO=<sandbox>`. `api` asserts the repo it calls (`$EVAL_REPO`)
+  is the sandbox before every call. `assert_clone` checks both the origin fetch and push URLs.
 - **Reset.** A ticket is closed only when all three hold: its key is in
   `.state/keys`, it carries the label, and its summary has the prefix.
   Nothing is closed without `--write`.

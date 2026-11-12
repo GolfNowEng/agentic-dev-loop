@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Run ONE eval scenario against the sandbox (Task 16, spec §9.2):
-#   npm run eval -- <clean|ambiguous|dev-bounce|blocked|queue>
-#   npm run eval -- --all            (all five, in order; stops at the first failure)
-#   DRY_RUN=1 npm run eval -- clean  (prints every outward command as DRY: ..., runs none)
+#   npm run eval -- clean              DRY (the default): prints every outward command as DRY: ..., runs none
+#   DRY_RUN=0 npm run eval -- clean    LIVE: real Jira tickets, sandbox PRs, paid claude runs
+#   DRY_RUN=0 npm run eval -- --all    LIVE, all five in order; stops at the first failure
+# DRY_RUN unset/empty/1 is dry; exactly 0 is live; anything else is refused.
 #
 # A real run costs money (one research + one dev phase run per ticket) and
 # writes real Jira tickets and sandbox PRs: see evals/README.md first. A
@@ -19,7 +20,11 @@ SCENARIOS="clean ambiguous dev-bounce blocked queue"
 # research 120 + dev 75 min runTimeoutMin, plus slack.
 RUN_TIMEOUT_S="${EVAL_RUN_TIMEOUT_S:-12600}"
 
-usage() { log "usage: npm run eval -- <$(echo "$SCENARIOS" | tr ' ' '|')> | --all"; exit 2; }
+usage() {
+  log "usage: [DRY_RUN=0] npm run eval -- <$(echo "$SCENARIOS" | tr ' ' '|')> | --all"
+  log "  dry by default (DRY_RUN unset/empty/1); DRY_RUN=0 is a LIVE, paid run; any other DRY_RUN value is refused"
+  exit 2
+}
 
 [ "$#" -eq 1 ] || usage
 case "$1" in
@@ -32,10 +37,11 @@ case "$1" in
 esac
 
 mkdir -p "$STATE_DIR/tmp" || die "cannot create $STATE_DIR"
+log "mode: $EVAL_MODE"
 if is_dry; then
   KEYS_FILE="$STATE_DIR/keys.dry"
   : > "$KEYS_FILE"
-  log "DRY_RUN=1: no outward command runs; placeholder keys go to keys.dry"
+  log "dry run (set DRY_RUN=0 for a live run): no outward command runs; placeholder keys go to keys.dry"
 else
   KEYS_FILE="$STATE_DIR/keys"
 fi

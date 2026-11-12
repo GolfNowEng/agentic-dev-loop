@@ -16,7 +16,7 @@ TXT
   new_ticket "$EVAL_PREFIX blocker (do not work)" "$fa"
   blocker=$NEW_KEY
 
-  assert_repo "$SANDBOX"
+  assert_repo "$EVAL_REPO"
   sha=$(api GET "git/ref/heads/master" --jq .object.sha) || return 1
   is_dry && sha=DRYSHA
   branch="$blocker-eval-blocker"

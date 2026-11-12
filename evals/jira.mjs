@@ -24,6 +24,13 @@ export const PROJECT_KEY = "TARS";
 /** Labels every eval ticket carries. The trigger label is added only to tickets the loop should pick up. */
 export const BASE_LABELS = ["repo:webtarsthree", EVAL_LABEL];
 export const TRIGGER_LABEL = "pipeline:v2.0.0";
+/**
+ * TARS's Story Points field. The To Do -> In Progress claim is refused
+ * without it ("Field Story Points is required.", seen on TARS-1631), so every
+ * eval ticket is created with EVAL_STORY_POINTS.
+ */
+export const STORY_POINTS_FIELD = "customfield_10002";
+export const EVAL_STORY_POINTS = 1;
 const KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
 
 /** Pure: is this ticket one the harness may write to? */
@@ -69,13 +76,24 @@ const adf = (text) => ({
   content: text.split(/\n{2,}/).map((para) => ({ type: "paragraph", content: [{ type: "text", text: para }] })),
 });
 
+/** The POST /rest/api/3/issue body for an eval ticket. Pure. */
+export function createIssueBody(summary, description, trigger) {
+  if (typeof summary !== "string" || !summary.startsWith(EVAL_PREFIX)) throw new Error(`summary must start with ${EVAL_PREFIX}`);
+  const labels = trigger ? [...BASE_LABELS, TRIGGER_LABEL] : [...BASE_LABELS];
+  return {
+    fields: {
+      project: { key: PROJECT_KEY },
+      issuetype: { name: "Task" },
+      summary,
+      labels,
+      description: adf(description),
+      [STORY_POINTS_FIELD]: EVAL_STORY_POINTS,
+    },
+  };
+}
+
 async function create(summary, description, trigger) {
-  if (!summary.startsWith(EVAL_PREFIX)) throw new Error(`summary must start with ${EVAL_PREFIX}`);
-  const labels = trigger ? [...BASE_LABELS, TRIGGER_LABEL] : BASE_LABELS;
-  const data = await request("/rest/api/3/issue", {
-    method: "POST",
-    body: JSON.stringify({ fields: { project: { key: PROJECT_KEY }, issuetype: { name: "Task" }, summary, labels, description: adf(description) } }),
-  });
+  const data = await request("/rest/api/3/issue", { method: "POST", body: JSON.stringify(createIssueBody(summary, description, trigger)) });
   return checkKey(data.key);
 }
 

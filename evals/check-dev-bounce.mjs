@@ -1,14 +1,15 @@
 // Scenario `dev-bounce` grader: research landed, dev bounced with
-// failure_category `spec_ambiguous`, the ticket is in Blocked.
+// failure_category `spec_ambiguous`, the ticket is in Blocked, and no
+// sandbox PR exists (a dev run that opened one and then bounced fails).
 //
 //   jira: { key, status }
 //
 // CLI (gathers real state; run by evals/run.sh): node evals/check-dev-bounce.mjs --keys <KEY>
 
-import { BOUNCED_STATUS, expectOutcome, expectPhases, expectStatus, latest, result } from "./grade-lib.mjs";
+import { BOUNCED_STATUS, expectNoPr, expectOutcome, expectPhases, expectStatus, latest, result } from "./grade-lib.mjs";
 import { runGraderCli } from "./gather.mjs";
 
-export function grade({ records, jira }) {
+export function grade({ records, pr, jira }) {
   const reasons = [];
   const rec = latest(records, jira?.key);
   if (expectOutcome(reasons, rec, jira?.key, "bounced")) {
@@ -19,6 +20,7 @@ export function grade({ records, jira }) {
     }
   }
   expectStatus(reasons, jira, BOUNCED_STATUS);
+  expectNoPr(reasons, pr);
   return result(reasons);
 }
 

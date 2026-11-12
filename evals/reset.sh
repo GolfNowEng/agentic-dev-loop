@@ -39,7 +39,7 @@ for key in $(sort -u "$KEYS_FILE"); do
 done
 log "eligible:${ELIGIBLE:- none}$(is_dry && echo ' (DRY_RUN: eligibility not checked)')"
 
-assert_repo "$SANDBOX"
+assert_repo "$EVAL_REPO"
 PRS=$(api GET "pulls?state=open&per_page=100" --jq '.[] | "\(.number) \(.head.ref)"') || die "listing sandbox PRs failed"
 CLOSE_PRS=""
 for key in $ELIGIBLE; do
@@ -59,7 +59,7 @@ fi
 
 for key in $ELIGIBLE; do jira close "$key" || log "$key: close failed"; done
 for n in $CLOSE_PRS; do
-  assert_repo "$SANDBOX"
+  assert_repo "$EVAL_REPO"
   api PATCH "pulls/$n" -f state=closed >/dev/null || log "PR #$n: close failed"
 done
 log "reset done"
