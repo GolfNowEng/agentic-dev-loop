@@ -1373,6 +1373,23 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       expect(await records(h)).toHaveLength(1);
     });
 
+    it("after an unparked record, pendingResumes returns the ticket and the next iteration resumes it", async () => {
+      h = await harness({ script: { dev: [parkedStep()] } });
+      h.jira.dev = [devTicket("TARS-3")];
+      await runWorkerIteration(h.deps);
+      h.clock.advance(11 * MIN);
+      const t = h.clock.now().toISOString();
+      await appendIteration(h.logPath, rec({ ticket: "TARS-3", session: "approvals", started: t, ended: t, outcome: "unparked", phases: [], resume: "dev", detail: "cleared by sandbox:approvals" }));
+
+      const result = await runWorkerIteration(h.deps);
+
+      expect(result.kind).toBe("did");
+      expect(runSkillCalls(h).map((e) => [e[1], e[2]])).toEqual([["dev", "TARS-3"], ["dev", "TARS-3"]]);
+      const recs = await records(h);
+      expect(recs.map((r) => r.outcome)).toEqual(["parked", "unparked", "landed"]);
+      expect(h.jira.calls("claimTicket")).toEqual([]);
+    });
+
     it("a parked dev run over maxCostPerRunUsd pauses the loop after the parked record", async () => {
       h = await harness({ script: { dev: [parkedStep({ costUsd: 30 })] } });
       h.jira.dev = [devTicket("TARS-3")];
