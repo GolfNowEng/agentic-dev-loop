@@ -792,3 +792,31 @@ transitions are executing -> PR open -> merged and the poll step. Its
 `loopKind: "dev"` poll has no atomic claim today; a board Status move (or
 Issue assignee/label) could serve as the claim, which also helps the
 N-instances-per-project idea tracked in research-loop's doc.
+
+## Both phases
+
+### Monitoring view for many loops, batches and sandboxes (`npm run status`)
+
+**Idea**: once batch orchestration (v2 design §8) and several loops per
+project (§7 claim) exist, one screen that shows every project at a glance.
+Today you watch one terminal per loop, plus `npm run stats` after the fact;
+the batch design only plans an end-of-batch report table, nothing live.
+
+**Shape (suggested order)**:
+1. `npm run status` — a read-only terminal view, refreshing every few
+   seconds, one block per project: live loops and their current ticket +
+   phase, today's landed/bounced/error counts and cost, parked tickets (2.2.0
+   `parked` outcome) with what was refused. No new dependencies.
+2. When batch lands: add the batch's ticket DAG with each node's state
+   (waiting / running / PR open / blocked) and base branch.
+3. Only if the terminal view gets cramped: a local-only browser page with the
+   same data plus PR/Jira links and cost charts.
+
+**Why it is cheap**: the data is all on disk already — session locks and
+their in-flight record (`.pipeline/.../sessions/`), each run's
+`progress.jsonl`, and `runs/v2/<project>.jsonl`. The view only reads; no loop
+logic changes. Sandbox CPU/memory stays in sbx's own dashboard (`sbx` with no
+args) alongside it; sandbox instance names (`dl-<ticket>-<role>-<id>`) let the
+two be matched by eye.
+
+**Raised**: 2026-11-12, while planning the 2.2.0 sandbox adapter.
