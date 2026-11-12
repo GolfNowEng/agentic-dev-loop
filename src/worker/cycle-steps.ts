@@ -140,30 +140,37 @@ async function reportMissingFields(ctx: Ctx, key: string, err: ClaimMissingField
   const list = err.fields.join(", ");
   const detail = `claim blocked: required field(s) missing: ${list}`;
   const prev = latestRecord(ctx.records, key);
-  const repeat = prev !== null && prev.outcome === "claim-error" && prev.detail === detail;
-  await append(ctx, key, nowIso(ctx), "claim-error", [], { detail });
-  if (repeat) return;
-  const body = {
-    type: "doc",
-    version: 1,
-    content: [
-      {
-        type: "paragraph",
-        content: [
-          { type: "text", text: "dev-loop could not start this ticket: ", marks: [{ type: "strong" }] },
-          {
-            type: "text",
-            text: `moving it to ${ctx.research.claimStatus.to} requires ${list}. Fill in the field(s); the loop retries on its next poll.`,
-          },
-        ],
-      },
-    ],
-  };
-  try {
-    await ctx.deps.jira.addComment(key, body);
-  } catch (e) {
-    ctx.log(`[worker] ${key}: could not post the missing-fields comment: ${errorMessage(e)}`);
+  // A previous identical record with a jira_sync_error means the comment never landed: retry it.
+  const repeat = prev !== null && prev.outcome === "claim-error" && prev.detail === detail && !prev.jira_sync_error;
+  let syncError: string | undefined;
+  if (!repeat) {
+    const body = {
+      type: "doc",
+      version: 1,
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "dev-loop could not start this ticket: ", marks: [{ type: "strong" }] },
+            {
+              type: "text",
+              text: `moving it to ${ctx.research.claimStatus.to} requires ${list}. Fill in the field(s); the loop retries on its next poll.`,
+            },
+          ],
+        },
+      ],
+    };
+    try {
+      await ctx.deps.jira.addComment(key, body);
+    } catch (e) {
+      syncError = `missing-fields comment failed: ${errorMessage(e)}`;
+      ctx.log(`[worker] ${key}: could not post the missing-fields comment: ${errorMessage(e)}`);
+    }
   }
+  await append(ctx, key, nowIso(ctx), "claim-error", [], {
+    detail,
+    ...(syncError !== undefined ? { jira_sync_error: syncError } : {}),
+  });
 }
 
 /** Step 4's candidate: research poll, never-re-refine guard, gate, then claim. */
