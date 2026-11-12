@@ -18,5 +18,5 @@ TXT
   new_ticket "$EVAL_PREFIX make durations nicer" "$f" --trigger
   KEYS="$NEW_KEY"
   LOOPS=1
-  GRADE_ARGS="--keys $NEW_KEY"
+  GRADE_ARGS="--keys=$NEW_KEY"
 }

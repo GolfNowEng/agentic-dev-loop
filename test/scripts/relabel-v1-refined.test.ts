@@ -95,11 +95,16 @@ describe("scripts/relabel-v1-refined.mjs", () => {
   const go = (args: string[], pgrep = noLoop) =>
     new Promise<{ code: number; stdout: string; stderr: string }>((res) => {
       execFile(
-        "node", [SCRIPT, "--project", "p", "--root", tmp, ...args],
+        "node", [SCRIPT, "--project=p", `--root=${tmp}`, ...args],
         { env: { ...process.env, JIRA_BASE_URL: base, JIRA_EMAIL: "e@x", JIRA_API_TOKEN: "t", JIRA_ASSIGNEE_ACCOUNT_ID: ME, CUTOVER_PGREP: pgrep } },
         (err, stdout, stderr) => res({ code: err ? (err.code as number) : 0, stdout, stderr }),
       );
     });
+  it("refuses the old --name value form, naming the replacement", async () => {
+    const r = await go(["--confirm", "abc"]);
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toContain("use --confirm=abc");
+  });
   const puts = () => reqs.filter((r) => r.method === "PUT");
   const hash = (keys: string[]) => createHash("sha256").update([...keys].sort().join("\n")).digest("hex");
 
@@ -134,20 +139,20 @@ describe("scripts/relabel-v1-refined.mjs", () => {
   });
 
   it("--write with a wrong hash refuses and writes nothing", async () => {
-    const r = await go(["--write", "--confirm", "deadbeef"]);
+    const r = await go(["--write", "--confirm=deadbeef"]);
     expect(r.code).not.toBe(0);
     expect(puts()).toHaveLength(0);
   });
 
   it("--write refuses while a loop is running, even with the right hash", async () => {
-    const r = await go(["--write", "--confirm", hash(["T-1", "T-4"])], loop);
+    const r = await go(["--write", `--confirm=${hash(["T-1", "T-4"])}`], loop);
     expect(r.code).not.toBe(0);
     expect(r.stderr).toContain("src/main.ts");
     expect(puts()).toHaveLength(0);
   });
 
   it("--write with the right hash only adds the dev label to selected tickets", async () => {
-    const r = await go(["--write", "--confirm", hash(["T-1", "T-4"])]);
+    const r = await go(["--write", `--confirm=${hash(["T-1", "T-4"])}`]);
     expect(r.code).toBe(0);
     expect(puts().map((p) => p.url).sort()).toEqual(["/rest/api/3/issue/T-1", "/rest/api/3/issue/T-4"]);
     for (const p of puts()) expect(JSON.parse(p.body)).toEqual({ update: { labels: [{ add: "pipeline:v1dev" }] } });
@@ -155,7 +160,7 @@ describe("scripts/relabel-v1-refined.mjs", () => {
 
   it("with zero selected tickets prints that and exits 0, even with --write", async () => {
     issues = [];
-    const r = await go(["--write", "--confirm", "x"]);
+    const r = await go(["--write", "--confirm=x"]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("No tickets selected");
     expect(puts()).toHaveLength(0);

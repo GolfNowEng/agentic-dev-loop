@@ -41,5 +41,5 @@ TXT
   jira link-blocks "$blocker" "$NEW_KEY" || return 1
   KEYS="$blocker $NEW_KEY"
   LOOPS=1
-  GRADE_ARGS="--keys $NEW_KEY --blocker $blocker"
+  GRADE_ARGS="--keys=$NEW_KEY --blocker=$blocker"
 }

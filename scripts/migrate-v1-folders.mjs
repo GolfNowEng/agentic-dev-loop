@@ -1,9 +1,9 @@
 // Cutover step: move the v1 state folders of both former repos under
 // dev-loop's own root, where the v2 readers look (runs/v1/<role>/,
 // .pipeline/v1/<role>/<slug>/). Dry run by default.
-//   node scripts/migrate-v1-folders.mjs --dev-root <path> [--research-root <path>] [--v2-from <worktree>] [--write]
+//   node scripts/migrate-v1-folders.mjs --dev-root=<path> [--research-root=<path>] [--v2-from=<worktree>] [--write]
 // --research-root is required unless --v2-from is given.
-// --v2-from <worktree> (Ruling 40): also move <worktree>/runs/v2 and
+// --v2-from=<worktree> (Ruling 40): also move <worktree>/runs/v2 and
 // <worktree>/.pipeline/v2 to <dev-root>/runs/v2 and <dev-root>/.pipeline/v2,
 // each only if it exists. Run it after the merge, before removing the v2
 // worktree and before any loop starts from the dev root. Same refusals.
@@ -14,20 +14,18 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, realpathSync, renameSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { parseFlags } from "../src/core/flags.ts";
 
 function parse(argv) {
-  const o = { write: false };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--write") o.write = true;
-    else if (a === "--dev-root" || a === "--research-root" || a === "--v2-from") {
-      const v = argv[++i];
-      if (!v || v.startsWith("--")) throw new Error(`${a} needs a value`);
-      o[{ "--dev-root": "dev", "--research-root": "research", "--v2-from": "v2From" }[a]] = resolve(v);
-    } else throw new Error(`unknown argument: ${a}`);
-  }
+  const { values, bools } = parseFlags(
+    argv,
+    { values: ["--dev-root", "--research-root", "--v2-from"], bools: ["--write"] },
+    "migrate",
+  );
+  const abs = (v) => (v === undefined ? undefined : resolve(v));
+  const o = { write: bools.has("--write"), dev: abs(values["--dev-root"]), research: abs(values["--research-root"]), v2From: abs(values["--v2-from"]) };
   if (!o.dev || (!o.research && !o.v2From)) {
-    throw new Error("usage: --dev-root <path> --research-root <path> [--v2-from <worktree>] [--write] (--research-root may be omitted only with --v2-from)");
+    throw new Error("usage: --dev-root=<path> --research-root=<path> [--v2-from=<worktree>] [--write] (--research-root may be omitted only with --v2-from)");
   }
   return o;
 }

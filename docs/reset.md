@@ -7,17 +7,17 @@
 `.claude/skills/reset-project/SKILL.md`) deterministically resets this
 repo's own **v2** pipeline state for one project, optionally one ticket,
 and optionally one role. Every path comes from `src/core/paths.ts`, under
-the repo root (or `--root <dir>`), independent of the cwd.
+the repo root (or `--root=<dir>`), independent of the cwd.
 
 ```bash
-npm run reset-project -- --project webtarsthree --ticket TARS-1465 --dry-run           # role all
-npm run reset-project -- --project webtarsthree --ticket TARS-1465 --role research
-npm run reset-project -- --project webtarsthree --ticket TARS-1465 --role research --include-cross-role
-npm run reset-project -- --project webtarsthree --yes                                   # whole project
-npm run reset-project:remote -- --project webtarsthree --ticket TARS-1465 --close-remote --dry-run
+npm run reset-project -- --project=webtarsthree --ticket=TARS-1465 --dry-run           # role all
+npm run reset-project -- --project=webtarsthree --ticket=TARS-1465 --role=research
+npm run reset-project -- --project=webtarsthree --ticket=TARS-1465 --role=research --include-cross-role
+npm run reset-project -- --project=webtarsthree --yes                                   # whole project
+npm run reset-project:remote -- --project=webtarsthree --ticket=TARS-1465 --close-remote --dry-run
 ```
 
-**`--role research|dev|all`** (default `all`):
+**`--role=research|dev|all`** (default `all`):
 
 | | `research` / `dev` | `all` |
 |---|---|---|
@@ -26,15 +26,15 @@ npm run reset-project:remote -- --project webtarsthree --ticket TARS-1465 --clos
 | worktrees (`--ticket` only) | research: `<TICKET>-*-ground`; dev: the other `<TICKET>-*` | all `<TICKET>-*` |
 
 **Cross-role safety.** A record can hold both roles' phases (research
-landed, then dev in the same iteration). With `--role research` or
-`--role dev`, a matching record that also has a `landed` phase of the
+landed, then dev in the same iteration). With `--role=research` or
+`--role=dev`, a matching record that also has a `landed` phase of the
 **other** role is **refused** by default: it stays in the live log, and
 the plan prints `REFUSED (other role landed: <role> <pr|outcome>)` for it.
 This matters because archiving `[research, dev landed PR X]` under
-`--role research` would remove PR X from the dev landed guard, from
+`--role=research` would remove PR X from the dev landed guard, from
 reconcile and from `--close-remote`'s PR lookup, so the dev poll could
 open a second PR. `--include-cross-role` archives such records anyway.
-`--role all` is unaffected.
+`--role=all` is unaffected.
 
 **Live worker.** A real (non-dry-run) reset refuses while a live worker
 holds a `*.lock` in `.pipeline/v2/<project>/sessions/` (holder pid and
@@ -50,7 +50,7 @@ before the live log is rewritten (temp file + rename), or deleted when a
 whole-project reset empties it. Worktrees are found under
 `targetRepo.path` when set, else the v2 clone `.pipeline/v2/<project>/repo`.
 
-**Whole project, `--role all` only**: also prunes the session dir's
+**Whole project, `--role=all` only**: also prunes the session dir's
 leftovers in `.pipeline/v2/<project>/sessions/`: `*.lock.adopted-*`,
 `.acquire.stale-*`, `.acquire.reclaim-*`, `.acquire.release-*`, `.tmp-*`.
 It never removes a `*.lock`, a `*.lock.stale-*` (it may hold an in-flight
@@ -78,8 +78,8 @@ worktree sweep, how `--close-remote` walks Jira transitions) still holds;
 their paths and "run it from `research-loop/`" instructions do not.
 
 > Merged in dev-loop 2.0.0: one repo, two phases. "Research phase" is the
-> former research-loop doc (`--phase research`); "Dev phase" is the former
-> dev-loop doc (`--phase dev`). Wording inside each section still describes its
+> former research-loop doc (`--phase=research`); "Dev phase" is the former
+> dev-loop doc (`--phase=dev`). Wording inside each section still describes its
 > repo as it was; "this repo" / "the sibling repo" there means that phase, and
 > paths like `src/types.ts` map to `src/core/` and `src/roles/<phase>/` now.
 > See `docs/migration-ledger.md`.

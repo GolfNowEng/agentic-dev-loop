@@ -13,7 +13,7 @@ V2=~/Desktop/Repos/dev-loop-v2        # the feat/v2-monolith worktree
 **Not cut over here: `catalog-ui-*`.** Their configs keep the v1 labels
 (`pipeline:research` / `pipeline:dev`). They stay idle until their configs
 move to versioned labels. Worker mode refuses them (label guard), and they
-must never be run with `--phase research|dev` meanwhile: `--phase research`
+must never be run with `--phase=research|dev` meanwhile: `--phase=research`
 would hand off with no human gate on v1 labels.
 
 ## 1. Stop every v1 loop, for good
@@ -41,7 +41,7 @@ Run from `$V2`: until the merge, `$DEV` has v1 code and no `cutover:*` scripts.
 Dry run (prints one `move` line per move, sorted; moves nothing):
 
 ```
-cd $V2 && npm run cutover:migrate -- --dev-root $DEV --research-root $RESEARCH
+cd $V2 && npm run cutover:migrate -- --dev-root=$DEV --research-root=$RESEARCH
 ```
 
 Everything lands under `$DEV`: `runs/*.jsonl` to `runs/v1/{dev,research}/`,
@@ -53,7 +53,7 @@ cross-filesystem move is refused).
 **Ask before** `--write`:
 
 ```
-cd $V2 && npm run cutover:migrate -- --dev-root $DEV --research-root $RESEARCH --write
+cd $V2 && npm run cutover:migrate -- --dev-root=$DEV --research-root=$RESEARCH --write
 ```
 
 ## 3. One real ticket, end to end, from the worktree
@@ -62,7 +62,7 @@ Run it from the **worktree** (`$V2`), which has the 2.0.0 code. `$DEV` is
 still v1 code until the merge in step 6; never start a loop there now.
 
 ```
-cd ~/Desktop/Repos/dev-loop-v2 && npm run loop -- --project webtarsthree --once
+cd ~/Desktop/Repos/dev-loop-v2 && npm run loop -- --project=webtarsthree --once
 ```
 
 `--once` stops after one ticket iteration. Watch it to a PR (research, then
@@ -88,7 +88,7 @@ step 3 run a dev-only run on a relabelled ticket.
 Dry run (safe):
 
 ```
-cd $V2 && npm run cutover:relabel -- --project webtarsthree
+cd $V2 && npm run cutover:relabel -- --project=webtarsthree
 ```
 
 It prints each key, its labels, the dev label to add, and a SHA-256 of the
@@ -97,7 +97,7 @@ sorted keys.
 **Ask before** `--write`. It only adds the label, never removes one:
 
 ```
-cd $V2 && npm run cutover:relabel -- --project webtarsthree --write --confirm <sha256 from the dry run>
+cd $V2 && npm run cutover:relabel -- --project=webtarsthree --write --confirm=<sha256 from the dry run>
 ```
 
 ## 6. Tag, archive, merge
@@ -122,7 +122,7 @@ any loop start from `$DEV`, with no loop running anywhere.
 Dry run:
 
 ```
-cd $DEV && npm run cutover:migrate -- --dev-root $DEV --v2-from ~/Desktop/Repos/dev-loop-v2
+cd $DEV && npm run cutover:migrate -- --dev-root=$DEV --v2-from="$HOME/Desktop/Repos/dev-loop-v2"
 ```
 
 It prints at most two moves (`runs/v2`, `.pipeline/v2`, each only if it
@@ -131,7 +131,7 @@ exists) and refuses if `$DEV` already has either one.
 **Ask before** `--write`:
 
 ```
-cd $DEV && npm run cutover:migrate -- --dev-root $DEV --v2-from ~/Desktop/Repos/dev-loop-v2 --write
+cd $DEV && npm run cutover:migrate -- --dev-root=$DEV --v2-from="$HOME/Desktop/Repos/dev-loop-v2" --write
 ```
 
 Only then remove the worktree. From here on, loops start from `$DEV`.

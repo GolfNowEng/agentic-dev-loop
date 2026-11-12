@@ -2,7 +2,7 @@
 // idea: aggregate only, no raw logs, no ticket text): outcome, phases,
 // cost and minutes for each scenario's tickets.
 //
-//   node evals/report.mjs [--config pipeline.eval.config.json] [--state evals/.state]
+//   node evals/report.mjs [--config=pipeline.eval.config.json] [--state=evals/.state]
 //
 // Reads runs/v2/<slug>.jsonl and <state>/scenarios (lines "<name> <K1[,K2]>",
 // appended by run.sh); prints a Markdown table. Local only.
@@ -58,8 +58,9 @@ function isRunAsScript() {
 }
 
 if (isRunAsScript()) {
-  const args = process.argv.slice(2);
-  const opt = (n, d) => (args.includes(n) ? args[args.indexOf(n) + 1] : d);
+  const { parseFlags } = await import("../src/core/flags.ts");
+  const flags = parseFlags(process.argv.slice(2), { values: ["--config", "--state"], bools: [] }, "report").values;
+  const opt = (n, d) => flags[n] ?? d;
   const root = resolve(fileURLToPath(import.meta.url), "../..");
   const { loadConfig } = await import("../src/core/config.ts");
   const { readIterations } = await import("../src/core/iteration-log.ts");

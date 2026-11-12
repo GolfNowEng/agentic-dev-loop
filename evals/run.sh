@@ -57,7 +57,7 @@ DRY_N=0
 # new_ticket <summary> <description-file> [--trigger] -> sets NEW_KEY, records it.
 new_ticket() {
   local out
-  out=$(jira create --summary "$1" --description-file "$2" ${3:+"$3"}) || die "ticket create failed"
+  out=$(jira create --summary="$1" --description-file="$2" ${3:+"$3"}) || die "ticket create failed"
   if is_dry; then DRY_N=$((DRY_N + 1)); out="DRY-$DRY_N"; fi
   valid_key "$out" || die "ticket create returned no key"
   printf '%s\n' "$out" >> "$KEYS_FILE"
@@ -88,11 +88,11 @@ run_scenario() {
   while [ "$i" -lt "$LOOPS" ]; do
     i=$((i + 1))
     log "scenario $name: iteration $i/$LOOPS (limit ${RUN_TIMEOUT_S}s)"
-    outward run_to "$RUN_TIMEOUT_S" npm run loop -- --config "$EVAL_CONFIG" --once || log "scenario $name: the loop exited non-zero (graded anyway)"
+    outward run_to "$RUN_TIMEOUT_S" npm run loop -- --config="$EVAL_CONFIG" --once || log "scenario $name: the loop exited non-zero (graded anyway)"
   done
 
   # shellcheck disable=SC2086
-  if outward node --env-file="${DEVLOOP_ENV_FILE:-.env}" "$EVALS/check-$name.mjs" --config "$EVAL_CONFIG" $GRADE_ARGS; then
+  if outward node --env-file="${DEVLOOP_ENV_FILE:-.env}" "$EVALS/check-$name.mjs" --config="$EVAL_CONFIG" $GRADE_ARGS; then
     log "scenario $name: graded (see the JSON line above)"
     return 0
   fi

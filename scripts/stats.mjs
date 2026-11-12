@@ -1,11 +1,11 @@
 // Success/failure rollup over a project's run logs. Read-only, no
 // dependencies. Run with:
-//   npm run stats [-- --project webtarsthree --days N --v1 --root <dir>]
+//   npm run stats [-- --project=webtarsthree --days=N --v1 --root=<dir>]
 //
 // Default (v2): runs/v2/<project>.jsonl, counted per role from PHASE
 // entries (a record may hold a research and a dev phase; records with no
 // phases, e.g. handoff-done or interrupted, contribute nothing). A phase
-// is in the window when its `started` is within --days (default 7).
+// is in the window when its `started` is within --days=N (default 7).
 //
 // --v1: the v1 logs, dev and research reported separately. Each role reads
 // runs/v1/<role>/<project>.jsonl when it exists, else the pre-cutover live
@@ -17,25 +17,27 @@
 
 import { readFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
+import { FlagError, parseFlags } from "../src/core/flags.ts";
 
-function arg(name, fallback) {
-  const eq = process.argv.find((a) => a.startsWith(`${name}=`));
-  if (eq) return eq.slice(name.length + 1);
-  const i = process.argv.indexOf(name);
-  return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+let flags;
+try {
+  flags = parseFlags(process.argv.slice(2), { values: ["--project", "--days", "--root"], bools: ["--v1"] }, "stats");
+} catch (err) {
+  if (!(err instanceof FlagError)) throw err;
+  console.error(err.message);
+  process.exit(1);
 }
-
-const days = Number(arg("--days", "7"));
-const project = arg("--project", "webtarsthree");
-const root = resolve(arg("--root", resolve(import.meta.dirname, "..")));
-const v1 = process.argv.includes("--v1");
+const days = Number(flags.values["--days"] ?? "7");
+const project = flags.values["--project"] ?? "webtarsthree";
+const root = resolve(flags.values["--root"] ?? resolve(import.meta.dirname, ".."));
+const v1 = flags.bools.has("--v1");
 
 if (!/^[a-z0-9-]+$/.test(project)) {
-  console.error(`--project ${JSON.stringify(project)} must match /^[a-z0-9-]+$/`);
+  console.error(`--project=${JSON.stringify(project)} must match /^[a-z0-9-]+$/`);
   process.exit(1);
 }
 if (!Number.isFinite(days) || days <= 0) {
-  console.error(`--days must be a positive number`);
+  console.error(`--days=N must be a positive number`);
   process.exit(1);
 }
 

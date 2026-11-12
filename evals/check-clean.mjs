@@ -4,7 +4,7 @@
 //
 //   jira: { key, status }
 //
-// CLI (gathers real state; run by evals/run.sh): node evals/check-clean.mjs --keys <KEY>
+// CLI (gathers real state; run by evals/run.sh): node evals/check-clean.mjs --keys=<KEY>
 
 import { expectOpenTddPr, expectOutcome, expectPhases, latest, result } from "./grade-lib.mjs";
 import { runGraderCli } from "./gather.mjs";

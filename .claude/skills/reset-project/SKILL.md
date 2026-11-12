@@ -7,7 +7,7 @@ description: Deterministically wipe this repo's own v2 pipeline state (one role 
 
 One skill, one script, for both roles. It resets this repo's **v2** state
 (`runs/v2/<project>.jsonl` records and the project's v2 run dirs, under
-the v2 state root, `v2ProjectDir` in `src/core/paths.ts`), with `--role research|dev|all` picking the role (default `all`).
+the v2 state root, `v2ProjectDir` in `src/core/paths.ts`), with `--role=research|dev|all` picking the role (default `all`).
 Paths are always repo-root-relative, so the directory you run it from does
 not matter. **v1 history is never touched**, in either layout:
 the v1 archive (`runs/v1/` and its run-state twin), the pre-cutover
@@ -16,22 +16,22 @@ checkout's `runs/` and run state. `docs/reset.md` lists the exact paths.
 
 ## Arguments
 
-`$ARGUMENTS` — `--project <name>` (required) plus one of:
-- `--ticket <KEY>` — reset just this ticket within the project.
+`$ARGUMENTS` — `--project=<name>` (required) plus one of:
+- `--ticket=<KEY>` — reset just this ticket within the project.
 - (nothing) — reset the WHOLE project. Requires `--yes`.
 
 Optional:
-- `--role research|dev|all` (default `all`) — `research`/`dev` deletes only
+- `--role=research|dev|all` (default `all`) — `research`/`dev` deletes only
   that role's `<role>-<RUN_ID>` run dirs and archives only the records that
   contain a phase of that role (or a pending `resume` of it); `all` archives
   every record for the ticket (or project).
-- `--include-cross-role` — with `--role research|dev`, also archive a
+- `--include-cross-role` — with `--role=research|dev`, also archive a
   matching record whose **other** role has a `landed` phase. Without it
   such records are refused (kept, and shown as
   `REFUSED (other role landed: <role> <pr|outcome>)` in the plan), so a
   research reset can never drop a landed dev PR that the landed guard,
   reconcile and `--close-remote` rely on. Only pass it when you mean to
-  forget the other role's landed run too. No effect with `--role all`.
+  forget the other role's landed run too. No effect with `--role=all`.
 - `--ignore-live-worker` — a real reset refuses while a live worker holds
   a session lock for the project; this overrides that. Prefer stopping the
   worker instead.
@@ -124,7 +124,7 @@ npm run reset-project -- --project=webtarsthree --ticket=TARS-1465 --dry-run
 npm run reset-project -- --project=webtarsthree --ticket=TARS-1465
 
 # Only the research side (dev-* run dirs and dev-only records stay):
-npm run reset-project -- --project=webtarsthree --ticket=TARS-1465 --role research
+npm run reset-project -- --project=webtarsthree --ticket=TARS-1465 --role=research
 
 # Whole-project wipe (every ticket) -- requires --yes:
 npm run reset-project -- --project=webtarsthree --yes
@@ -154,14 +154,14 @@ deleted; inspect it by hand.
    directory for that ticket and role, in every session.
 3. Leftover worktrees under `<targetRepo.path>/.claude/worktrees/` (or the
    v2 clone's when `targetRepo.path` is unset) named `<TICKET>-*`:
-   `--role research` only the `-ground` ones (`ticket-refine`'s Ground
-   step), `--role dev` only the others, `all` both.
+   `--role=research` only the `-ground` ones (`ticket-refine`'s Ground
+   step), `--role=dev` only the others, `all` both.
 
 ## What gets deleted locally (whole-project, no `--ticket`)
 
-The matching records (every line with `--role all`) are archived, then
+The matching records (every line with `--role=all`) are archived, then
 removed (the live log is deleted when that empties it), and every matching
-run dir of every ticket is deleted. With `--role all` only, session-dir
+run dir of every ticket is deleted. With `--role=all` only, session-dir
 leftovers are pruned too: `*.lock.adopted-*`, `.acquire.stale-*`,
 `.acquire.reclaim-*`, `.acquire.release-*`, `.tmp-*` — never a `*.lock`,
 a `*.lock.stale-*`, or `.acquire`. The clone (`<v2 state root>/repo`)

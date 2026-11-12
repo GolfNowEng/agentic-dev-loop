@@ -23,5 +23,5 @@ TXT
   new_ticket "$EVAL_PREFIX slugify length limit" "$f" --trigger
   KEYS="$NEW_KEY"
   LOOPS=1
-  GRADE_ARGS="--keys $NEW_KEY"
+  GRADE_ARGS="--keys=$NEW_KEY"
 }

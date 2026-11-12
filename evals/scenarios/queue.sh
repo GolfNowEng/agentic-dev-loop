@@ -33,5 +33,5 @@ TXT
   new_ticket "$EVAL_PREFIX clampPercent helper" "$f2" --trigger
   KEYS="$first $NEW_KEY"
   LOOPS=2
-  GRADE_ARGS="--keys $first,$NEW_KEY"
+  GRADE_ARGS="--keys=$first,$NEW_KEY"
 }

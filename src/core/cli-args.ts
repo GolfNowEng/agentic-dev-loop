@@ -1,16 +1,18 @@
 // main.ts's argument parsing and config preflight, split out so they are
 // tested without starting a worker.
 //
-//   --project <p> | --config <path>   exactly one
-//   [--phase worker|research|dev]     default worker (both roles)
-//   [--session <name>] [--once] [--stream]
+//   --project=<p> | --config=<path>   exactly one
+//   [--phase=worker|research|dev]     default worker (both roles)
+//   [--session=<name>] [--once] [--stream]
 //
-// Value flags take `--name value` or `--name=value`. Anything else is an
+// Value flags are --name=value only (src/core/flags.ts); the old
+// `--name value` form is refused with the replacement. Anything else is an
 // error: there is deliberately no way to reach session test seams
 // (AcquireOptions._hooks) from the command line.
 
 import type { Config, Role } from "./types.ts";
 import { ConfigError, checkLabelVersion, requiredPlaceholderFree } from "./config.ts";
+import { parseFlags } from "./flags.ts";
 
 export type Phase = "worker" | Role;
 
@@ -24,46 +26,23 @@ export interface CliArgs {
 }
 
 const PHASES: readonly string[] = ["worker", "research", "dev"];
-const VALUE_FLAGS = ["--project", "--config", "--phase", "--session"] as const;
-const BOOL_FLAGS = ["--once", "--stream"] as const;
+const SPEC = { values: ["--project", "--config", "--phase", "--session"], bools: ["--once", "--stream"] } as const;
 
 export function parseArgs(argv: string[]): CliArgs {
-  const values: Partial<Record<(typeof VALUE_FLAGS)[number], string>> = {};
-  const bools = new Set<string>();
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    const eq = arg.indexOf("=");
-    const name = eq === -1 ? arg : arg.slice(0, eq);
-    if ((VALUE_FLAGS as readonly string[]).includes(name)) {
-      const flag = name as (typeof VALUE_FLAGS)[number];
-      let value: string | undefined;
-      if (eq !== -1) value = arg.slice(eq + 1);
-      else {
-        value = argv[i + 1];
-        if (value === undefined || value.startsWith("--")) value = undefined;
-        else i++;
-      }
-      if (value === undefined || value.length === 0) throw new Error(`main.ts: ${flag} needs a value`);
-      values[flag] = value;
-    } else if ((BOOL_FLAGS as readonly string[]).includes(arg)) {
-      bools.add(arg);
-    } else {
-      throw new Error(`main.ts: unknown argument ${JSON.stringify(arg)}`);
-    }
-  }
+  const { values, bools } = parseFlags(argv, SPEC, "main.ts");
 
   const phase = values["--phase"] ?? "worker";
   if (!PHASES.includes(phase)) {
-    throw new Error(`main.ts: --phase worker|research|dev (got "${phase}")`);
+    throw new Error(`main.ts: --phase=worker|research|dev (got "${phase}")`);
   }
   const project = values["--project"];
   const configPath = values["--config"];
   if (project && configPath) {
-    throw new Error("main.ts: pass either --project <name> or --config <path>, not both.");
+    throw new Error("main.ts: pass either --project=<name> or --config=<path>, not both.");
   }
   if (!project && !configPath) {
     throw new Error(
-      "main.ts requires --project <name> (or --config <path-to-pipeline.<project>.config.json> as a fallback).",
+      "main.ts requires --project=<name> (or --config=<path-to-pipeline.<project>.config.json> as a fallback).",
     );
   }
   return {
@@ -87,6 +66,6 @@ export function preflight(config: Config, phase: Phase, pkgVersion: string): { w
   requiredPlaceholderFree(config, phase);
   if (phase !== "worker") return { warnings: [] };
   const guard = checkLabelVersion(config, pkgVersion);
-  if (!guard.ok) throw new ConfigError(`--phase worker: ${guard.error}`);
+  if (!guard.ok) throw new ConfigError(`--phase=worker: ${guard.error}`);
   return { warnings: guard.warning ? [guard.warning] : [] };
 }

@@ -6,7 +6,7 @@
 //   pr:   the blocker's sandbox PR (must still be OPEN, or the setup did not hold)
 //   jira: { key, status, blocker }
 //
-// CLI (gathers real state; run by evals/run.sh): node evals/check-blocked.mjs --keys <KEY> --blocker <KEY>
+// CLI (gathers real state; run by evals/run.sh): node evals/check-blocked.mjs --keys=<KEY> --blocker=<KEY>
 
 import { CLAIM_FROM_STATUS, expectStatus, forKey, result } from "./grade-lib.mjs";
 import { runGraderCli } from "./gather.mjs";

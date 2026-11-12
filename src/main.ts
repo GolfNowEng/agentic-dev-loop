@@ -57,6 +57,7 @@ import { acquireSession, isProcessAlive, LiveWorkerError } from "./core/session.
 import { stopOnSignal, trackSession, type TrackedSession } from "./worker/signal.ts";
 import { findLandedPrUrlAcross, hasLandedV1 } from "./core/iteration-log.ts";
 import { parseArgs, preflight, type Phase } from "./core/cli-args.ts";
+import { FlagError } from "./core/flags.ts";
 import { checkAbsPath, checkRepoDirPlacement, repoDirFor, SKILL_NAME } from "./core/build-prompt.ts";
 import { killActiveChild, spawnClaudeRun } from "./core/spawn-claude.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
@@ -330,6 +331,8 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   const prefix = activePhase ? prefixOf(activePhase) : "main";
-  logError(`[${prefix}] fatal error: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+  // A bad command line is a usage error: print the message (it names the fix), not a stack.
+  if (err instanceof FlagError) logError(err.message);
+  else logError(`[${prefix}] fatal error: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
   process.exit(1);
 });

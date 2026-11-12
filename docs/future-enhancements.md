@@ -1,8 +1,8 @@
 # Future Enhancements
 
 > Merged in dev-loop 2.0.0: one repo, two phases. `## Research phase` is the
-> former research-loop doc (`--phase research`); `## Dev phase` is the former
-> dev-loop doc (`--phase dev`). Wording inside each section still describes its
+> former research-loop doc (`--phase=research`); `## Dev phase` is the former
+> dev-loop doc (`--phase=dev`). Wording inside each section still describes its
 > repo as it was; "this repo" / "the sibling repo" there means that phase, and
 > paths like `src/types.ts` map to `src/core/` and `src/roles/<phase>/` now.
 > See `docs/migration-ledger.md`.
@@ -17,12 +17,12 @@ implemented, move its entry to `CHANGELOG.md` and delete it from here.
 
 ### Concurrent loop instances against the *same* project (N-per-project)
 
-**Idea**: today, `--project <name>` (see `CHANGELOG.md`, 2026-09-16) makes
+**Idea**: today, `--project=<name>` (see `CHANGELOG.md`, 2026-09-16) makes
 it safe to run one loop instance per project concurrently, in as many
 terminals as there are projects — each instance's on-disk state is
 namespaced by `repoSlugFromUrl()` and each polls its own project's JQL.
 What's still unsolved is running **more than one instance against the
-same project** at once (e.g. two `--project webtarsthree` terminals side
+same project** at once (e.g. two `--project=webtarsthree` terminals side
 by side, to work through a backlog faster). This needs real coordination:
 research-loop's `claim()` is already atomic (a status transition, race-
 safe — a second instance's claim attempt on an already-claimed ticket

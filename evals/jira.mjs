@@ -114,10 +114,6 @@ async function close(key) {
   await request(`/rest/api/3/issue/${key}/transitions`, { method: "POST", body: JSON.stringify({ transition: { id: t.id } }) });
 }
 
-function flag(args, name) {
-  const i = args.indexOf(name);
-  return i === -1 ? undefined : args[i + 1];
-}
 
 function isRunAsScript() {
   try {
@@ -136,10 +132,12 @@ if (isRunAsScript()) {
         console.error("[eval] Jira auth OK");
         break;
       case "create": {
-        const summary = flag(args, "--summary");
-        const file = flag(args, "--description-file");
-        if (!summary || !file) throw new Error("create needs --summary and --description-file");
-        console.log(await create(summary, readFileSync(file, "utf8"), args.includes("--trigger")));
+        const { parseFlags } = await import("../src/core/flags.ts");
+        const { values, bools } = parseFlags(args, { values: ["--summary", "--description-file"], bools: ["--trigger"] }, "jira create");
+        const summary = values["--summary"];
+        const file = values["--description-file"];
+        if (!summary || !file) throw new Error("create needs --summary=<text> and --description-file=<path>");
+        console.log(await create(summary, readFileSync(file, "utf8"), bools.has("--trigger")));
         break;
       }
       case "link-blocks":

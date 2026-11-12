@@ -1,8 +1,8 @@
 # Config
 
 > Merged in dev-loop 2.0.0: one repo, two phases. `## Research phase` is the
-> former research-loop doc (`--phase research`); `## Dev phase` is the former
-> dev-loop doc (`--phase dev`). Wording inside each section still describes its
+> former research-loop doc (`--phase=research`); `## Dev phase` is the former
+> dev-loop doc (`--phase=dev`). Wording inside each section still describes its
 > repo as it was; "this repo" / "the sibling repo" there means that phase, and
 > paths like `src/types.ts` map to `src/core/` and `src/roles/<phase>/` now.
 > See `docs/migration-ledger.md`.
@@ -45,7 +45,7 @@ below names a v1 key, the mapping is: `jira.triggerLabel` (research) →
   startup, every `"___"` the phase needs: the shared `targetRepo`/`github`/
   `jira` values, plus `roles.research.*` (research), `roles.dev.*` including
   `codeReviewFields` (dev), or both (`worker`). So `catalog-ui-public` runs
-  `--phase research` but not `--phase dev` until its `codeReviewFields` are
+  `--phase=research` but not `--phase=dev` until its `codeReviewFields` are
   filled.
 - **Role views.** Runners never read the whole `Config`; they take
   `roleView(config, role)`: that role's `triggerLabel`, `pollJql`,
@@ -73,10 +73,10 @@ below names a v1 key, the mapping is: `jira.triggerLabel` (research) →
   `catalog-ui-*` configs keep the v1 labels (`pipeline:research` /
   `pipeline:dev`) until cutover. `checkLabelVersion(config, pkgVersion)`
   refuses an unversioned or other-major trigger label, and warns on a
-  minor/patch difference. Worker mode (`--phase worker`, the default) enforces
+  minor/patch difference. Worker mode (`--phase=worker`, the default) enforces
   it at startup, after the placeholder check: ok:false exits 1 (so the
   `catalog-ui-*` configs are refused until cutover), a warning is logged.
-  `--phase research|dev` do not.
+  `--phase=research|dev` do not.
 - `pipeline.loop.config.json` (poll interval, post-run delay) is unchanged and
   is read from the repo root by both phases.
 
@@ -94,11 +94,10 @@ npm run loop -- --stream --project=webtarsthree
 npm run loop -- --project=catalog-ui-management --once
 ```
 
-`--project <name>` (space-separated) also still works — both forms are
-accepted — but `--project=<name>` is the documented convention: it stays
-visually unambiguous next to a boolean flag like `--stream`, where
-`--stream --project webtarsthree` reads as three tokens with no obvious
-grouping.
+Since 2.1.0 every value flag is `--name=value` only (`src/core/flags.ts`).
+The old space-separated `--project webtarsthree` is refused with the exact
+replacement (`use --project=webtarsthree`). Boolean flags (`--once`,
+`--stream`) stay bare.
 
 Omitting `--project`, or naming a project with no matching config file,
 fails immediately — before any Jira/GitHub call — with a list of the
@@ -274,11 +273,10 @@ npm run loop -- --stream --project=webtarsthree
 npm run loop -- --project=catalog-ui-public --once
 ```
 
-`--project <name>` (space-separated) also still works — both forms are
-accepted — but `--project=<name>` is the documented convention: it stays
-visually unambiguous next to a boolean flag like `--stream`, where
-`--stream --project webtarsthree` reads as three tokens with no obvious
-grouping.
+Since 2.1.0 every value flag is `--name=value` only (`src/core/flags.ts`).
+The old space-separated `--project webtarsthree` is refused with the exact
+replacement (`use --project=webtarsthree`). Boolean flags (`--once`,
+`--stream`) stay bare.
 
 Omitting `--project`, or naming a project with no matching config file,
 fails immediately — before any Jira/GitHub call — with a list of the
@@ -455,7 +453,7 @@ not forgotten if this pipeline needs to scale beyond one terminal per loop.
 Concretely: `repoLabel` prevents a `catalog-ui-management`-scoped dev-loop
 instance from grabbing a `catalog-ui-public` ticket, but running two
 dev-loop instances both scoped to `catalog-ui-management` at once still
-races exactly as described above. `--project <name>` (`CHANGELOG.md`,
+races exactly as described above. `--project=<name>` (`CHANGELOG.md`,
 2026-09-16) makes N-*different*-projects-concurrent safe, but doesn't
 touch this gap — tracked as its own enhancement in research-loop's
 `docs/future-enhancements.md` ("Concurrent loop instances against the

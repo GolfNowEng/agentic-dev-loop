@@ -13,6 +13,42 @@ History before 2.0.0 lives in two files, one per former repo:
 - [docs/changelog/dev-loop-legacy.md](docs/changelog/dev-loop-legacy.md)
 - [docs/changelog/research-loop-legacy.md](docs/changelog/research-loop-legacy.md)
 
+## [Unreleased — 2.2.0] — planned
+
+Not built yet. Design: [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
+
+- `[core]` A failed `claude -p` is detected from its JSON result
+  (`is_error` / `terminal_reason`), not just its exit code. In the sbx
+  spike, a run with no credential hung for about 3 min, then exited 0 with
+  `terminal_reason: api_error`. Today's loop would record that as a
+  success.
+- `[core]` Pluggable sandbox adapter for agent spawns: `--sandbox=<name>`
+  or `sandbox.adapter` in project config. The default `none` keeps
+  today's behavior exactly. The first adapter is `sbx` (Docker Sandboxes
+  with the Keystone kit). Everything sbx-specific lives in
+  `src/sandbox/sbx/`, so it can be removed, or another sandbox added,
+  without touching the loop.
+- `[core]` New outcome `parked` and failure category `sandbox_denied`: a
+  sandbox block (network, credential, infra) puts the ticket on hold
+  without counting an attempt. `npm run sandbox:approvals` lists parked
+  tickets and prints the allow commands for a human to run.
+
+## [2.1.0] — 2026-11-12
+
+- `[core]` **Breaking for the command line, not for Jira:** every value
+  flag is now `--name=value` only, across `npm run loop`, `reset-project`,
+  `stats`, `cutover:migrate`, `cutover:relabel` and the eval tools. The
+  old space-separated form (`--project webtarsthree`) exits with the exact
+  replacement (`use --project=webtarsthree`), so a stale command can't
+  silently do something else. Boolean flags (`--once`, `--stream`,
+  `--dry-run`, `--yes`, `--write`) stay bare. A flag given twice, or a
+  value on a boolean, is also an error. One shared parser,
+  `src/core/flags.ts`, replaces five hand-rolled ones.
+- `[core]` The version is bumped while the trigger labels stay
+  `pipeline:v2.0.0`. Only the CLI changed, not the Jira flow, so worker
+  startup shows the minor-mismatch warning (`label is for 2.0.0`) until
+  the labels are bumped. No relabel is required.
+
 ## [2.0.0] — 2026-11-12
 
 dev-loop and research-loop are now one repo with two phases. Run

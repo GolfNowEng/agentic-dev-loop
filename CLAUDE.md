@@ -1,8 +1,8 @@
 # CLAUDE.md — dev-loop
 
-One repo, two phases of an agentic Jira pipeline. The default `--phase worker`
+One repo, two phases of an agentic Jira pipeline. The default `--phase=worker`
 runs both on one session (research, then dev, on the same ticket);
-`--phase research|dev` runs one. Each phase has its own stance. Apply the stance
+`--phase=research|dev` runs one. Each phase has its own stance. Apply the stance
 of the phase/skill you are working in, not the other.
 
 ## Research phase (`ticket-refine`)

@@ -1,15 +1,15 @@
 # dev-loop
 
 A local agentic Jira pipeline in one repo with two phases. The default worker
-(`npm run loop -- --project <name>`, i.e. `--phase worker`) runs both on one
-session; `--phase research|dev` runs one. The phases coordinate through Jira
+(`npm run loop -- --project=<name>`, i.e. `--phase=worker`) runs both on one
+session; `--phase=research|dev` runs one. The phases coordinate through Jira
 ticket state (labels):
 
 - **research** (formerly the separate `research-loop` repo, "Terminal A")
   refines raw Jira tickets into tickets marked ready for dev.
 - **dev** ("Terminal B") picks up ready tickets and lands PRs from them.
 
-One live worker per project (`--session <name>`, default `dev-<n>`); a second
+One live worker per project (`--session=<name>`, default `dev-<n>`); a second
 start on the same project names the live session and exits 1. See
 `CLAUDE.md` for working rules and `docs/` for how the pieces fit together.
 

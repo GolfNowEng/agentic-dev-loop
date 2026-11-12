@@ -1,8 +1,10 @@
 /**
  * CLI entrypoint:
- *   node src/core/reset-cli.ts --project <name> [--ticket <KEY>] [--role research|dev|all]
+ *   node src/core/reset-cli.ts --project=<name> [--ticket=<KEY>] [--role=research|dev|all]
  *                              [--include-cross-role] [--ignore-live-worker]
- *                              [--dry-run] [--yes] [--close-remote] [--root <dir>]
+ *                              [--dry-run] [--yes] [--close-remote] [--root=<dir>]
+ *
+ * Value flags are --name=value only (src/core/flags.ts).
  *
  * Deterministic "start fresh" reset of this repo's own v2 pipeline state
  * (runs/v2/<project>.jsonl records, `<role>-*` run dirs under
@@ -46,26 +48,33 @@ import { RealGitHubClient, realExecGh } from "./github-client.ts";
 import type { Config } from "./types.ts";
 import { PROJECT_SLUG } from "./paths.ts";
 import { findRecordedPrUrlAcross } from "./iteration-log.ts";
+import { FlagError, parseFlags } from "./flags.ts";
 
-function getArgValue(argv: string[], name: string): string | undefined {
-  const eqPrefix = `${name}=`;
-  const eqArg = argv.find((arg) => arg.startsWith(eqPrefix));
-  if (eqArg !== undefined) return eqArg.slice(eqPrefix.length);
-  const index = argv.indexOf(name);
-  return index !== -1 ? argv[index + 1] : undefined;
-}
+const SPEC = {
+  values: ["--project", "--ticket", "--role", "--root"],
+  bools: ["--dry-run", "--yes", "--close-remote", "--include-cross-role", "--ignore-live-worker"],
+} as const;
 
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const projectName = getArgValue(argv, "--project");
-  const ticketKey = getArgValue(argv, "--ticket");
-  const dryRun = argv.includes("--dry-run");
-  const skipConfirm = argv.includes("--yes");
-  const closeRemote = argv.includes("--close-remote");
-  const role = getArgValue(argv, "--role") ?? "all";
-  const includeCrossRole = argv.includes("--include-cross-role");
-  const ignoreLiveWorker = argv.includes("--ignore-live-worker");
-  const rootArg = getArgValue(argv, "--root");
+  let flags;
+  try {
+    flags = parseFlags(process.argv.slice(2), SPEC, "reset");
+  } catch (err) {
+    if (!(err instanceof FlagError)) throw err;
+    console.error(`[${err.message}`.replace(/^\[reset: /, "[reset] "));
+    process.exitCode = 1;
+    return;
+  }
+  const { values, bools } = flags;
+  const projectName = values["--project"];
+  const ticketKey = values["--ticket"];
+  const dryRun = bools.has("--dry-run");
+  const skipConfirm = bools.has("--yes");
+  const closeRemote = bools.has("--close-remote");
+  const role = values["--role"] ?? "all";
+  const includeCrossRole = bools.has("--include-cross-role");
+  const ignoreLiveWorker = bools.has("--ignore-live-worker");
+  const rootArg = values["--root"];
   const root = rootArg === undefined ? undefined : resolve(rootArg);
 
   if (role !== "research" && role !== "dev" && role !== "all") {
@@ -76,7 +85,7 @@ async function main(): Promise<void> {
 
   if (closeRemote && !ticketKey) {
     console.error(
-      "[reset] --close-remote requires --ticket -- remote-closing every " +
+      "[reset] --close-remote requires --ticket=<KEY> -- remote-closing every " +
         "ticket in a whole-project reset is out of scope and refused.",
     );
     process.exitCode = 1;
@@ -149,7 +158,7 @@ async function main(): Promise<void> {
 
   if (plan.wholeProject && !skipConfirm) {
     console.error(
-      "[reset] a whole-project reset (no --ticket) requires --yes to confirm -- " +
+      "[reset] a whole-project reset (no --ticket=<KEY>) requires --yes to confirm -- " +
         "this deletes EVERY ticket's history for this project, not just one.",
     );
     process.exitCode = 1;
