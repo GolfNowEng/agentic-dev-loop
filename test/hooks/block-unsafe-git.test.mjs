@@ -166,6 +166,23 @@ const DENY_BY_RULE = [
   "echo 'HUSKY=0 git commit -m x' | sh",
   "echo 'echo hi' | sh; bash <<< 'git push -f'",
   "mapfile -C 'git push -f' -c 1 x < f",
+  // Fix round 1: a /dev/stdin-style operand reads stdin like `-`
+  "echo 'git push -f' | bash /dev/stdin",
+  "bash /dev/stdin <<< 'git push -f'",
+  "printf 'git commit -n' | sh /dev/fd/0",
+  "sh /proc/self/fd/0 <<'EOF'\ngit push --force\nEOF",
+  "bash -- /dev/stdin <<< 'gh stack submit'",
+  // Fix round 1: a nameref to a guarded variable
+  "declare -n r=HUSKY; export r=0; git commit -m x",
+  "typeset -n r=HUSKY_SKIP_HOOKS",
+  "declare -gn r=HUSKY",
+  "local -rn r=HUSKY",
+  "declare -n r=HUSKY[0]",
+  // Fix round 1: getopts / vared set their named variable
+  "getopts ab HUSKY",
+  "getopts ab HUSKY_SKIP_HOOKS -a",
+  "vared HUSKY",
+  "vared -p x HUSKY_SKIP_HOOKS",
 ];
 
 // Could not verify: denied, and stderr says so.
@@ -190,6 +207,16 @@ const UNVERIFIABLE = [
   "mapfile GIT_CONFIG_PARAMETERS < f",
   "printf -v$X 1",
   "printf $O HUSKY 0",
+  // Fix round 1: stdin operands with any other stdin, and run-time nameref targets
+  "bash /dev/stdin < f",
+  "cat f | sh /dev/fd/0",
+  "bash /dev/stdin",
+  "local -n r=GIT_CONFIG_PARAMETERS",
+  "declare -n r=GIT_CONFIG_KEY_0",
+  "declare -n r=$T",
+  "declare -n r; r=HUSKY; export r=0",
+  "getopts ab GIT_CONFIG_PARAMETERS",
+  "vared GIT_CONFIG_KEY_0",
   // A3: anything else feeding a shell's stdin
   "bash < script.sh",
   "sh 0< script.sh",
@@ -281,6 +308,13 @@ const ALLOW = [
   "read -r line < f",
   "printf -v out '%s' y",
   "mapfile -t lines < f",
+  "declare -n r=out",
+  "declare -gn r=out",
+  "declare -x FOO=1",
+  "getopts ab opt",
+  "vared -p x line",
+  "echo 'echo hi' | bash /dev/stdin",
+  "bash /dev/stdin <<< 'npm test'",
   "printf -v out '%s' \"$x\"",
   "read 'ANSWER?go'",
   // A3: a stdin script whose content is safe, and a script-file operand
