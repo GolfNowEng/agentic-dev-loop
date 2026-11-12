@@ -6,7 +6,10 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeRunSkill, type SkillRunnerDeps } from "../../src/worker/skill-runner.ts";
+import { makeRunSkill, sandboxInstanceName, sandboxMounts, type SkillRunnerDeps } from "../../src/worker/skill-runner.ts";
+import { noneAdapter } from "../../src/sandbox/none.ts";
+import type { SandboxSelection } from "../../src/sandbox/select.ts";
+import type { SandboxDenial } from "../../src/sandbox/types.ts";
 import type { SpawnClaudeOpts, SpawnClaudeResult } from "../../src/core/spawn-claude.ts";
 import { resolveRepoPath, v2RunDir } from "../../src/core/paths.ts";
 import { ALLOWED_TOOLS as DEV_TOOLS } from "../../src/roles/dev/tools.ts";
@@ -193,5 +196,124 @@ describe("makeRunSkill", () => {
     };
     await makeRunSkill(deps())({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
     expect(await readFile(join(resolveRepoPath(runDir("dev")), "usage.json"), "utf8")).toBe("{}");
+  });
+
+  describe("sandbox", () => {
+    const fakeAdapter = { ...noneAdapter, name: "fake" };
+    const sel = (mode: "enforce" | "discover"): SandboxSelection => ({ adapter: fakeAdapter, mode, config: { k: 1 } });
+    const denied: SandboxDenial[] = [{ kind: "network", target: "evil.example" }];
+    const withReport = (d: SandboxDenial[], extra: Partial<SpawnClaudeResult> = {}): SpawnClaudeResult => ({
+      ...okRun(),
+      ...extra,
+      sandbox: { adapter: "fake", instance: "dl-x", prepare_ms: 5, report: { denied: d, approveHint: "approve evil.example" } },
+    });
+    const writeVerdict = async () => {
+      await writeFile(join(resolveRepoPath(runDir("dev")), "verdict.json"), '{"outcome":"landed"}', "utf8");
+    };
+
+    it("without deps.sandbox, spawn opts have no sandbox key at all", async () => {
+      await makeRunSkill(deps())({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(Object.hasOwn(spawned[0], "sandbox")).toBe(false);
+    });
+
+    it("with a selection, spawn opts carry the adapter, instance name, mounts and adapter config", async () => {
+      await makeRunSkill(deps({ sandbox: sel("enforce"), shortId: () => "a1b2c3" }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(spawned[0].sandbox).toEqual({
+        adapter: fakeAdapter,
+        run: { instanceName: "dl-tars-1-dev-a1b2c3", mounts: ["/abs/dev-loop", repo], config: { k: 1 } },
+      });
+    });
+
+    it("the default shortId is 6 lowercase hex chars", async () => {
+      await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(spawned[0].sandbox!.run.instanceName).toMatch(/^dl-tars-1-dev-[0-9a-f]{6}$/);
+    });
+
+    it("the running line names the sandbox instance only when a sandbox is attached", async () => {
+      const lines: string[] = [];
+      await makeRunSkill(deps({ log: (m) => void lines.push(m) }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      await makeRunSkill(deps({ log: (m) => void lines.push(m), sandbox: sel("enforce"), shortId: () => "a1b2c3" }))({
+        role: "dev",
+        ticketKey: "TARS-1",
+        runDir: runDir("dev"),
+        maxBudgetUsd: 20,
+      });
+      const running = lines.filter((l) => l.includes(": running"));
+      expect(running).toEqual([
+        `[ticket-to-pr] TARS-1: running (run dir ${runDir("dev")}, budget $20)...`,
+        `[ticket-to-pr] TARS-1: running in dl-tars-1-dev-a1b2c3 (run dir ${runDir("dev")}, budget $20)...`,
+      ]);
+    });
+
+    it("enforce + denied report: parked, verdictRaw undefined, verdict.json not read", async () => {
+      result = withReport(denied);
+      onSpawn = writeVerdict;
+      const lines: string[] = [];
+      const r = await makeRunSkill(deps({ sandbox: sel("enforce"), log: (m) => void lines.push(m), logError: (m) => void lines.push(m) }))({
+        role: "dev",
+        ticketKey: "TARS-1",
+        runDir: runDir("dev"),
+        maxBudgetUsd: 20,
+      });
+      expect(r.verdictRaw).toBeUndefined();
+      expect(r.parked).toEqual({ denied, approveHint: "approve evil.example" });
+      expect(r).toMatchObject({ costUsd: 1.5, tokens: { in: 10, out: 5 }, started: okRun().started, ended: okRun().ended, skillVersion: "sha-d", model: "sonnet" });
+      expect(lines).toContain("[ticket-to-pr] TARS-1: sandbox refused network evil.example; parking");
+    });
+
+    it("discover + denied report: reads verdict.json normally, no parked", async () => {
+      result = withReport(denied);
+      onSpawn = writeVerdict;
+      const lines: string[] = [];
+      const r = await makeRunSkill(deps({ sandbox: sel("discover"), log: (m) => void lines.push(m), logError: (m) => void lines.push(m) }))({
+        role: "dev",
+        ticketKey: "TARS-1",
+        runDir: runDir("dev"),
+        maxBudgetUsd: 20,
+      });
+      expect(r.verdictRaw).toContain('"outcome":"landed"');
+      expect(r.parked).toBeUndefined();
+      expect(lines).toContain("[ticket-to-pr] TARS-1: sandbox refused network evil.example; discover mode, not parking");
+    });
+
+    it("enforce + prepare failure (spawnError + infra denial): parked, not the agent_error early result", async () => {
+      const infra: SandboxDenial[] = [{ kind: "infra", target: "prepare" }];
+      for (const role of ["dev", "research"] as const) {
+        result = withReport(infra, { spawnError: "sandbox prepare failed: boom" });
+        const r = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role, ticketKey: "TARS-1", runDir: runDir(role), maxBudgetUsd: 20 });
+        expect(r.verdictRaw).toBeUndefined();
+        expect(r.parked?.denied).toEqual(infra);
+      }
+    });
+
+    it("enforce + empty denied report: normal path, no parked", async () => {
+      result = withReport([]);
+      onSpawn = writeVerdict;
+      const r = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(r.verdictRaw).toContain('"outcome":"landed"');
+      expect(r.parked).toBeUndefined();
+    });
+  });
+});
+
+describe("sandboxInstanceName", () => {
+  it("is dl-<ticket lowercased>-<role>-<shortId>", () => {
+    expect(sandboxInstanceName("TARS-12", "dev", "a1b2c3")).toBe("dl-tars-12-dev-a1b2c3");
+    expect(sandboxInstanceName("TARS-12", "research", "00ff00")).toBe("dl-tars-12-research-00ff00");
+  });
+});
+
+describe("sandboxMounts", () => {
+  it("an outside checkout gives both paths", () => {
+    expect(sandboxMounts("/abs/dev-loop", "/abs/checkout")).toEqual(["/abs/dev-loop", "/abs/checkout"]);
+  });
+  it("an inside clone gives only the root", () => {
+    expect(sandboxMounts("/abs/dev-loop", "/abs/dev-loop/.pipeline/v2/x/repo")).toEqual(["/abs/dev-loop"]);
+  });
+  it("the same path twice gives one", () => {
+    expect(sandboxMounts("/abs/dev-loop", "/abs/dev-loop")).toEqual(["/abs/dev-loop"]);
+  });
+  it("a sibling sharing a name prefix is not inside", () => {
+    expect(sandboxMounts("/abs/dev-loop", "/abs/dev-loop-other")).toEqual(["/abs/dev-loop", "/abs/dev-loop-other"]);
   });
 });
