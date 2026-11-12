@@ -3,9 +3,11 @@
 // .pipeline/v1/<role>/<slug>/). Dry run by default.
 //   node scripts/migrate-v1-folders.mjs --dev-root <path> --research-root <path> [--write]
 // Never touches runs/v2 or .pipeline/v2. Uses rename only (no copy fallback).
-// Test seam: CUTOVER_PGREP overrides the pgrep executable.
+// Test seams: CUTOVER_PGREP overrides the pgrep executable;
+// CUTOVER_FAKE_OTHER_DEVICE=<path> makes sources under that path report a
+// different device id in the cross-volume pre-check.
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, renameSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync, renameSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 function parse(argv) {
@@ -42,9 +44,15 @@ function entries(dir, keep) {
 export function plan(devRoot, researchRoot) {
   const moves = [];
   const jsonl = (n) => n.endsWith(".jsonl");
-  const slug = (root) => (n) => !["v1", "v2"].includes(n) && statSync(join(root, ".pipeline", n)).isDirectory();
+  // lstat: a dangling symlink must not crash the run; links move as links.
+  const kind = (p) => lstatSync(p);
+  const slug = (root) => (n) => {
+    if (["v1", "v2"].includes(n)) return false;
+    const st = kind(join(root, ".pipeline", n));
+    return st.isDirectory() || st.isSymbolicLink();
+  };
   for (const [root, role] of [[devRoot, "dev"], [researchRoot, "research"]]) {
-    for (const n of entries(join(root, "runs"), (n) => jsonl(n) && statSync(join(root, "runs", n)).isFile()))
+    for (const n of entries(join(root, "runs"), (n) => jsonl(n) && (kind(join(root, "runs", n)).isFile() || kind(join(root, "runs", n)).isSymbolicLink())))
       moves.push([join(root, "runs", n), join(devRoot, "runs", "v1", role, n)]);
     for (const n of entries(join(root, ".pipeline"), slug(root)))
       moves.push([join(root, ".pipeline", n), join(devRoot, ".pipeline", "v1", role, n)]);
@@ -52,13 +60,31 @@ export function plan(devRoot, researchRoot) {
   return moves.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
 }
 
+function deviceOf(p) {
+  const fake = process.env.CUTOVER_FAKE_OTHER_DEVICE;
+  const dev = lstatSync(p).dev;
+  return fake && (p === fake || p.startsWith(fake + "/")) ? dev + 1 : dev;
+}
+
+function nearestExisting(p) {
+  while (!existsSync(p) && dirname(p) !== p) p = dirname(p);
+  return p;
+}
+
 function main() {
   const o = parse(process.argv.slice(2));
+  if (realpathSync(o.dev) === realpathSync(o.research)) {
+    console.error("Refusing: --dev-root and --research-root are the same directory");
+    process.exit(1);
+  }
   const moves = plan(o.dev, o.research);
   for (const [from, to] of moves) console.log(`move ${from} -> ${to}`);
-  if (!o.write) return;
-
   const loops = runningLoops();
+  if (!o.write) {
+    if (loops.length > 0)
+      console.log(`WARNING: a loop process (src/main.ts) is running; --write will refuse until it stops:\n${loops.join("\n")}`);
+    return;
+  }
   if (loops.length > 0) {
     console.error(`Refusing: a loop process (src/main.ts) is running:\n${loops.join("\n")}`);
     process.exit(1);
@@ -66,6 +92,11 @@ function main() {
   const clash = moves.filter(([, to]) => existsSync(to));
   if (clash.length > 0) {
     for (const [, to] of clash) console.error(`Refusing: destination exists: ${to}`);
+    process.exit(1);
+  }
+  const cross = moves.filter(([from, to]) => deviceOf(from) !== lstatSync(nearestExisting(dirname(to))).dev);
+  if (cross.length > 0) {
+    for (const [from, to] of cross) console.error(`Refusing: ${from} is on a different filesystem than ${to}; rename cannot cross volumes`);
     process.exit(1);
   }
   for (const [from, to] of moves) {

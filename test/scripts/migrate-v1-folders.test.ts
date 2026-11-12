@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, symlink, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -109,6 +109,49 @@ describe("scripts/migrate-v1-folders.mjs", () => {
     expect(r.code).not.toBe(0);
     expect(r.stderr).toContain("src/main.ts");
     expect(await snapshot(tmp)).toEqual(before);
+  });
+
+  it("refuses when both roots resolve to the same directory (even via symlink)", async () => {
+    const alias = join(tmp, "alias");
+    await symlink(dev, alias);
+    const r = await run("node", [SCRIPT, "--dev-root", dev, "--research-root", alias], {
+      env: { ...process.env, CUTOVER_PGREP: noLoop },
+    }).then((x) => ({ code: 0, ...x }), (e) => ({ code: e.code as number, stdout: e.stdout as string, stderr: e.stderr as string }));
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toContain("same directory");
+    expect(r.stdout).toBe("");
+  });
+
+  it("refuses the whole run before moving anything when a source is on another device", async () => {
+    const before = await snapshot(tmp);
+    const r = await run("node", [SCRIPT, "--dev-root", dev, "--research-root", research, "--write"], {
+      env: { ...process.env, CUTOVER_PGREP: noLoop, CUTOVER_FAKE_OTHER_DEVICE: research },
+    }).then((x) => ({ code: 0, ...x }), (e) => ({ code: e.code as number, stdout: e.stdout as string, stderr: e.stderr as string }));
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toContain("different filesystem");
+    expect(await snapshot(tmp)).toEqual(before);
+  });
+
+  it("dry run still prints the plan and warns (exit 0) when a loop is running", async () => {
+    const before = await snapshot(tmp);
+    const r = await go([], loop);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(`move ${dev}/runs/webtarsthree.jsonl`);
+    expect(r.stdout).toContain("WARNING");
+    expect(r.stdout).toContain("--write will refuse");
+    expect(await snapshot(tmp)).toEqual(before);
+  });
+
+  it("handles dangling symlinks: no crash, moved as links", async () => {
+    await symlink(join(tmp, "nowhere"), join(dev, "runs/dangling.jsonl"));
+    await symlink(join(tmp, "nowhere"), join(dev, ".pipeline/dangling-slug"));
+    const dry = await go([], noLoop);
+    expect(dry.code).toBe(0);
+    expect(dry.stdout).toContain("runs/dangling.jsonl");
+    const r = await go(["--write"], noLoop);
+    expect(r.code).toBe(0);
+    expect((await lstat(join(dev, "runs/v1/dev/dangling.jsonl"))).isSymbolicLink()).toBe(true);
+    expect((await lstat(join(dev, ".pipeline/v1/dev/dangling-slug"))).isSymbolicLink()).toBe(true);
   });
 
   it("requires both roots", async () => {
