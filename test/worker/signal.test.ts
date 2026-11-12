@@ -199,3 +199,89 @@ describe("stopping (post-merge fix 3: the cycle freezes once a signal is receive
     expect(exit).toHaveBeenCalledWith(143);
   });
 });
+
+describe("stopping with a lock write already in flight (fix 3 round 1, I1)", () => {
+  /** A promise resolved (or rejected) on demand. */
+  const deferred = () => {
+    let resolve: () => void = () => {};
+    let reject: (e: Error) => void = () => {};
+    const promise = new Promise<void>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+  /** Whether `p` settles within a few macrotask turns. */
+  const settles = async (p: Promise<unknown>): Promise<"settled" | "pending"> => {
+    const sentinel = new Promise<"pending">((r) => setTimeout(() => r("pending"), 20));
+    return Promise.race([p.then(() => "settled" as const, () => "settled" as const), sentinel]);
+  };
+  /** The fake's next setInFlight waits for `d` before it lands (or throws). */
+  const holdNext = (fake: ReturnType<typeof makeSession>, d: ReturnType<typeof deferred>) =>
+    fake.setInFlight.mockImplementationOnce(async (f: typeof FLIGHT | null) => {
+      await d.promise;
+      fake.current = f;
+    });
+
+  it("(i) a clear in flight when the signal arrives: onSignal waits for it and releases; the cycle freezes", async () => {
+    const fake = makeSession();
+    const t = trackSession(fake as unknown as Session);
+    await t.session.setInFlight(FLIGHT);
+    const d = deferred();
+    holdNext(fake, d);
+    const cycleClear = t.session.setInFlight(null);
+    const exit = vi.fn();
+
+    const stop = stopOnSignal("SIGTERM", { tracked: t, killChild: async () => "none", exit });
+    d.resolve();
+    await stop;
+
+    expect(fake.release).toHaveBeenCalledTimes(1);
+    expect(fake.current).toBeNull();
+    expect(fake.setInFlight.mock.calls.map((c) => c[0])).toEqual([FLIGHT, null]);
+    expect(await settles(cycleClear)).toBe("pending");
+    expect(exit).toHaveBeenCalledWith(143);
+  });
+
+  it("(ii) a set in flight when the signal arrives: the lock ends interrupted, no release; the cycle freezes", async () => {
+    const fake = makeSession();
+    const t = trackSession(fake as unknown as Session);
+    const d = deferred();
+    holdNext(fake, d);
+    const cycleSet = t.session.setInFlight(FLIGHT);
+
+    const stop = stopOnSignal("SIGINT", { tracked: t, killChild: async () => "none", exit: () => {} });
+    d.resolve();
+    await stop;
+
+    expect(fake.current).toEqual({ ...FLIGHT, interrupted: true });
+    expect(fake.release).not.toHaveBeenCalled();
+    expect(await settles(cycleSet)).toBe("pending");
+  });
+
+  it("a set in flight that fails: onSignal swallows it and decides from the last landed state; the cycle freezes", async () => {
+    const fake = makeSession();
+    const t = trackSession(fake as unknown as Session);
+    const d = deferred();
+    fake.setInFlight.mockImplementationOnce(async () => {
+      await d.promise;
+    });
+    const cycleSet = t.session.setInFlight(FLIGHT);
+
+    const stop = stopOnSignal("SIGTERM", { tracked: t, killChild: async () => "none", exit: () => {} });
+    d.reject(new Error("session lock lost"));
+    await stop;
+
+    expect(fake.release).toHaveBeenCalledTimes(1);
+    expect(await settles(cycleSet)).toBe("pending");
+  });
+});
+
+describe("isStopping (fix 3 round 1, M1)", () => {
+  it("is false until beginStop, then true", () => {
+    const t = trackSession(makeSession() as unknown as Session);
+    expect(t.isStopping()).toBe(false);
+    t.beginStop();
+    expect(t.isStopping()).toBe(true);
+  });
+});
