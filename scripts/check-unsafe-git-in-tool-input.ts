@@ -39,13 +39,32 @@
  *      (`GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_PARAMETERS`, ...) whose value
  *      mentions `hookspath` (any case). A `GIT_CONFIG_PARAMETERS` or
  *      `GIT_CONFIG_KEY_<n>` value only known at run time is unverifiable.
- *   2b. Any other command name is not unwrapped. If its arguments contain
+ *   2b. Variables set without an assignment word: `printf -v NAME`, `read
+ *      [-a] NAME...`, `mapfile`/`readarray [NAME]` naming HUSKY or
+ *      HUSKY_SKIP_HOOKS are denied; naming GIT_CONFIG_PARAMETERS or
+ *      GIT_CONFIG_KEY_<n> is unverifiable (the value is only known at run
+ *      time). This runs before the NEVER_EXECUTES_ARGS exemption below
+ *      (`printf` is in it). A `mapfile -C <callback>` is analyzed as a script.
+ *   2c. Any other command name is not unwrapped. If its arguments contain
  *      a `git` word followed later by `push` or `commit`, or a `gh` word
  *      followed later by `stack` (`npx git push`, `npm exec -- git commit`,
- *      `pnpm exec`, `yarn`, ...), the command is unverifiable (exit 2): this
- *      checker cannot know whether that command runs its arguments.
- *      Commands that never run their arguments (`echo`, `printf`, `grep`,
- *      `rg`, `cat`, `jq`, ...: NEVER_EXECUTES_ARGS) are exempt.
+ *      `pnpm exec`, `yarn`, ...), or any single argument, tokenized as a
+ *      script of its own, contains such a call (`watch 'git push -f'`, `ssh
+ *      host '...'`, `npx sh -c '...'`, `tmux new '...'`; an argument that
+ *      does not tokenize falls back to a substring test), the command is
+ *      unverifiable (exit 2): this checker cannot know whether that command
+ *      runs its arguments. Commands that never run their arguments (`echo`,
+ *      `printf`, `grep`, `rg`, `cat`, `jq`, ...: NEVER_EXECUTES_ARGS) are
+ *      exempt, and so is git's own argument list (`git commit -m '...'` is
+ *      parsed by the git rules below).
+ *   2d. A shell (`bash`/`sh`/...) with no `-c` and no script-file operand
+ *      (or with `-s` / `-`) reads its script from stdin. A here-string, a
+ *      heredoc (quoted body as is; an unquoted body only when it has no `$`
+ *      or backtick expansions), or a pipe from a literal `echo`/`printf`
+ *      (no expansions, no backslash escapes, no `%` directives, no `echo
+ *      -e`) is analyzed as a script by content. Any other stdin (a file
+ *      redirect, `cat f |`, `curl ... |`, another producer, a compound
+ *      command, an inherited stdin, a shell run by xargs) is unverifiable.
  *   3. `git` is parsed past its global options (`-C`, `-c`, `--git-dir`,
  *      ...) to the subcommand. `push` and `commit` get an argument parser
  *      that knows which of their options take a value, so `-n` is denied
@@ -66,12 +85,8 @@
  *   - Disabling the hooks on disk: `rm -rf .git/hooks`, `rm .husky/pre-push`,
  *     `chmod -x .husky/pre-commit`, overwriting a hook file with an editor
  *     or `>` redirection, editing `.git/config` directly.
- *   - A guarded call hidden in one quoted argument of an unknown wrapper
- *     (`npx sh -c 'git push -f'`, `watch 'git push -f'`, `ssh host '...'`),
- *     a script piped or redirected into a shell (`echo ... | sh`, `bash <<<`),
- *     variables set without an assignment word (`printf -v HUSKY`, `read`),
- *     and git's own exec hooks (`rebase --exec`, `submodule foreach`,
- *     `bisect run`).
+ *   - git's own exec hooks (`rebase --exec`, `submodule foreach`, `bisect
+ *     run`), and a shell given a script-file operand (`bash script.sh`).
  *   - Anything whose text only exists at run time beyond the cases above
  *     (a command read from a file, `source`d scripts, aliases defined
  *     elsewhere).
@@ -114,6 +129,28 @@ interface PendingHeredoc {
   delimiter: string;
   stripTabs: boolean;
   quoted: boolean;
+  /** Filled in once the body has been read (tabs already stripped for `<<-`). */
+  body?: string;
+}
+
+/**
+ * Where a simple command's stdin comes from, as far as the tokenizer can
+ * tell. `inherit` is also used for "unknown" (inside a `( )` subshell, after
+ * a reserved word): a shell reading a script from it is unverifiable.
+ */
+type Stdin =
+  | { kind: "inherit" }
+  | { kind: "file" }
+  | { kind: "herestring"; word: Word }
+  | { kind: "heredoc"; doc: PendingHeredoc }
+  /** `from` is the producer's words, or null when it was a compound command (`( )`, `{ }`, ...). */
+  | { kind: "pipe"; from: Word[] | null };
+
+const INHERIT: Stdin = { kind: "inherit" };
+
+interface SimpleCommand {
+  words: Word[];
+  stdin: Stdin;
 }
 
 /**
@@ -125,19 +162,19 @@ class Tokenizer {
   private pendingHeredocs: PendingHeredoc[] = [];
 
   private readonly s: string;
-  readonly commands: Word[][];
+  readonly commands: SimpleCommand[];
   private readonly depth: number;
 
   // Plain fields, not parameter properties: Node runs this file with
   // type-stripping only, which rejects parameter properties.
-  constructor(s: string, commands: Word[][] = [], depth = 0) {
+  constructor(s: string, commands: SimpleCommand[] = [], depth = 0) {
     if (depth > 32) throw new Unverifiable("nesting too deep");
     this.s = s;
     this.commands = commands;
     this.depth = depth;
   }
 
-  run(): Word[][] {
+  run(): SimpleCommand[] {
     this.parseList(null);
     return this.commands;
   }
@@ -149,30 +186,42 @@ class Tokenizer {
   parseList(stop: ")" | null): void {
     const s = this.s;
     let cur: Word[] = [];
+    let curStdin: Stdin = INHERIT;
     let w: WordBuilder | null = null;
     let subshellDepth = 0;
-    let dropNextWord = false; // redirection target / here-string
-    let heredocNext: { stripTabs: boolean } | null = null;
+    // The next word is a redirection target ("drop"), or a here-string fed to stdin ("herestring").
+    let redirectTarget: "drop" | "herestring" | null = null;
+    let heredocNext: { stripTabs: boolean; toStdin: boolean } | null = null;
 
     const endWord = (): void => {
       if (w === null) return;
       const word = w.finish();
       w = null;
       if (heredocNext !== null) {
-        this.pendingHeredocs.push({ delimiter: word.value, stripTabs: heredocNext.stripTabs, quoted: word.quoted });
+        const doc: PendingHeredoc = { delimiter: word.value, stripTabs: heredocNext.stripTabs, quoted: word.quoted };
+        this.pendingHeredocs.push(doc);
+        if (heredocNext.toStdin) curStdin = { kind: "heredoc", doc };
         heredocNext = null;
         return;
       }
-      if (dropNextWord) {
-        dropNextWord = false;
+      if (redirectTarget !== null) {
+        if (redirectTarget === "herestring") curStdin = { kind: "herestring", word };
+        redirectTarget = null;
         return;
       }
       cur.push(word);
     };
     const endCommand = (): void => {
       endWord();
-      if (cur.length > 0) this.commands.push(cur);
+      if (cur.length > 0) {
+        // A pipe into `{ ...; }`, `if`, `while`, ...: a redirect on the compound
+        // command (`{ sh; } < f`) can replace it, and the tokenizer does not
+        // track that: unknown.
+        const intoCompound = curStdin.kind === "pipe" && RESERVED.has(cur[0].value) && !cur[0].quoted && !cur[0].expansion;
+        this.commands.push({ words: cur, stdin: intoCompound ? INHERIT : curStdin });
+      }
       cur = [];
+      curStdin = INHERIT;
     };
     const word = (): WordBuilder => (w ??= new WordBuilder());
 
@@ -219,7 +268,10 @@ class Tokenizer {
         continue;
       }
       if (c === "\n") {
+        // `a |<newline>b` is still one pipeline.
+        const pendingPipe = cur.length === 0 && w === null && curStdin.kind === "pipe" ? curStdin : null;
         endCommand();
+        if (pendingPipe !== null) curStdin = pendingPipe;
         this.pos += 1;
         this.readHeredocBodies();
         continue;
@@ -233,10 +285,24 @@ class Tokenizer {
         endWord();
         this.pos += 2;
         if (s[this.pos] === ">") this.pos += 1;
-        dropNextWord = true;
+        redirectTarget = "drop";
         continue;
       }
-      if (c === ";" || c === "&" || c === "|") {
+      if (c === "|" && next !== "|") {
+        // A pipe (`|` or `|&`): the next command's stdin is this command's output.
+        endWord();
+        const producer = cur.length > 0 ? cur : null;
+        endCommand();
+        curStdin = { kind: "pipe", from: producer };
+        this.pos += next === "&" ? 2 : 1;
+        continue;
+      }
+      if (c === "|") {
+        endCommand();
+        this.pos += 2; // `||`
+        continue;
+      }
+      if (c === ";" || c === "&") {
         endCommand();
         this.pos += 1;
         continue;
@@ -259,8 +325,12 @@ class Tokenizer {
       }
       if (c === "<" || c === ">") {
         // `2>`: a bare digit word right before a redirection is its fd.
-        if (w !== null && /^\d+$/.test(w.value) && !w.quoted && !w.expansion) w = null;
-        else endWord();
+        let fd: string | null = null;
+        if (w !== null && /^\d+$/.test(w.value) && !w.quoted && !w.expansion) {
+          fd = w.value;
+          w = null;
+        } else endWord();
+        const toStdin = c === "<" ? fd === null || /^0+$/.test(fd) : fd !== null && /^0+$/.test(fd);
         if (next === "(") {
           // Process substitution: its contents run as commands.
           this.pos += 2;
@@ -271,19 +341,20 @@ class Tokenizer {
         }
         if (s.startsWith("<<<", this.pos)) {
           this.pos += 3;
-          dropNextWord = true;
+          redirectTarget = toStdin ? "herestring" : "drop";
           continue;
         }
         if (s.startsWith("<<", this.pos)) {
           this.pos += 2;
           const stripTabs = s[this.pos] === "-";
           if (stripTabs) this.pos += 1;
-          heredocNext = { stripTabs };
+          heredocNext = { stripTabs, toStdin };
           continue;
         }
         this.pos += 1;
         while (this.pos < s.length && ">&|".includes(s[this.pos])) this.pos += 1;
-        dropNextWord = true;
+        if (toStdin) curStdin = { kind: "file" }; // `< f`, `0< f`, `<> f`, `<&3`: a script only known at run time
+        redirectTarget = "drop";
         continue;
       }
       word().add(c);
@@ -419,9 +490,11 @@ class Tokenizer {
         const end = nl === -1 ? s.length : nl;
         const line = s.slice(this.pos, end);
         this.pos = nl === -1 ? s.length : nl + 1;
-        if ((doc.stripTabs ? line.replace(/^\t+/, "") : line) === doc.delimiter) break;
-        body += line + "\n";
+        const stripped = doc.stripTabs ? line.replace(/^\t+/, "") : line;
+        if (stripped === doc.delimiter) break;
+        body += stripped + "\n";
       }
+      doc.body = body;
       if (!doc.quoted) this.scanForSubstitutions(body);
     }
     this.pendingHeredocs = [];
@@ -481,7 +554,7 @@ function mentionsGuardedVerb(words: Word[]): boolean {
 export function analyzeScript(script: string, depth = 0): string | null {
   if (depth > 16) throw new Unverifiable("nesting too deep");
   for (const command of new Tokenizer(script, [], depth).run()) {
-    const violation = analyzeCommand(command, depth);
+    const violation = analyzeCommand(command.words, depth, false, command.stdin);
     if (violation !== null) return violation;
   }
   return null;
@@ -534,6 +607,114 @@ function hidesGuardedCall(words: Word[]): boolean {
   return gh !== -1 && words.slice(gh + 1).some((w) => w.value === "stack");
 }
 
+/** Fallback for argument text that does not tokenize as a script. */
+const GUARDED_CALL_TEXT = /\bgit\b[\s\S]*\b(push|commit)\b|\bgh\b[\s\S]*\bstack\b/;
+/** Characters that make one argument word worth re-tokenizing as a script of its own. */
+const SCRIPT_CHARS = /[\s;&|'"`$\\()<>]/;
+
+/**
+ * One argument of an unknown wrapper, read as a shell script (`watch 'git
+ * push -f'`, `ssh host '...'`, `npx "bash -c '...'"`): does it hide a git
+ * push/commit or gh stack? Words of the tokenized script that could
+ * themselves be scripts are checked the same way. Text that does not
+ * tokenize falls back to a substring test.
+ */
+function argHidesGuardedCall(value: string, depth: number, level = 0): boolean {
+  if (level > 8) return true; // fail closed: the cap on nested quoting is unreachable by any real argument
+  let commands: SimpleCommand[];
+  try {
+    commands = new Tokenizer(value, [], depth).run();
+  } catch {
+    return GUARDED_CALL_TEXT.test(value);
+  }
+  for (const { words } of commands) {
+    if (hidesGuardedCall(words)) return true;
+    if (words[0]?.leadingExpansion && mentionsGuardedVerb(words.slice(1))) return true;
+    for (const w of words) if (w.value !== value && SCRIPT_CHARS.test(w.value) && argHidesGuardedCall(w.value, depth + 1, level + 1)) return true;
+  }
+  return false;
+}
+
+/**
+ * A2: builtins that set a variable without an assignment word: `printf -v
+ * NAME`, `read [-a] NAME...`, `mapfile`/`readarray [NAME]` (and mapfile's
+ * `-C callback`, which runs as shell code). Each name gets the same
+ * HUSKY / GIT_CONFIG_* rules as an assignment, with its value unknown.
+ */
+const READ_VALUE_OPTS = "adinNptu";
+const MAPFILE_VALUE_OPTS = "dnOsuCc";
+
+function checkSetName(w: Word): string | null {
+  if (w.leadingExpansion) throw new Unverifiable("a variable name only known at run time");
+  const name = w.value.replace(/[[?].*$/s, ""); // `NAME[0]` sets NAME too; zsh `read NAME?prompt`
+  if (HUSKY_VAR.test(name)) return `${name} env (hook bypass)`;
+  if (/^GIT_CONFIG_(PARAMETERS|KEY_\d+)$/.test(name)) throw new Unverifiable(`a ${name} value only known at run time`);
+  return null;
+}
+
+/**
+ * Walks `-xVALUE` / `-x VALUE` style options (value-taking letters in
+ * `valueOpts`), calling `onValue` for each option value. Returns the index of
+ * the first operand.
+ */
+function walkShortOptions(args: Word[], valueOpts: string, onValue: (opt: string, value: Word) => string | null): { end: number; violation: string | null } {
+  let j = 0;
+  while (j < args.length) {
+    const v = args[j].value;
+    if (v === "--") return { end: j + 1, violation: null };
+    if (!v.startsWith("-") || v === "-") break;
+    let next = j + 1;
+    for (let k = 1; k < v.length; k++) {
+      if (!valueOpts.includes(v[k])) continue;
+      const attached = v.slice(k + 1);
+      // `-v$X`: the attached value starts with a run-time expansion.
+      const runTime = args[j].expansion && (attached === "" || !args[j].leadingExpansion);
+      const value = attached !== "" || args[j].expansion ? { ...args[j], value: attached, leadingExpansion: runTime } : args[j + 1];
+      if (attached === "" && !args[j].expansion) next = j + 2;
+      if (value !== undefined) {
+        const violation = onValue(v[k], value);
+        if (violation !== null) return { end: next, violation };
+      }
+      break;
+    }
+    j = next;
+  }
+  return { end: j, violation: null };
+}
+
+function analyzeVarSetter(name: string, args: Word[], depth: number): string | null {
+  // `printf $OPT HUSKY 0`: an option word only known at run time could be `-v`.
+  if (args.some((a) => a.leadingExpansion) && args.some((a) => /HUSKY|GIT_CONFIG_/.test(a.value))) {
+    throw new Unverifiable(`a ${name} option only known at run time`);
+  }
+  if (name === "printf") {
+    const { violation } = walkShortOptions(args, "v", (_opt, value) => checkSetName(value));
+    return violation;
+  }
+  if (name === "read") {
+    const { end, violation } = walkShortOptions(args, READ_VALUE_OPTS, (opt, value) => (opt === "a" ? checkSetName(value) : null));
+    if (violation !== null) return violation;
+    for (const a of args.slice(end)) {
+      const v = checkSetName(a);
+      if (v !== null) return v;
+    }
+    return null;
+  }
+  // mapfile / readarray
+  const { end, violation } = walkShortOptions(args, MAPFILE_VALUE_OPTS, (opt, value) => {
+    if (opt !== "C") return null;
+    if (value.expansion) throw new Unverifiable("a mapfile callback only known at run time");
+    const rule = analyzeScript(value.value, depth + 1);
+    if (rule !== null) return rule;
+    // The callback runs with arguments read from the input appended.
+    if (argHidesGuardedCall(value.value, depth + 1)) throw new Unverifiable("git push/commit or gh stack in a mapfile callback");
+    return null;
+  });
+  if (violation !== null) return violation;
+  const array = args[end];
+  return array === undefined ? null : checkSetName(array);
+}
+
 /** `find ... -exec|-execdir|-ok|-okdir <cmd...> ;|+`: each exec'd command, analyzed like xargs's. */
 function analyzeFind(args: Word[], depth: number): string | null {
   for (let j = 0; j < args.length; j++) {
@@ -547,7 +728,7 @@ function analyzeFind(args: Word[], depth: number): string | null {
   return null;
 }
 
-function analyzeCommand(words: Word[], depth: number, viaXargs = false): string | null {
+function analyzeCommand(words: Word[], depth: number, viaXargs = false, stdin: Stdin = INHERIT): string | null {
   let i = 0;
   while (i < words.length) {
     const w = words[i];
@@ -573,16 +754,16 @@ function analyzeCommand(words: Word[], depth: number, viaXargs = false): string 
   }
   const name = basename(head.value);
 
-  if (name === "env") return analyzeEnv(rest, depth);
+  if (name === "env") return analyzeEnv(rest, depth, stdin);
   if (DECLARERS.has(name)) return analyzeDeclare(rest);
   if (name === "direnv") {
     // `direnv exec <dir> <cmd...>` runs <cmd> (Ruling 31's spelling); every other subcommand is not a wrapper.
     if (rest[0]?.value !== "exec" || rest.length < 3) return null;
-    return analyzeCommand(rest.slice(2), depth, viaXargs);
+    return analyzeCommand(rest.slice(2), depth, viaXargs, stdin);
   }
   if (name === "find") return analyzeFind(rest, depth);
   if (name === "eval") return analyzeScript(names(rest).join(" "), depth + 1);
-  if (SHELLS.has(name)) return analyzeShell(rest, depth);
+  if (SHELLS.has(name)) return analyzeShell(rest, depth, viaXargs, stdin);
   const wrapper = WRAPPERS[name];
   if (wrapper !== undefined) {
     let j = 0;
@@ -594,17 +775,24 @@ function analyzeCommand(words: Word[], depth: number, viaXargs = false): string 
       j += wrapper.valueOpts.has(rest[j].value) ? 2 : 1;
     }
     j += wrapper.skipPositionals ?? 0;
-    return analyzeCommand(rest.slice(j), depth, viaXargs || name === "xargs");
+    // The command xargs runs does not read xargs's stdin.
+    return analyzeCommand(rest.slice(j), depth, viaXargs || name === "xargs", name === "xargs" ? INHERIT : stdin);
   }
   if (name === "git") return analyzeGit(rest, depth, viaXargs);
   if (name === "gh") return analyzeGh(rest, depth, viaXargs);
-  if (!NEVER_EXECUTES_ARGS.has(name) && hidesGuardedCall(rest)) {
+  // Before the NEVER_EXECUTES_ARGS exemption: `printf -v` assigns.
+  if (name === "printf" || name === "read" || name === "mapfile" || name === "readarray") {
+    const violation = analyzeVarSetter(name, rest, depth);
+    if (violation !== null) return violation;
+  }
+  if (NEVER_EXECUTES_ARGS.has(name)) return null;
+  if (hidesGuardedCall(rest) || rest.some((a) => SCRIPT_CHARS.test(a.value) && argHidesGuardedCall(a.value, depth + 1))) {
     throw new Unverifiable(`git push/commit or gh stack inside ${name} (an unknown wrapper: run git/gh directly, or via direnv exec)`);
   }
   return null;
 }
 
-function analyzeEnv(args: Word[], depth: number): string | null {
+function analyzeEnv(args: Word[], depth: number, stdin: Stdin): string | null {
   let j = 0;
   const kept: Word[] = [];
   while (j < args.length) {
@@ -631,15 +819,22 @@ function analyzeEnv(args: Word[], depth: number): string | null {
     }
     break;
   }
-  return analyzeCommand([...kept, ...args.slice(j)], depth);
+  return analyzeCommand([...kept, ...args.slice(j)], depth, false, stdin);
 }
 
-function analyzeShell(args: Word[], depth: number): string | null {
+function analyzeShell(args: Word[], depth: number, viaXargs: boolean, stdin: Stdin): string | null {
   let hasC = false;
+  let readsStdin = false; // `-s`, or a `-` operand
+  let infoOnly = false; // `--version` / `--help`: runs no script
   let j = 0;
   for (; j < args.length; j++) {
     const v = args[j].value;
-    if (v === "--" || v === "-") {
+    if (v === "-") {
+      readsStdin = true;
+      j += 1;
+      break;
+    }
+    if (v === "--") {
       j += 1;
       break;
     }
@@ -647,20 +842,89 @@ function analyzeShell(args: Word[], depth: number): string | null {
       j += 1;
       continue;
     }
-    if (v.startsWith("--")) continue;
+    if (v.startsWith("--")) {
+      if (v === "--version" || v === "--help") infoOnly = true;
+      continue;
+    }
     if ((v.startsWith("-") || v.startsWith("+")) && v.length > 1) {
       if (v.slice(1).includes("c")) hasC = true;
+      if (v.startsWith("-") && v.slice(1).includes("s")) readsStdin = true;
       continue;
     }
     break;
   }
-  if (!hasC) return null; // a script file or stdin: not visible from here
+  if (!hasC) {
+    // A script-file operand: not visible from here (documented residual).
+    if (!readsStdin && args[j] !== undefined) return null;
+    // xargs supplies the operand, or the shell's stdin, at run time.
+    if (viaXargs) throw new Unverifiable("a shell run by xargs reads a script only known at run time");
+    if (infoOnly && !readsStdin) return null;
+    return analyzeStdinScript(stdin, depth);
+  }
   const script = args[j];
   if (script === undefined) return null;
   if (script.expansion && /push|commit|stack|hookspath/i.test(script.value)) {
     throw new Unverifiable("a -c script built at run time");
   }
   return analyzeScript(script.value, depth + 1);
+}
+
+/**
+ * A3: a shell with no `-c` and no script file reads its script from stdin.
+ * A here-string, a heredoc, or a pipe from a literal `echo`/`printf` is
+ * analyzed by content; anything else is unverifiable.
+ */
+function analyzeStdinScript(stdin: Stdin, depth: number): string | null {
+  const unknown = (what: string): never => {
+    throw new Unverifiable(`a shell reading its script from ${what} (only known at run time: use bash -c '<script>')`);
+  };
+  switch (stdin.kind) {
+    case "herestring":
+      if (stdin.word.expansion) unknown("a here-string built at run time");
+      return analyzeScript(stdin.word.value + "\n", depth + 1);
+    case "heredoc": {
+      const { body, quoted } = stdin.doc;
+      if (body === undefined) return unknown("an unterminated heredoc");
+      if (quoted) return analyzeScript(body, depth + 1);
+      // Unquoted: the shell expands `$...` / backticks before the script is parsed.
+      if (/[$`]/.test(body.replace(/\\[\s\S]/g, ""))) unknown("a heredoc with expansions");
+      return analyzeScript(body.replace(/\\([$`\\\n])/g, (_m, c: string) => (c === "\n" ? "" : c)), depth + 1);
+    }
+    case "pipe":
+      if (stdin.from === null) return unknown("a pipe from a compound command");
+      return analyzeScript(literalOutput(stdin.from) ?? unknown("a pipe from a command other than a literal echo/printf"), depth + 1);
+    case "file":
+      return unknown("a file redirect");
+    case "inherit":
+      return unknown("inherited stdin");
+  }
+}
+
+/** What a literal `echo`/`printf` writes, or null when that is not knowable from the command text. */
+function literalOutput(words: Word[]): string | null {
+  let start = 0;
+  while (start < words.length && RESERVED.has(words[start].value) && !words[start].quoted && !words[start].expansion) start += 1;
+  const producer = words.slice(start);
+  const head = producer[0];
+  if (head === undefined || head.expansion || producer.some((w) => w.expansion)) return null;
+  const name = basename(head.value);
+  const args = producer.slice(1).map((w) => w.value);
+  // Backslash escapes (`echo -e`, dash/zsh echo, printf) and printf `%` directives can spell anything.
+  if (args.some((a) => a.includes("\\"))) return null;
+  if (name === "echo") {
+    let k = 0;
+    while (k < args.length && /^-[neE]+$/.test(args[k])) {
+      if (args[k].includes("e")) return null;
+      k += 1;
+    }
+    return args.slice(k).join(" ") + "\n";
+  }
+  if (name === "printf") {
+    const format = args[0] === "--" ? args[1] : args[0];
+    if (format === undefined || format.startsWith("-") || format.includes("%")) return null;
+    return format;
+  }
+  return null;
 }
 
 const GIT_GLOBAL_WITH_VALUE = new Set(["-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--exec-path", "--list-cmds"]);
@@ -852,7 +1116,7 @@ function analyzeGh(args: Word[], depth: number, viaXargs: boolean): string | nul
     if (expansion.leadingExpansion) throw new Unverifiable("a gh alias expansion only known at run time");
     return expansion.value.startsWith("!")
       ? analyzeScript(expansion.value.slice(1), depth + 1)
-      : analyzeGh(new Tokenizer(expansion.value, [], depth + 1).run()[0] ?? [], depth + 1, false);
+      : analyzeGh(new Tokenizer(expansion.value, [], depth + 1).run()[0]?.words ?? [], depth + 1, false);
   }
   if (sub.value === "api") {
     const text = names(rest).join(" ");

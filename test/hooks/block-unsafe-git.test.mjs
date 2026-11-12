@@ -148,6 +148,8 @@ const DENY_BY_RULE = [
   "mapfile -t HUSKY_SKIP_HOOKS < f",
   "readarray HUSKY < f",
   "readarray -t -n 1 HUSKY < f",
+  "read 'HUSKY?go'",
+  "read -r HUSKY[0]",
   // A3: a script fed to a shell's stdin is analyzed by content
   "echo 'git push -f' | sh",
   "printf 'git push -f' | bash",
@@ -186,6 +188,8 @@ const UNVERIFIABLE = [
   "read GIT_CONFIG_PARAMETERS",
   "read -r GIT_CONFIG_KEY_0 < f",
   "mapfile GIT_CONFIG_PARAMETERS < f",
+  "printf -v$X 1",
+  "printf $O HUSKY 0",
   // A3: anything else feeding a shell's stdin
   "bash < script.sh",
   "sh 0< script.sh",
@@ -277,6 +281,8 @@ const ALLOW = [
   "read -r line < f",
   "printf -v out '%s' y",
   "mapfile -t lines < f",
+  "printf -v out '%s' \"$x\"",
+  "read 'ANSWER?go'",
   // A3: a stdin script whose content is safe, and a script-file operand
   "echo 'echo hi' | sh",
   "printf 'npm test' | bash",
