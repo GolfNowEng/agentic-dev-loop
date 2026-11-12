@@ -1,6 +1,7 @@
 // Cutover step: find tickets research-loop refined but never promoted, and
-// (with --write) add the project's dev trigger label so v1 dev-loop picks
-// them up. Dry run by default; never removes labels.
+// (with --write) add the project's dev trigger label (roles.dev.triggerLabel,
+// e.g. pipeline:v2.0.0:dev), which only the 2.0.0 dev poll matches. Dry run
+// by default; never removes labels.
 //   node --env-file=.env scripts/relabel-v1-refined.mjs --project <p> [--write --confirm <sha256>]
 // Env: JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_ASSIGNEE_ACCOUNT_ID.
 // Test seams: --root (where pipeline.<p>.config.json lives), CUTOVER_PGREP.

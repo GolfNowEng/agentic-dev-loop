@@ -3,6 +3,7 @@
   "permissions": {
     "deny": [
       "Edit(/.env*)",
+      "Read(/.env*)",
       "Edit(/.claude/settings*.json)",
       "Edit(/.claude/hooks/**)",
       "Edit(/scripts/check-*-in-tool-input.ts)"

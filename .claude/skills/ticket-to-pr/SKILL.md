@@ -561,7 +561,7 @@ reorder, or "improve" the title or body here.
    shell variable: the unsafe-git hook denies a push argument it can only
    know at run time.
    Read the file rather than invoking it as a skill: `Skill` is not in
-   `ALLOWED_TOOLS` (`src/main.ts`), so a nested skill call is unavailable
+   `ALLOWED_TOOLS` (`src/roles/dev/tools.ts`), so a nested skill call is unavailable
    in this headless run. That skill lives on the operator's machine, not in
    this repo. **If that file does not exist**, do not
    improvise your own push/`gh` steps (that would be a second copy of the

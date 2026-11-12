@@ -63,7 +63,9 @@ below names a v1 key, the mapping is: `jira.triggerLabel` (research) →
   to each role separately. `maxAttemptsPerTicket` (2) is the failed
   (error/killed) attempts per role per ticket before the worker moves it to
   Blocked, and `maxCostPerTicketUsd` (50) is a per-ticket cost cap across both
-  phases. Both are read by the worker (Task 13); nothing uses them yet.
+  phases. The worker enforces both: the attempt cap in `src/worker/attempts.ts`
+  and `src/worker/recover.ts`, the per-ticket cap as each spawn's
+  `--max-budget-usd` in `src/worker/cycle-steps.ts`.
 - **Labels and the version guard.** `webtarsthree` uses the v2 labels:
   research polls `pipeline:v2.0.0` and hands off to `pipeline:v2.0.0:dev`,
   which dev polls. Its dev poll has no assignee clause (the v2-only label
