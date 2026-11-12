@@ -159,6 +159,59 @@ describe("structure: skill prose (Ruling 24)", () => {
     });
   });
 
+  describe("ticket-to-pr: commit hooks that run the suite (Ruling 30)", () => {
+    const text = () => read("ticket-to-pr");
+    const section = (start: string, end: string) => {
+      const t = text();
+      const i = t.indexOf(start);
+      expect(i).toBeGreaterThan(-1);
+      return t.slice(i, t.indexOf(end, i + start.length));
+    };
+
+    it("Phase 0 records a baseline suite run on unmodified origin/<defaultBranch>", () => {
+      const p0 = section("### Phase 0", "### Phase 1");
+      expect(p0).toContain("Baseline suite");
+      expect(p0).toContain("baseline_failures");
+    });
+
+    it("Red commits the new tests marked expected-to-fail, and Green flips them back", () => {
+      const red = section("### Phase 2", "### Phase 3");
+      expect(red).toContain("it.fails");
+      expect(red).toContain("test.failing");
+      const green = section("### Phase 3", "### Phase 4");
+      expect(green).toMatch(/remove the expected-to-fail marker/i);
+    });
+
+    it("has a follow-up section that fixes pre-existing failures on their own branch and PR first", () => {
+      const fu = section("## Pre-existing failures blocking a hook", "## Cleanup");
+      expect(fu).toContain("mcp__atlassian__createJiraIssue");
+      expect(fu).toContain("mcp__atlassian__createIssueLink");
+      expect(fu).toMatch(/never add the pipeline trigger label/i);
+      expect(fu).toMatch(/-fix-preexisting-tests/);
+      expect(fu).toMatch(/off `?origin\/<targetRepo\.defaultBranch>`?/);
+    });
+
+    it("carries the committed fix into the ticket worktree unstaged, and proves it never enters the ticket's commits", () => {
+      const fu = section("## Pre-existing failures blocking a hook", "## Cleanup");
+      expect(fu).toMatch(/git apply/);
+      expect(fu).toMatch(/git apply -R/);
+      expect(fu).toMatch(/git diff --cached --name-only/);
+      expect(fu).toMatch(/never `git add -A`|never `git add \.`/);
+    });
+
+    it("limits the follow-up fix to test files and files it can name, else files the ticket only and links it as a blocker", () => {
+      const fu = section("## Pre-existing failures blocking a hook", "## Cleanup");
+      expect(fu).toMatch(/only test files/i);
+      expect(fu).toMatch(/is blocked by/);
+      expect(fu).toContain("follow_up");
+    });
+
+    it("still never bypasses a hook", () => {
+      const fu = section("## Pre-existing failures blocking a hook", "## Cleanup");
+      expect(fu).toMatch(/never bypass/i);
+    });
+  });
+
   it("no skill mentions the removed auto-promote label", () => {
     for (const name of ["ticket-refine", "ticket-to-pr"]) expect(read(name)).not.toMatch(/auto-promote|autoPromote/);
   });

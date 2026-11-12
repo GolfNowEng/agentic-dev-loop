@@ -536,9 +536,9 @@ describe("killedTimeoutVerdict", () => {
 // Byte-for-byte the strings each v1 main.ts passed to --allowedTools at
 // ad1ad2a (src/main.ts:59 and research-loop/src/main.ts:66). Never unioned.
 describe("role ALLOWED_TOOLS", () => {
-  it("dev equals its v1 constant", () => {
+  it("dev is its v1 constant plus the two follow-up-ticket writes (Ruling 30)", () => {
     expect(DEV_ALLOWED_TOOLS).toBe(
-      "mcp__atlassian__getAccessibleAtlassianResources,mcp__atlassian__getJiraIssue,Bash,Read,Grep,Glob",
+      "mcp__atlassian__getAccessibleAtlassianResources,mcp__atlassian__getJiraIssue,mcp__atlassian__createJiraIssue,mcp__atlassian__createIssueLink,Bash,Read,Grep,Glob",
     );
   });
 

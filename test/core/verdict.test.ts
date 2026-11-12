@@ -116,6 +116,28 @@ describe("parseVerdict: preexisting_failures (optional, Ruling 29)", () => {
   });
 });
 
+describe("parseVerdict: follow_up (optional, Ruling 30)", () => {
+  const withField = (value: unknown) =>
+    parseVerdict(JSON.stringify({ ...JSON.parse(validVerdictJson), follow_up: value }), "executor");
+
+  it("keeps a valid follow-up ticket with its PR", () => {
+    const v = withField({ ticket: "TARS-1700", pr: "https://github.com/org/repo/pull/9" });
+    expect(v.follow_up).toEqual({ ticket: "TARS-1700", pr: "https://github.com/org/repo/pull/9" });
+  });
+
+  it("keeps a follow-up ticket with no PR (files-only follow-up)", () => {
+    expect(withField({ ticket: "TARS-1700", pr: null }).follow_up).toEqual({ ticket: "TARS-1700", pr: null });
+  });
+
+  it("drops a malformed value without flipping the outcome", () => {
+    for (const bad of ["TARS-1700", { ticket: "not a key", pr: null }, { ticket: "TARS-1700" }, { ticket: "TARS-1700", pr: 5 }]) {
+      const v = withField(bad);
+      expect(v.outcome).toBe("landed");
+      expect(v.follow_up).toBeUndefined();
+    }
+  });
+});
+
 describe("agentErrorVerdict", () => {
   it("builds a canonical error verdict with the given detail", () => {
     const verdict = agentErrorVerdict("verdict.json was missing");

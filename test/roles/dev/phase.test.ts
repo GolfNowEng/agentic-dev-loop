@@ -151,6 +151,14 @@ describe("runDevPhase", () => {
     expect("preexisting_failures" in empty).toBe(false);
   });
 
+  it("carries follow_up into the PhaseEntry only when the skill reported one (Ruling 30)", async () => {
+    const fu = { ticket: "PROJ-9", pr: "https://github.com/org/repo/pull/2" };
+    const entry = await runDevPhase(makeTicket(), makeDeps({ runSkill: skillReturning(makeVerdict({ follow_up: fu })) }));
+    expect(entry.follow_up).toEqual(fu);
+    const without = await runDevPhase(makeTicket(), makeDeps());
+    expect("follow_up" in without).toBe(false);
+  });
+
   it("malformed or missing verdict.json → outcome error / agent_error", async () => {
     for (const raw of ["{not json", undefined]) {
       const entry = await runDevPhase(makeTicket(), makeDeps({ runSkill: skillReturning(raw) }));
