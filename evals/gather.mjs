@@ -5,7 +5,7 @@
 // through `outward` (so never in DRY_RUN=1, and never in the tests, which
 // import the graders).
 //
-//   node --env-file=<env> evals/check-<name>.mjs --keys <K1[,K2]> [--blocker <K>] [--config <path>]
+//   node --env-file=<env> evals/check-<name>.mjs --keys=<K1[,K2]> [--blocker=<K>] [--config=<path>]
 
 import { realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -22,10 +22,15 @@ function isMain(metaUrl) {
   }
 }
 
-function flag(name) {
-  const args = process.argv.slice(2);
-  const i = args.indexOf(name);
-  return i === -1 ? undefined : args[i + 1];
+async function cliFlags(name) {
+  const { FlagError, parseFlags } = await import("../src/core/flags.ts");
+  try {
+    return parseFlags(process.argv.slice(2), { values: ["--keys", "--blocker", "--config"], bools: [] }, `check-${name}`).values;
+  } catch (err) {
+    if (!(err instanceof FlagError)) throw err;
+    console.error(err.message);
+    process.exit(2);
+  }
 }
 
 /** The sandbox PR whose head branch starts with the key (newest), or null. */
@@ -46,12 +51,13 @@ export async function runGraderCli(metaUrl, name, grade) {
   const { getTicket } = await import("./jira.mjs");
   const { evalRunsLog } = await import("./config-guard.mjs");
 
-  const keys = (flag("--keys") ?? "").split(",").filter(Boolean);
+  const flags = await cliFlags(name);
+  const keys = (flags["--keys"] ?? "").split(",").filter(Boolean);
   if (keys.length === 0) {
-    console.error(`usage: node evals/check-${name}.mjs --keys <K1[,K2]> [--blocker <K>]`);
+    console.error(`usage: node evals/check-${name}.mjs --keys=<K1[,K2]> [--blocker=<K>]`);
     process.exit(2);
   }
-  const config = await loadConfig(resolve(root, flag("--config") ?? "pipeline.eval.config.json"));
+  const config = await loadConfig(resolve(root, flags["--config"] ?? "pipeline.eval.config.json"));
   const records = await readIterations(resolve(root, evalRunsLog(config)));
 
   let pr;
@@ -60,7 +66,7 @@ export async function runGraderCli(metaUrl, name, grade) {
     pr = sandboxPr(keys[1]);
     jira = { keys };
   } else if (name === "blocked") {
-    const blocker = flag("--blocker");
+    const blocker = flags["--blocker"];
     pr = blocker ? sandboxPr(blocker) : null;
     jira = { ...(await getTicket(keys[0])), blocker };
   } else {

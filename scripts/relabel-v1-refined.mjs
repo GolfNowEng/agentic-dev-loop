@@ -2,28 +2,26 @@
 // (with --write) add the project's dev trigger label (roles.dev.triggerLabel,
 // e.g. pipeline:v2.0.0:dev), which only the 2.0.0 dev poll matches. Dry run
 // by default; never removes labels.
-//   npm run cutover:relabel -- --project <p> [--write --confirm <sha256>]
+//   npm run cutover:relabel -- --project=<p> [--write --confirm=<sha256>]
 // (= node --env-file="${DEVLOOP_ENV_FILE:-.env}" scripts/relabel-v1-refined.mjs ...;
 // DEVLOOP_ENV_FILE, default .env)
 // Env: JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_ASSIGNEE_ACCOUNT_ID.
-// Test seams: --root (where pipeline.<p>.config.json lives), CUTOVER_PGREP.
+// Test seams: --root=<dir> (where pipeline.<p>.config.json lives), CUTOVER_PGREP.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseFlags } from "../src/core/flags.ts";
 
 function parse(argv) {
-  const o = { write: false, root: resolve(import.meta.dirname, "..") };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--write") o.write = true;
-    else if (a === "--project" || a === "--confirm" || a === "--root") {
-      const v = argv[++i];
-      if (!v || v.startsWith("--")) throw new Error(`${a} needs a value`);
-      o[a.slice(2)] = a === "--root" ? resolve(v) : v;
-    } else throw new Error(`unknown argument: ${a}`);
-  }
-  if (!o.project) throw new Error("usage: --project <name> [--write --confirm <sha256>]");
+  const { values, bools } = parseFlags(argv, { values: ["--project", "--confirm", "--root"], bools: ["--write"] }, "relabel");
+  const o = {
+    write: bools.has("--write"),
+    root: resolve(values["--root"] ?? resolve(import.meta.dirname, "..")),
+    project: values["--project"],
+    confirm: values["--confirm"],
+  };
+  if (!o.project) throw new Error("usage: --project=<name> [--write --confirm=<sha256>]");
   return o;
 }
 
@@ -106,7 +104,7 @@ async function main() {
   console.log(`sha256: ${hash}`);
   if (!o.write) return;
 
-  if (o.confirm !== hash) throw new Error("Refusing: --write needs --confirm <sha256 from the dry run> (missing or mismatched)");
+  if (o.confirm !== hash) throw new Error("Refusing: --write needs --confirm=<sha256 from the dry run> (missing or mismatched)");
   const loops = runningLoops();
   if (loops.length) throw new Error(`Refusing: a loop process (src/main.ts) is running:\n${loops.join("\n")}`);
   for (const s of selected) {

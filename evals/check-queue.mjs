@@ -5,7 +5,7 @@
 //   pr:   the second ticket's sandbox PR
 //   jira: { keys: [first, second] }
 //
-// CLI (gathers real state; run by evals/run.sh): node evals/check-queue.mjs --keys <FIRST>,<SECOND>
+// CLI (gathers real state; run by evals/run.sh): node evals/check-queue.mjs --keys=<FIRST>,<SECOND>
 
 import { result } from "./grade-lib.mjs";
 import { runGraderCli } from "./gather.mjs";

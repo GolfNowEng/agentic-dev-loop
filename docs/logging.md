@@ -1,8 +1,8 @@
 # Logging
 
 > Merged in dev-loop 2.0.0: one repo, two phases. `## Research phase` is the
-> former research-loop doc (`--phase research`); `## Dev phase` is the former
-> dev-loop doc (`--phase dev`). Wording inside each section still describes its
+> former research-loop doc (`--phase=research`); `## Dev phase` is the former
+> dev-loop doc (`--phase=dev`). Wording inside each section still describes its
 > repo as it was; "this repo" / "the sibling repo" there means that phase, and
 > paths like `src/types.ts` map to `src/core/` and `src/roles/<phase>/` now.
 > See `docs/migration-ledger.md`.
@@ -91,7 +91,7 @@ reflects the shared `RunOutcome` type; this repo's own passing outcome,
 
 ```
 npm run stats                              # last 7 days, webtarsthree
-npm run stats -- --project webtarsthree --days 30
+npm run stats -- --project=webtarsthree --days=30
 ```
 
 ## Dev phase
@@ -166,11 +166,11 @@ The two v1 `npm run stats` sections above describe the pre-2.0.0 script.
   `runs/v1/<role>/<project>.jsonl` when it exists, else the pre-cutover
   live log (dev: `runs/<project>.jsonl`, research:
   `research-loop/runs/<project>.jsonl`), and prints which file it read.
-- **`--root <dir>`:** the state root (default: the repo root).
+- **`--root=<dir>`:** the state root (default: the repo root).
 
 ```
 npm run stats                              # v2, last 7 days, webtarsthree
-npm run stats -- --project webtarsthree --days 30
+npm run stats -- --project=webtarsthree --days=30
 npm run stats -- --v1
 ```
 
@@ -186,7 +186,7 @@ All paths come from `src/core/paths.ts` (validated segments, contained under
 the repo root). v2: `runs/v2/<project>.jsonl`; run dirs
 `.pipeline/v2/<project>/<session>/<ticket>/<phase>-<runId>/` (raw usage is
 `usage.json` inside); clone `.pipeline/v2/<project>/repo`; `.../sessions`.
-v1 archive: `runs/v1/<role>/<project>.jsonl`. `--phase research|dev` write
+v1 archive: `runs/v1/<role>/<project>.jsonl`. `--phase=research|dev` write
 v2 records to `runs/v2/<project>.jsonl` (2.0.0 Task 13). The runner passes
 each skill its v2 run dir as `run-dir=` (absolute) and its target checkout as
 `repo-dir=` (Task 15, `docs/skills.md` "Invocation contract"); the skill writes
@@ -249,7 +249,7 @@ iteration writes nothing. The steps run in this order:
    retried until the attempt cap blocks it. Dev errors need nothing extra,
    because the dev poll re-finds them. Its new record resolves it. The resume lives in the log,
    not the lock, because every `--phase` process of a project shares the
-   session dir: a `--phase dev` start can adopt a `--phase research` crash
+   session dir: a `--phase=dev` start can adopt a `--phase=research` crash
    and must leave it for a research process. A claim whose research phase
    never started (the session lock couldn't be written) is recorded the same
    way and pauses the worker.
@@ -264,7 +264,7 @@ iteration writes nothing. The steps run in this order:
    `maxAttemptsPerTicket` failed attempts of a role (`attempts.ts`). A ticket
    that has just reached the cap, for a role this process runs, gets a
    comment, the bounced status and one `blocked-attempts` record. A
-   `--phase research` process never blocks a ticket over dev failures.
+   `--phase=research` process never blocks a ticket over dev failures.
 3. **Dev first** (no claim). The candidates are step 1's handoffs, then the
    dev poll; a polled unassigned ticket is assigned (non-fatal), as in v1. The landed guard (recorded PR merged/open/unreadable) and the
    blocker gate apply.
@@ -293,7 +293,7 @@ excluded from later polls by its numeric issue id (`id not in (...)`). A per-tic
 Jira comments built by `src/` end with a `— <session>` paragraph, and GitHub
 comments end with a `— <session>` line.
 
-`--phase research` runs the cycle with only research enabled: no handoff and
+`--phase=research` runs the cycle with only research enabled: no handoff and
 no dev, so a green ticket stays pending for a dev-enabled worker.
-`--phase dev` runs it with only dev enabled: steps 1 and 3, plus the v1
+`--phase=dev` runs it with only dev enabled: steps 1 and 3, plus the v1
 reconcile pass.

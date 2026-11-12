@@ -16,7 +16,7 @@
  * the only Jira write this pass makes: it never changes status or assignee,
  * and a failed label removal is swallowed (the worker cycle's dev landed
  * guard, src/worker/cycle-steps.ts, is the backstop). Called once per
- * iteration from main.ts's `--phase dev` loop, before runWorkerIteration.
+ * iteration from main.ts's `--phase=dev` loop, before runWorkerIteration.
  */
 
 import type { JiraClient } from "../../core/jira-client.ts";
