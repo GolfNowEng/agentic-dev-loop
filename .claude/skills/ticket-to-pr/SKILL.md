@@ -135,6 +135,26 @@ never can. Never work directly in `REPO_DIR` itself, since a human may `cd`
 into it or be mid-inspection of a prior run's worktree at any moment
 while this loop runs unattended in the background.
 
+**Run every target-repo command through `direnv exec`.** direnv's shell
+hook never fires in this headless session: `cd` alone loads nothing, so
+tests that need the repo's local env (e.g. webtarsthree's
+`PLACEMENT_SERVICE_ENDPOINT` from its git-ignored `.envrc`) fail as if they
+were broken. Prefix every install, test, lint, typecheck, build, dev-server,
+`git commit` and `git push` command with the worktree path, so commit and
+push hooks see the same env:
+
+```bash
+direnv exec <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID> npm test
+direnv exec <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID> git commit -m "..."
+```
+
+Use the matching worktree path for the baseline and follow-up worktrees
+(`...-baseline`, `...-fu`). If `direnv` is missing or reports the `.envrc`
+as blocked (`direnv status`), bounce `env_setup` saying so; never run
+`direnv allow` yourself. A test that fails only without this env is not a
+bug on <defaultBranch>: never report it as pre-existing or file a
+follow-up for it.
+
 If `REPO_DIR` has no `.git` yet (the shared clone was never made on this
 machine), clone it first; otherwise skip straight to the fetch:
 
@@ -299,7 +319,8 @@ Each phase's `progress.jsonl` events use the phase name shown.
 5. Set up the target repo working directory as described above.
 5a. **Baseline suite.** Before writing anything, run the target repo's full
    test suite once on the fresh worktree (still identical to
-   `origin/<targetRepo.defaultBranch>`), the same way its commit hook does
+   `origin/<targetRepo.defaultBranch>`), via `direnv exec` (see "Target
+   repo"), the same way its commit hook does
    (read `.husky/pre-commit` or the repo's hook config; usually `npm
    test`). Record the failing tests as `baseline_failures` (`"<file> >
    <test name>"`, empty when green) in one `progress.jsonl` note with the

@@ -111,6 +111,10 @@ your findings -- do not improvise. Stop the dev server when done.
   only (e.g. "reads `API_KEY` from env", "token present, 42 chars"), same
   reasoning as `ticket-to-pr` itself: the per-run worktree sits inside the
   target repo's own directory tree so direnv activates real secrets there.
+- Run the app, its tests and any build through `direnv exec <worktree path>`
+  (e.g. `direnv exec <worktree path> npm run dev`). direnv's shell hook does
+  not fire in a headless session, so without it the app starts with the
+  repo's local env missing and fails in ways the change did not cause.
 
 ## Output
 

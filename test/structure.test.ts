@@ -219,7 +219,7 @@ describe("structure: skill prose (Ruling 24)", () => {
       expect(target).toContain("Run every target-repo command through `direnv exec`");
       expect(target).toMatch(/direnv exec <REPO_DIR>\/\.claude\/worktrees\/<TICKET>-<RUN_ID>/);
       expect(target).toMatch(/git commit[^\n]*and `git push`/);
-      expect(target).toMatch(/not a bug on <defaultBranch>/i);
+      expect(target).toMatch(/not\s+a\s+bug\s+on\s+<defaultBranch>/i);
     });
 
     it("the baseline suite run uses it too", () => {
