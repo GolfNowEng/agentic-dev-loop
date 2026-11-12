@@ -5,10 +5,11 @@
 # research-loop's hooks of the same name; settings.json wires it under both
 # matchers):
 #
-#   - `Bash` (dev's write surface): the PR title/body, created via
-#     `gh pr create`/`gh pr edit`. This script recognizes "is this actually
-#     a gh pr create/edit call" itself before ever invoking Node, because
-#     the Bash matcher fires on every Bash call in a run.
+#   - `Bash` (dev's write surface): the PR title/body and PR comments, via
+#     `gh pr create`/`edit`/`comment`, `gh pr review --body`, or `gh api
+#     ... -f body=`. This script pre-filters "could this be such a call"
+#     itself before ever invoking Node, because the Bash matcher fires on
+#     every Bash call in a run.
 #   - `mcp__atlassian__*` writes (research's write surface): Jira comments/
 #     edits/worklogs/issue links and Confluence page/comment writes. The
 #     whole tool_input is scanned; the settings.json matcher decides which
@@ -74,19 +75,22 @@ if [ "$JQ_EXIT" -ne 0 ]; then
 fi
 
 if [ "$TOOL_NAME" = "Bash" ]; then
-  # Cheap pre-filter: only a command that mentions gh, pr, AND (create or
-  # edit) as whole words is worth scanning. Every other Bash call (git, npm
-  # test, lint, build -- the vast majority) short-circuits here.
+  # Cheap pre-filter: only a command that mentions gh AND either pr plus
+  # (create, edit, comment or review) or api plus body= as whole words is
+  # worth scanning. Every other Bash call (git, npm test, lint, build -- the
+  # vast majority) short-circuits here. The checker narrows it further
+  # (gh pr review only with --body/-b, gh api only with -f/-F body=).
   if ! printf '%s' "$COMMAND" | grep -qw "gh"; then
     exit 0
   fi
-  if ! printf '%s' "$COMMAND" | grep -qw "pr"; then
+  if printf '%s' "$COMMAND" | grep -qw "pr" && printf '%s' "$COMMAND" | grep -Eqw "create|edit|comment|review"; then
+    :
+  elif printf '%s' "$COMMAND" | grep -qw "api" && printf '%s' "$COMMAND" | grep -q "body="; then
+    :
+  else
     exit 0
   fi
-  if ! printf '%s' "$COMMAND" | grep -Eqw "create|edit"; then
-    exit 0
-  fi
-  WHAT="gh pr create/edit command"
+  WHAT="gh pr/api write command"
   ADVICE="Never write a raw env var value, .envrc/.env content, API key, token, or password into a PR title or body -- report presence/shape only (e.g. \"reads API_KEY from env\"), the same rule ticket-to-pr's PR body section already requires."
 else
   WHAT="write"

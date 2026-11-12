@@ -178,6 +178,10 @@ const ALLOW = [
   "unset HUSKY",
   "find . -name '*.ts' -exec grep -n foo {} \\;",
   "find . -type f -print",
+  // C1: commands that never run their arguments are not unknown wrappers
+  "echo git push origin HEAD",
+  "grep -rn git docs | grep push",
+  "grep -n git CHANGELOG.md -e commit",
 ];
 
 for (const command of DENY) {

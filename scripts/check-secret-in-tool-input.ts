@@ -5,8 +5,11 @@
  * checkers):
  *
  *   - `Bash` calls: scans `tool_input.command` when it is a `gh pr
- *     create/edit` (dev's PR title/body) or `gh issue create/edit/comment`
- *     (research's mirror Issue) invocation. Every other Bash command is 0.
+ *     create/edit/comment`, a `gh pr review` with `--body`/`-b` (dev's PR
+ *     title/body/comments), a `gh issue create/edit/comment` (research's
+ *     mirror Issue) or a `gh api` call with `-f/-F/--field/--raw-field
+ *     body=` invocation. Every other Bash command is 0. (`--body-file` /
+ *     `-F <file>` content is not visible here; the skills forbid it.)
  *   - Any other tool with a `tool_input` (the `mcp__atlassian__*` Jira/
  *     Confluence writes the settings.json matcher routes here): scans the
  *     whole `tool_input` object, serialized, so a secret nested anywhere
@@ -48,7 +51,19 @@ function hasWord(command: string, word: string): boolean {
  * just costs one extra scan, never a missed detection.
  */
 function isGhPrWrite(command: string): boolean {
-  return hasWord(command, "gh") && hasWord(command, "pr") && (hasWord(command, "create") || hasWord(command, "edit"));
+  if (!hasWord(command, "gh") || !hasWord(command, "pr")) return false;
+  if (hasWord(command, "create") || hasWord(command, "edit") || hasWord(command, "comment")) return true;
+  // gh pr review only writes text with --body/-b.
+  return hasWord(command, "review") && /(?:^|\s)(?:--body|-b)(?:[\s=]|$)/.test(command);
+}
+
+/** `gh api ... -f/-F/--field/--raw-field body=...`: a comment or review body sent raw. */
+function isGhApiBodyWrite(command: string): boolean {
+  return (
+    hasWord(command, "gh") &&
+    hasWord(command, "api") &&
+    /(?:^|\s)(?:-[fF]|--field|--raw-field)(?:\s+|=)["']?body=/.test(command)
+  );
 }
 
 function isGhIssueWrite(command: string): boolean {
@@ -83,8 +98,12 @@ export function decideExitCode(stdin: string): 0 | 1 | 2 {
     if (toolName === "Bash") {
       const command = (toolInput as Record<string, unknown>)?.command;
       if (typeof command !== "string" || command.length === 0) return 0;
-      if (!isGhPrWrite(command) && !isGhIssueWrite(command)) return 0;
-      return containsSecret(command) ? 1 : 0;
+      const apiBody = isGhApiBodyWrite(command);
+      if (!isGhPrWrite(command) && !isGhIssueWrite(command) && !apiBody) return 0;
+      if (containsSecret(command)) return 1;
+      // `-f body=NAME=value`: gh's own `body=` would make redact.ts read the
+      // pair as name "body", hiding NAME. Scan the field values on their own too.
+      return apiBody && containsSecret(command.replace(/(^|[\s'"=])body=/g, "$1body ")) ? 1 : 0;
     }
 
     // Only MCP tools are scanned whole; the settings.json matcher decides

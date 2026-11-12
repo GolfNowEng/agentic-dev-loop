@@ -27,8 +27,25 @@
  *   2. Each simple command has its leading `NAME=value` assignments and
  *      reserved words (`{`, `!`, `then`, `do`, ...) dropped, then wrappers
  *      are unwrapped: `env`, `command`, `exec`, `nohup`, `sudo`, `nice`,
- *      `timeout`, `time`, `xargs`, ... and `bash/sh/zsh -c '<script>'` and
- *      `eval <args>`, whose script text is analyzed recursively.
+ *      `timeout`, `time`, `xargs`, `direnv exec <dir>`, `find ... -exec/
+ *      -execdir/-ok/-okdir ... ;|+` (like xargs: a git push/commit or gh
+ *      stack there is unverifiable), ... and `bash/sh/zsh -c '<script>'`
+ *      and `eval <args>`, whose script text is analyzed recursively.
+ *      `direnv` with any other subcommand is not a wrapper.
+ *   2a. Hook bypass through the environment: any assignment (leading,
+ *      via `env`, or `export`/`declare`/`typeset`/`readonly`/`local`) of
+ *      `HUSKY` or `HUSKY_SKIP_HOOKS` is denied, whatever its value and
+ *      whether or not a git command follows; so is any `GIT_CONFIG_*`
+ *      (`GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_PARAMETERS`, ...) whose value
+ *      mentions `hookspath` (any case). A `GIT_CONFIG_PARAMETERS` or
+ *      `GIT_CONFIG_KEY_<n>` value only known at run time is unverifiable.
+ *   2b. Any other command name is not unwrapped. If its arguments contain
+ *      a `git` word followed later by `push` or `commit`, or a `gh` word
+ *      followed later by `stack` (`npx git push`, `npm exec -- git commit`,
+ *      `pnpm exec`, `yarn`, ...), the command is unverifiable (exit 2): this
+ *      checker cannot know whether that command runs its arguments.
+ *      Commands that never run their arguments (`echo`, `printf`, `grep`,
+ *      `rg`, `cat`, `jq`, ...: NEVER_EXECUTES_ARGS) are exempt.
  *   3. `git` is parsed past its global options (`-C`, `-c`, `--git-dir`,
  *      ...) to the subcommand. `push` and `commit` get an argument parser
  *      that knows which of their options take a value, so `-n` is denied
@@ -40,6 +57,18 @@
  *
  * When in doubt it denies. The command string is handled purely as data:
  * nothing here executes, evals or interpolates it.
+ *
+ * Known residuals (a command-string denylist cannot close these; they rest
+ * on the skills' "never bypass a hook" rule and on review):
+ *   - Interpreter one-liners and scripts: `python3 -c "os.system('git push
+ *     -f')"`, `node -e ...`, `perl -e ...`, a script file written first and
+ *     run after. Their code is not shell and is not parsed here.
+ *   - Disabling the hooks on disk: `rm -rf .git/hooks`, `rm .husky/pre-push`,
+ *     `chmod -x .husky/pre-commit`, overwriting a hook file with an editor
+ *     or `>` redirection, editing `.git/config` directly.
+ *   - Anything whose text only exists at run time beyond the cases above
+ *     (a command read from a file, `source`d scripts, aliases defined
+ *     elsewhere).
  */
 
 import { realpathSync } from "node:fs";
@@ -452,9 +481,68 @@ export function analyzeScript(script: string, depth = 0): string | null {
   return null;
 }
 
+const HUSKY_VAR = /^(HUSKY|HUSKY_SKIP_HOOKS)$/;
+/** Builtins that assign/export their `NAME[=value]` arguments. */
+const DECLARERS = new Set(["export", "declare", "typeset", "readonly", "local"]);
+
+/**
+ * A `NAME[=value]` the shell assigns or exports. `hasValue` false is a bare
+ * `export NAME`. Denies HUSKY/HUSKY_SKIP_HOOKS outright, and GIT_CONFIG_*
+ * whose value mentions hookspath.
+ */
+function checkEnvVar(w: Word, hasValue: boolean): string | null {
+  const eq = w.value.indexOf("=");
+  const name = hasValue ? w.value.slice(0, eq) : w.value;
+  if (HUSKY_VAR.test(name)) return `${name} env (hook bypass)`;
+  if (/^GIT_CONFIG_/.test(name)) {
+    if (/hookspath/i.test(w.value)) return `${name} core.hooksPath (hook bypass)`;
+    if (hasValue && w.expansion && /^GIT_CONFIG_(PARAMETERS|KEY_\d+)$/.test(name)) {
+      throw new Unverifiable(`a ${name} value only known at run time`);
+    }
+  }
+  return null;
+}
+
+function analyzeDeclare(args: Word[]): string | null {
+  for (const a of args) {
+    if (a.leadingExpansion) {
+      if (/hookspath|HUSKY/i.test(a.value)) throw new Unverifiable("an exported name only known at run time");
+      continue;
+    }
+    if (a.value.startsWith("-") || a.value.startsWith("+")) continue;
+    const violation = checkEnvVar(a, ASSIGNMENT.test(a.value));
+    if (violation !== null) return violation;
+  }
+  return null;
+}
+
+/** Commands that only print or search their arguments, never run them: exempt from the unknown-wrapper rule. */
+const NEVER_EXECUTES_ARGS = new Set(["echo", "printf", "grep", "egrep", "fgrep", "rg", "cat", "ls", "wc", "head", "tail", "jq", "test", "["]);
+
+/** `git` followed later by push/commit, or `gh` followed later by stack, anywhere in `words`. */
+function hidesGuardedCall(words: Word[]): boolean {
+  const at = (pred: (v: string) => boolean): number => words.findIndex((w) => pred(w.value));
+  const git = at((v) => basename(v) === "git");
+  if (git !== -1 && words.slice(git + 1).some((w) => w.value === "push" || w.value === "commit")) return true;
+  const gh = at((v) => basename(v) === "gh");
+  return gh !== -1 && words.slice(gh + 1).some((w) => w.value === "stack");
+}
+
+/** `find ... -exec|-execdir|-ok|-okdir <cmd...> ;|+`: each exec'd command, analyzed like xargs's. */
+function analyzeFind(args: Word[], depth: number): string | null {
+  for (let j = 0; j < args.length; j++) {
+    if (!["-exec", "-execdir", "-ok", "-okdir"].includes(args[j].value)) continue;
+    let k = j + 1;
+    while (k < args.length && args[k].value !== ";" && !(args[k].value === "+" && args[k - 1]?.value === "{}")) k += 1;
+    const violation = analyzeCommand(args.slice(j + 1, k), depth, true);
+    if (violation !== null) return violation;
+    j = k;
+  }
+  return null;
+}
+
 function analyzeCommand(words: Word[], depth: number, viaXargs = false): string | null {
   let i = 0;
-  let hookSkipEnv = false;
   while (i < words.length) {
     const w = words[i];
     if (RESERVED.has(w.value) && !w.quoted && !w.expansion) {
@@ -462,7 +550,8 @@ function analyzeCommand(words: Word[], depth: number, viaXargs = false): string 
       continue;
     }
     if (ASSIGNMENT.test(w.value) && !w.leadingExpansion) {
-      if (/^HUSKY=/.test(w.value)) hookSkipEnv = true;
+      const violation = checkEnvVar(w, true);
+      if (violation !== null) return violation;
       i += 1;
       continue;
     }
@@ -478,7 +567,14 @@ function analyzeCommand(words: Word[], depth: number, viaXargs = false): string 
   }
   const name = basename(head.value);
 
-  if (name === "env") return analyzeEnv(rest, depth, hookSkipEnv);
+  if (name === "env") return analyzeEnv(rest, depth);
+  if (DECLARERS.has(name)) return analyzeDeclare(rest);
+  if (name === "direnv") {
+    // `direnv exec <dir> <cmd...>` runs <cmd> (Ruling 31's spelling); every other subcommand is not a wrapper.
+    if (rest[0]?.value !== "exec" || rest.length < 3) return null;
+    return analyzeCommand(rest.slice(2), depth, viaXargs);
+  }
+  if (name === "find") return analyzeFind(rest, depth);
   if (name === "eval") return analyzeScript(names(rest).join(" "), depth + 1);
   if (SHELLS.has(name)) return analyzeShell(rest, depth);
   const wrapper = WRAPPERS[name];
@@ -492,19 +588,19 @@ function analyzeCommand(words: Word[], depth: number, viaXargs = false): string 
       j += wrapper.valueOpts.has(rest[j].value) ? 2 : 1;
     }
     j += wrapper.skipPositionals ?? 0;
-    const inner = rest.slice(j);
-    if (hookSkipEnv) inner.unshift({ value: "HUSKY=0", quoted: false, expansion: false, leadingExpansion: false });
-    return analyzeCommand(inner, depth, viaXargs || name === "xargs");
+    return analyzeCommand(rest.slice(j), depth, viaXargs || name === "xargs");
   }
-  if (name === "git") return analyzeGit(rest, depth, hookSkipEnv, viaXargs);
+  if (name === "git") return analyzeGit(rest, depth, viaXargs);
   if (name === "gh") return analyzeGh(rest, depth, viaXargs);
+  if (!NEVER_EXECUTES_ARGS.has(name) && hidesGuardedCall(rest)) {
+    throw new Unverifiable(`git push/commit or gh stack inside ${name} (an unknown wrapper: run git/gh directly, or via direnv exec)`);
+  }
   return null;
 }
 
-function analyzeEnv(args: Word[], depth: number, hookSkipEnv: boolean): string | null {
+function analyzeEnv(args: Word[], depth: number): string | null {
   let j = 0;
   const kept: Word[] = [];
-  if (hookSkipEnv) kept.push({ value: "HUSKY=0", quoted: false, expansion: false, leadingExpansion: false });
   while (j < args.length) {
     const v = args[j].value;
     if (v === "--") {
@@ -575,7 +671,7 @@ function analyzeGitAlias(value: string, depth: number): string | null {
   return value.startsWith("!") ? analyzeScript(value.slice(1), depth + 1) : analyzeScript(`git ${value}`, depth + 1);
 }
 
-function analyzeGit(args: Word[], depth: number, hookSkipEnv: boolean, viaXargs: boolean): string | null {
+function analyzeGit(args: Word[], depth: number, viaXargs: boolean): string | null {
   let i = 0;
   while (i < args.length && args[i].value.startsWith("-")) {
     const v = args[i].value;
@@ -601,7 +697,6 @@ function analyzeGit(args: Word[], depth: number, hookSkipEnv: boolean, viaXargs:
   if (sub.leadingExpansion) throw new Unverifiable("the git subcommand is only known at run time");
   const subArgs = args.slice(i + 1);
 
-  if (hookSkipEnv) return "HUSKY=0 git (hook bypass)";
   if (viaXargs && (sub.value === "push" || sub.value === "commit")) {
     throw new Unverifiable(`git ${sub.value} via xargs (arguments only known at run time)`);
   }
