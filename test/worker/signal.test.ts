@@ -115,3 +115,87 @@ describe("trackSession before the adopted flights are recorded", () => {
     expect(fake.release).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("stopping (post-merge fix 3: the cycle freezes once a signal is received)", () => {
+  const SETTLED = Symbol("settled");
+  const PENDING = Symbol("pending");
+  /** Whether `p` settles within a few macrotask turns. */
+  const settles = async (p: Promise<unknown>): Promise<typeof SETTLED | typeof PENDING> => {
+    const sentinel = new Promise<typeof PENDING>((r) => setTimeout(() => r(PENDING), 20));
+    return Promise.race([p.then(() => SETTLED, () => SETTLED), sentinel]);
+  };
+
+  it("after beginStop, the cycle's setInFlight (set or clear) never settles and never calls through", async () => {
+    const fake = makeSession();
+    const t = trackSession(fake as unknown as Session);
+    t.beginStop();
+
+    expect(await settles(t.session.setInFlight(FLIGHT))).toBe(PENDING);
+    expect(await settles(t.session.setInFlight(null))).toBe(PENDING);
+    expect(fake.setInFlight).not.toHaveBeenCalled();
+    expect(t.current()).toBeNull();
+  });
+
+  it("after beginStop, canRelease() is false even with no flight", () => {
+    const fake = makeSession();
+    const t = trackSession(fake as unknown as Session);
+    expect(t.canRelease()).toBe(true);
+
+    t.beginStop();
+
+    expect(t.canRelease()).toBe(false);
+  });
+
+  it("stopOnSignal calls beginStop before killChild", async () => {
+    const order: string[] = [];
+    const fake = makeSession();
+    const t = trackSession(fake as unknown as Session);
+    const beginStop = t.beginStop;
+    t.beginStop = () => {
+      order.push("beginStop");
+      beginStop();
+    };
+
+    const done = stopOnSignal("SIGTERM", {
+      tracked: t,
+      killChild: async () => {
+        order.push("kill");
+        return "none";
+      },
+      exit: () => {
+        order.push("exit");
+      },
+    });
+    // beginStop is synchronous, before the first await.
+    expect(order).toEqual(["beginStop", "kill"]);
+    await done;
+    expect(order).toEqual(["beginStop", "kill", "exit"]);
+  });
+
+  it("a signal that kills a running child: the cycle's clear hangs, the flight stays interrupted, no release", async () => {
+    const fake = makeSession();
+    const t = trackSession(fake as unknown as Session);
+    await t.session.setInFlight(FLIGHT);
+    const exit = vi.fn();
+    let cycleClear: Promise<void> | null = null;
+
+    await stopOnSignal("SIGTERM", {
+      tracked: t,
+      killChild: async () => {
+        // The killed child's run returns; the cycle (runPhase) clears its flight
+        // while stopOnSignal is still awaiting the kill.
+        cycleClear = t.session.setInFlight(null);
+        return "killed";
+      },
+      exit,
+    });
+
+    expect(cycleClear).not.toBeNull();
+    expect(await settles(cycleClear!)).toBe(PENDING);
+    expect(fake.current).toEqual({ ...FLIGHT, interrupted: true });
+    expect(fake.setInFlight.mock.calls.map((c) => c[0])).toEqual([FLIGHT, { ...FLIGHT, interrupted: true }]);
+    expect(fake.release).not.toHaveBeenCalled();
+    expect(t.canRelease()).toBe(false);
+    expect(exit).toHaveBeenCalledWith(143);
+  });
+});

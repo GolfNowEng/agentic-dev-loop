@@ -11,6 +11,8 @@ import {
   POST_KILL_GRACE_MS,
   KILL_GRACE_MS,
   killActiveChild,
+  stopSpawning,
+  _resetStoppingForTests,
 } from "../../src/core/spawn-claude.ts";
 import type { SpawnClaudeOpts, SpawnFn, SpawnClaudeDeps } from "../../src/core/spawn-claude.ts";
 import { parseVerdict } from "../../src/core/verdict.ts";
@@ -78,6 +80,11 @@ function makeFakeTimers() {
 }
 
 const flush = () => new Promise((r) => setImmediate(r));
+
+// killActiveChild/stopSpawning set a module-level "stopping" flag; never let it leak between tests.
+afterEach(() => {
+  _resetStoppingForTests();
+});
 
 describe("spawnClaudeRun", () => {
   let dir: string;
@@ -577,6 +584,80 @@ describe("killActiveChild (final review I5: a signal stops the running claude -p
     });
     expect(await killActiveChild(makeFakeTimers())).toBe("none");
     expect(child.signals).toEqual([]);
+  });
+});
+
+describe("stopping (post-merge fix 3: no spawn once a signal is received)", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "spawn-claude-stop-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  const opts = (): SpawnClaudeOpts => ({
+    prompt: "/ticket-to-pr TARS-1",
+    model: "sonnet",
+    allowedTools: "Bash",
+    addDir: null,
+    timeoutMin: 75,
+    maxBudgetUsd: 20,
+    stream: false,
+    ticketKey: "TARS-1",
+    rawUsagePath: join(dir, "raw.json"),
+    env: {},
+  });
+  const quiet = { log: () => {}, logError: () => {} };
+
+  it("after stopSpawning(), a run never calls spawn and returns a 'stopping' spawnError", async () => {
+    let spawned = 0;
+    const spawn: SpawnFn = () => {
+      spawned++;
+      const child = new FakeChild();
+      child.finish("{}");
+      return child as never;
+    };
+    stopSpawning();
+    stopSpawning(); // idempotent
+
+    const result = await spawnClaudeRun(opts(), { ...quiet, spawn });
+
+    expect(spawned).toBe(0);
+    expect(result.spawnError).toContain("stopping");
+    expect(result.usage).toEqual({ costUsd: 0, tokens: { in: 0, out: 0 } });
+  });
+
+  it("after killActiveChild() with no child running, a run never calls spawn", async () => {
+    let spawned = 0;
+    const spawn: SpawnFn = () => {
+      spawned++;
+      const child = new FakeChild();
+      child.finish("{}");
+      return child as never;
+    };
+    expect(await killActiveChild(makeFakeTimers())).toBe("none");
+
+    const result = await spawnClaudeRun(opts(), { ...quiet, spawn });
+
+    expect(spawned).toBe(0);
+    expect(result.spawnError).toContain("stopping");
+  });
+
+  it("_resetStoppingForTests() lets runs spawn again", async () => {
+    let spawned = 0;
+    const spawn: SpawnFn = () => {
+      spawned++;
+      const child = new FakeChild();
+      child.finish("{}");
+      return child as never;
+    };
+    stopSpawning();
+    _resetStoppingForTests();
+
+    const result = await spawnClaudeRun(opts(), { ...quiet, spawn });
+
+    expect(spawned).toBe(1);
+    expect(result.spawnError).toBeUndefined();
   });
 });
 
