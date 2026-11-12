@@ -470,6 +470,41 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       expect(findOpenPrUrl).not.toHaveBeenCalled();
     });
 
+    it("(e) crashed dev flight with an open PR, status Blocked -> no self-heal transition, resume-dropped record", async () => {
+      h = await harness({
+        session: devFlight(),
+        deps: { findOpenPrUrl: async () => "https://github.com/org/repo/pull/9" },
+      });
+      h.jira.statuses["TARS-2"] = "Blocked";
+
+      await runWorkerIteration(h.deps);
+
+      expect(h.jira.calls("transitionStatus")).toEqual([]);
+      expect(runSkillCalls(h)).toEqual([]);
+      const recs = await records(h);
+      expect(recs).toHaveLength(1);
+      expect(recs[0]).toMatchObject({ ticket: "TARS-2", outcome: "resume-dropped", phases: [] });
+      expect(recs[0].resume).toBeUndefined();
+      expect(recs[0].detail).toContain('status is now "Blocked", not "In Progress"');
+    });
+
+    it("(f) crashed dev flight with an open PR, status lookup fails -> recorded as crashed with resume (no self-heal)", async () => {
+      h = await harness({
+        session: devFlight(),
+        deps: { findOpenPrUrl: async () => "https://github.com/org/repo/pull/9" },
+      });
+      h.jira.statusImpl = async () => {
+        throw new Error("jira 503");
+      };
+
+      await runWorkerIteration(h.deps);
+
+      expect(h.jira.calls("transitionStatus")).toEqual([]);
+      const recs = await records(h);
+      expect(recs).toHaveLength(1);
+      expect(recs[0]).toMatchObject({ ticket: "TARS-2", outcome: "error", resume: "dev" });
+    });
+
     it("(c) status In Progress -> resumes as before", async () => {
       h = await harness({ session: researchFlight() });
       h.jira.statuses["TARS-1"] = "In Progress";
@@ -492,6 +527,15 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       expect(recs[0]).toMatchObject({ ticket: "TARS-1", resume: "research" });
       expect(runSkillCalls(h)).toEqual([]);
       expect(h.jira.calls("claimTicket")).toEqual([]);
+
+      // Past the recent window with the lookup still failing: ctx.exclude (not `recent`) keeps the
+      // pending ticket from being polled, claimed and run as a fresh ticket.
+      h.clock.advance(20 * MIN);
+      await runWorkerIteration(h.deps);
+      expect(runSkillCalls(h)).toEqual([]);
+      expect(h.jira.calls("claimTicket")).toEqual([]);
+      expect(h.jira.polls.every((q) => q.includes('"TARS-1"'))).toBe(true);
+      expect(await records(h)).toHaveLength(1);
 
       h.jira.statusImpl = async () => {};
       h.clock.advance(20 * MIN);
