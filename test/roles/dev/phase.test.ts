@@ -133,6 +133,24 @@ describe("runDevPhase", () => {
     expect(entry.jira_sync_error).toBeUndefined();
   });
 
+  it("carries preexisting_failures into the PhaseEntry only when the skill reported some (Ruling 29)", async () => {
+    const failing = ["src/server/x.integration.test.js > accepts a ~200KB body"];
+    const withFailures = await runDevPhase(
+      makeTicket(),
+      makeDeps({ runSkill: skillReturning(makeVerdict({ preexisting_failures: failing })) }),
+    );
+    expect(withFailures.preexisting_failures).toEqual(failing);
+
+    const without = await runDevPhase(makeTicket(), makeDeps());
+    expect("preexisting_failures" in without).toBe(false);
+
+    const empty = await runDevPhase(
+      makeTicket(),
+      makeDeps({ runSkill: skillReturning(makeVerdict({ preexisting_failures: [] })) }),
+    );
+    expect("preexisting_failures" in empty).toBe(false);
+  });
+
   it("malformed or missing verdict.json → outcome error / agent_error", async () => {
     for (const raw of ["{not json", undefined]) {
       const entry = await runDevPhase(makeTicket(), makeDeps({ runSkill: skillReturning(raw) }));

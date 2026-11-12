@@ -127,6 +127,38 @@ describe("structure: skill prose (Ruling 24)", () => {
     expect(passing).not.toMatch(/Needs-decision bullets/);
   });
 
+  describe("ticket-to-pr Phase 4: failures that already exist on master (Ruling 29)", () => {
+    const phase4 = () => {
+      const text = read("ticket-to-pr");
+      return text.slice(text.indexOf("### Phase 4"), text.indexOf("### Phase 5"));
+    };
+
+    it("re-runs the failing tests against unmodified origin/<defaultBranch> before bouncing", () => {
+      expect(phase4()).toContain("Pre-existing failure check");
+      expect(phase4()).toMatch(/git -C <REPO_DIR> worktree add --detach\s+\S*baseline/);
+      expect(phase4()).toContain("origin/<targetRepo.defaultBranch>");
+    });
+
+    it("proceeds only when the branch's failing set is a subset of the baseline's", () => {
+      expect(phase4()).toMatch(/every test that fails on the branch also fails[^.]*on the baseline/i);
+      expect(phase4()).toMatch(/fails only on the branch[^.]*Green-phase defect/i);
+    });
+
+    it("names the pre-existing failures in the PR body, qa_notes and the result line", () => {
+      expect(phase4()).toContain("## Pre-existing failures");
+      expect(phase4()).toMatch(/pre-existing on `?origin\/<defaultBranch>`? <sha>/i);
+      expect(phase4()).toContain("preexisting_failures");
+    });
+
+    it("still forbids bypassing a push hook that runs the suite", () => {
+      expect(phase4()).toMatch(/never bypass[^.]*hook/i);
+    });
+
+    it("removes the baseline worktree", () => {
+      expect(phase4()).toMatch(/worktree remove[^\n]*baseline/);
+    });
+  });
+
   it("no skill mentions the removed auto-promote label", () => {
     for (const name of ["ticket-refine", "ticket-to-pr"]) expect(read(name)).not.toMatch(/auto-promote|autoPromote/);
   });

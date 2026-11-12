@@ -93,6 +93,29 @@ describe("parseVerdict: qa_notes (optional manual-testing-steps field)", () => {
   });
 });
 
+describe("parseVerdict: preexisting_failures (optional, Ruling 29)", () => {
+  const withField = (value: unknown) =>
+    parseVerdict(JSON.stringify({ ...JSON.parse(validVerdictJson), preexisting_failures: value }), "executor");
+
+  it("keeps a string array: tests that fail identically on the unmodified base branch", () => {
+    const verdict = withField(["src/a.test.js > accepts a ~200KB body"]);
+    expect(verdict.outcome).toBe("landed");
+    expect(verdict.preexisting_failures).toEqual(["src/a.test.js > accepts a ~200KB body"]);
+  });
+
+  it("is absent when the skill omits it", () => {
+    expect(parseVerdict(validVerdictJson, "executor").preexisting_failures).toBeUndefined();
+  });
+
+  it("drops a malformed value without flipping the outcome", () => {
+    for (const bad of ["one string", [1, 2], [""], {}]) {
+      const verdict = withField(bad);
+      expect(verdict.outcome).toBe("landed");
+      expect(verdict.preexisting_failures).toBeUndefined();
+    }
+  });
+});
+
 describe("agentErrorVerdict", () => {
   it("builds a canonical error verdict with the given detail", () => {
     const verdict = agentErrorVerdict("verdict.json was missing");
