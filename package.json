@@ -17,7 +17,8 @@
     "loop": "node --env-file=\"${DEVLOOP_ENV_FILE:-.env}\" src/main.ts",
     "reset-project": "node src/core/reset-cli.ts",
     "reset-project:remote": "node --env-file=\"${DEVLOOP_ENV_FILE:-.env}\" src/core/reset-cli.ts",
-    "setup-qa": "playwright install chromium"
+    "setup-qa": "playwright install chromium",
+    "eval": "bash evals/run.sh"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

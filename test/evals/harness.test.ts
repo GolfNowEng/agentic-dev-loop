@@ -12,12 +12,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { loadConfig } from "../../src/core/config.ts";
 import { checkEvalConfig, SANDBOX_REPO } from "../../evals/config-guard.mjs";
 import { summarize } from "../../evals/report.mjs";
 
 const ROOT = resolve(import.meta.dirname, "../..");
+const rel = (p: string) => relative(ROOT, p);
 const EVAL_CONFIG = join(ROOT, "pipeline.eval.config.json");
 const STUBS = ["gh", "claude", "curl", "npm"] as const;
 
@@ -95,6 +96,10 @@ describe("evals harness, dry run", () => {
         HOME: process.env.HOME ?? tmp,
         DRY_RUN: "1",
         EVAL_STATE_DIR: stateDir,
+        // A node call that slipped past `outward` would load this missing
+        // env file and exit non-zero, never the real .env (and no Jira
+        // credentials are in this env at all).
+        DEVLOOP_ENV_FILE: join(tmp, "no-such.env"),
         ...env,
       },
     });
@@ -137,8 +142,9 @@ describe("evals harness, dry run", () => {
       expect(r.stdout + r.stderr).toContain(`evals/check-${name}.mjs`);
     }
     // queue works two tickets: two loop iterations.
-    const queueLoops = (r.stdout + r.stderr)
-      .split("[eval] scenario queue")[1]
+    const out = r.stdout + r.stderr;
+    const queueLoops = out
+      .slice(out.indexOf("[eval] scenario queue\n"))
       .split("\n")
       .filter((l) => l.includes("npm run loop"));
     expect(queueLoops.length).toBe(2);
@@ -239,16 +245,37 @@ describe("evals lib guards", () => {
     };
     walk(join(ROOT, "evals"));
     expect(files.length).toBeGreaterThanOrEqual(9);
+    // Outside heredoc bodies, comments and quoted strings, any gh/curl/npm/
+    // claude word, and any node call of jira.mjs or a check-*.mjs, must come
+    // after `outward` on its line (lib.sh's `api`/`jira` wrap it themselves).
+    const OUTWARD_WORD = /(^|[^\w.$/-])(gh|curl|npm|claude)(?![\w.-])|node[^\n]*(jira\.mjs|check-[\w-]+\.mjs)/;
     const hits: string[] = [];
     for (const f of files) {
+      let heredocEnd: string | null = null;
       readFileSync(f, "utf8")
         .split("\n")
         .forEach((line, i) => {
-          const code = line.replace(/#.*$/, "");
-          if (/(^|[;&|(`]|\$\()\s*(gh|curl|npm|claude)\s/.test(code)) hits.push(`${f}:${i + 1}: ${line.trim()}`);
+          if (heredocEnd !== null) {
+            if (line.trim() === heredocEnd) heredocEnd = null;
+            return;
+          }
+          const start = /<<-?\s*'?(\w+)'?/.exec(line);
+          if (start) heredocEnd = start[1];
+          const code = line
+            .replace(/^\s*#.*$/, "")
+            .replace(/\s#.*$/, "")
+            .replace(/'[^']*'/g, "''")
+            .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+          const m = OUTWARD_WORD.exec(code);
+          if (m && !code.slice(0, m.index).includes("outward")) hits.push(`${rel(f)}:${i + 1}: ${line.trim()}`);
         });
     }
     expect(hits).toEqual([]);
+    // The matcher is not a no-op.
+    expect(OUTWARD_WORD.test("run_to 10 npm run loop")).toBe(true);
+    expect(OUTWARD_WORD.test("x && gh pr close 1")).toBe(true);
+    expect(OUTWARD_WORD.test("node evals/jira.mjs close K")).toBe(true);
+    expect(OUTWARD_WORD.test('log "$GH_REPO"'.replace(/"(?:[^"\\]|\\.)*"/g, '""'))).toBe(false);
   });
 });
 
