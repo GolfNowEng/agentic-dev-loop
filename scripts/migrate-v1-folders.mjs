@@ -1,8 +1,13 @@
 // Cutover step: move the v1 state folders of both former repos under
 // dev-loop's own root, where the v2 readers look (runs/v1/<role>/,
 // .pipeline/v1/<role>/<slug>/). Dry run by default.
-//   node scripts/migrate-v1-folders.mjs --dev-root <path> --research-root <path> [--write]
-// Never touches runs/v2 or .pipeline/v2. Uses rename only (no copy fallback).
+//   node scripts/migrate-v1-folders.mjs --dev-root <path> [--research-root <path>] [--v2-from <worktree>] [--write]
+// --research-root is required unless --v2-from is given.
+// --v2-from <worktree> (Ruling 40): also move <worktree>/runs/v2 and
+// <worktree>/.pipeline/v2 to <dev-root>/runs/v2 and <dev-root>/.pipeline/v2,
+// each only if it exists. Run it after the merge, before removing the v2
+// worktree and before any loop starts from the dev root. Same refusals.
+// Otherwise never touches runs/v2 or .pipeline/v2. Uses rename only (no copy fallback).
 // Test seams: CUTOVER_PGREP overrides the pgrep executable;
 // CUTOVER_FAKE_OTHER_DEVICE=<path> makes sources under that path report a
 // different device id in the cross-volume pre-check.
@@ -15,13 +20,15 @@ function parse(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--write") o.write = true;
-    else if (a === "--dev-root" || a === "--research-root") {
+    else if (a === "--dev-root" || a === "--research-root" || a === "--v2-from") {
       const v = argv[++i];
       if (!v || v.startsWith("--")) throw new Error(`${a} needs a value`);
-      o[a === "--dev-root" ? "dev" : "research"] = resolve(v);
+      o[{ "--dev-root": "dev", "--research-root": "research", "--v2-from": "v2From" }[a]] = resolve(v);
     } else throw new Error(`unknown argument: ${a}`);
   }
-  if (!o.dev || !o.research) throw new Error("usage: --dev-root <path> --research-root <path> [--write]");
+  if (!o.dev || (!o.research && !o.v2From)) {
+    throw new Error("usage: --dev-root <path> --research-root <path> [--v2-from <worktree>] [--write] (--research-root may be omitted only with --v2-from)");
+  }
   return o;
 }
 
@@ -41,8 +48,14 @@ function entries(dir, keep) {
   return readdirSync(dir).filter(keep).sort();
 }
 
-export function plan(devRoot, researchRoot) {
+export function plan(devRoot, researchRoot, v2From) {
   const moves = [];
+  if (v2From) {
+    for (const rel of ["runs/v2", ".pipeline/v2"]) {
+      const from = join(v2From, rel);
+      if (existsSync(from) || isLink(from)) moves.push([from, join(devRoot, rel)]);
+    }
+  }
   const jsonl = (n) => n.endsWith(".jsonl");
   // lstat: a dangling symlink must not crash the run; links move as links.
   const kind = (p) => lstatSync(p);
@@ -51,13 +64,23 @@ export function plan(devRoot, researchRoot) {
     const st = kind(join(root, ".pipeline", n));
     return st.isDirectory() || st.isSymbolicLink();
   };
-  for (const [root, role] of [[devRoot, "dev"], [researchRoot, "research"]]) {
+  // Without --research-root (a --v2-from-only run, after the v1 migrate): no v1 moves.
+  const v1Roots = researchRoot ? [[devRoot, "dev"], [researchRoot, "research"]] : [];
+  for (const [root, role] of v1Roots) {
     for (const n of entries(join(root, "runs"), (n) => jsonl(n) && (kind(join(root, "runs", n)).isFile() || kind(join(root, "runs", n)).isSymbolicLink())))
       moves.push([join(root, "runs", n), join(devRoot, "runs", "v1", role, n)]);
     for (const n of entries(join(root, ".pipeline"), slug(root)))
       moves.push([join(root, ".pipeline", n), join(devRoot, ".pipeline", "v1", role, n)]);
   }
   return moves.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+}
+
+function isLink(p) {
+  try {
+    return lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 function deviceOf(p) {
@@ -73,11 +96,15 @@ function nearestExisting(p) {
 
 function main() {
   const o = parse(process.argv.slice(2));
-  if (realpathSync(o.dev) === realpathSync(o.research)) {
+  if (o.research && realpathSync(o.dev) === realpathSync(o.research)) {
     console.error("Refusing: --dev-root and --research-root are the same directory");
     process.exit(1);
   }
-  const moves = plan(o.dev, o.research);
+  if (o.v2From && realpathSync(o.dev) === realpathSync(o.v2From)) {
+    console.error("Refusing: --dev-root and --v2-from are the same directory");
+    process.exit(1);
+  }
+  const moves = plan(o.dev, o.research, o.v2From);
   for (const [from, to] of moves) console.log(`move ${from} -> ${to}`);
   const loops = runningLoops();
   if (!o.write) {
