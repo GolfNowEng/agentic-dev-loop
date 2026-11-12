@@ -1,6 +1,6 @@
 # Sandboxed agent spawns: a pluggable sandbox adapter (first adapter: sbx)
 
-Status: DRAFT, awaiting the user's review. No code yet.
+Status: Steps 1–2 built (plan 2026-11-12-sandbox-adapter-foundation.md); step 3+ pending the open user questions.
 Date: 2026-11-12. It builds on the sbx spike (same day) and the 2.0.0 design
 (`2026-11-10-dev-loop-v2-design.md`, §7 claim, §8 batch).
 
@@ -361,3 +361,19 @@ on this Mac at about 3–4 concurrent sandboxed runs.
 - Builder's call: the exact instance-name format, the notification
   wording, and the TypeScript shape of the interface (keep it
   sandbox-neutral).
+
+### Resolved during the foundation build
+
+- **Allowed terminal reasons (Task 1).** `ALLOWED_TERMINAL_REASONS = ["completed"]`. Four local usage.json files from real runs all had `terminal_reason: "completed"`, and the spike's stall had `api_error`. An absent `terminal_reason` with `is_error: false` passes.
+- **`validateConfig(raw)` (Task 2).** It was added to the SandboxAdapter interface so each adapter validates its own `sandbox.<name>` sub-block, and config.ts never learns adapter keys.
+- **Mounts (Task 5).** `sandboxMounts(repoRoot, repoDir)` gives `[repoRoot, repoDir]`, deduplicated, with repoDir dropped when it is inside repoRoot. The per-run worktree lives inside repoDir, so there is no separate worktree mount.
+
+### Carried into step 3 (sbx adapter)
+
+Requirements found during the foundation build:
+
+- (a) On the timeout and kill paths, teardown starts before inspect. The sbx adapter must make inspect work on a torn-down instance, or have teardown snapshot the denial report first. Consider adding this to the contract suite.
+- (b) A signal during prepare leaves the instance behind, and cleanupOrphans is the backstop.
+- (c) `sandboxInstanceName` can contain `_` and has no length cap. Confirm sbx's naming rules, or sanitize to `[a-z0-9-]` and cap the length.
+- (d) `TEARDOWN_GRACE_MS` (30s) bounds the teardown wait. An abandoned teardown keeps running, and cleanupOrphans cleans it up.
+- (e) The registry test pins `adapterNames()` to `["none"]`. Update it when sbx registers.
