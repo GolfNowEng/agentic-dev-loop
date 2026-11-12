@@ -1378,7 +1378,7 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       h.jira.dev = [devTicket("TARS-3")];
       await runWorkerIteration(h.deps);
       h.clock.advance(11 * MIN);
-      const t = h.clock.now().toISOString();
+      const t = new Date(h.clock.t).toISOString();
       await appendIteration(h.logPath, rec({ ticket: "TARS-3", session: "approvals", started: t, ended: t, outcome: "unparked", phases: [], resume: "dev", detail: "cleared by sandbox:approvals" }));
 
       const result = await runWorkerIteration(h.deps);

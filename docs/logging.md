@@ -322,3 +322,20 @@ comments end with a `— <session>` line.
 no dev, so a green ticket stays pending for a dev-enabled worker.
 `--phase=dev` runs it with only dev enabled: steps 1 and 3, plus the v1
 reconcile pass.
+
+## Parked tickets
+
+When an enforcing sandbox refuses a phase run, the loop appends a `parked`
+record (`phases: []`, `resume` set, details under `parked`) and skips the
+ticket until it is cleared.
+
+```
+npm run sandbox:approvals                          # list parked tickets (webtarsthree)
+npm run sandbox:approvals -- --project=<name>
+npm run sandbox:approvals -- --clear=TARS-123      # un-park one
+```
+
+The list shows each refusal (`kind target`) and the adapter's allow hint. The
+script only prints the hint; run it yourself, then `--clear=<KEY>`, which
+appends an `unparked` record. The next loop iteration resumes the ticket's
+parked role. A key that is not currently parked exits 1.

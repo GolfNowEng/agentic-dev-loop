@@ -17,6 +17,7 @@ History before 2.0.0 lives in two files, one per former repo:
 
 Not built yet. Design: [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[core]` `npm run sandbox:approvals` lists parked tickets with what was refused and the adapter's allow hint (printed, never run); `--clear=<KEY>` un-parks one.
 - `[core]` A failed `claude -p` is detected from its JSON result
   (`is_error` / `terminal_reason`), not just its exit code. In the sbx
   spike, a run with no credential hung for about 3 min, then exited 0 with
