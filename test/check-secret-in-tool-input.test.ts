@@ -105,6 +105,35 @@ describe("decideExitCode: Bash gh pr shape (from dev-loop)", () => {
   });
 });
 
+describe("decideExitCode: gh pr comment/review and gh api body writes (final review M4)", () => {
+  const bash = (command: string) => JSON.stringify({ tool_name: "Bash", tool_input: { command } });
+  const SECRET = "CLIENT_SECRET=abcdefghijklmnop";
+  for (const command of [
+    `gh pr comment 42 --body "${SECRET}"`,
+    `gh pr comment 42 -b "${SECRET}"`,
+    `gh pr review 42 --comment --body "${SECRET}"`,
+    `gh pr review 42 --approve -b "${SECRET}"`,
+    `gh api repos/o/r/issues/42/comments -f body="${SECRET}"`,
+    `gh api repos/o/r/issues/42/comments -F body="${SECRET}"`,
+    `gh api repos/o/r/pulls/42/reviews --raw-field body="${SECRET}"`,
+    `gh api -X POST repos/o/r/issues/42/comments --field 'body=${SECRET}'`,
+  ]) {
+    it(`exits 1 for a secret in: ${command.replace(SECRET, "<secret>")}`, () => {
+      expect(decideExitCode(bash(command))).toBe(1);
+    });
+  }
+  for (const command of [
+    'gh pr comment 42 --body "LGTM, clean"',
+    'gh pr review 42 --approve -b "clean"',
+    'gh api repos/o/r/issues/42/comments -f body="clean"',
+    `gh api repos/o/r/pulls/42 # ${SECRET}`,
+  ]) {
+    it(`exits 0 for: ${command.replace(SECRET, "<secret>")}`, () => {
+      expect(decideExitCode(bash(command))).toBe(0);
+    });
+  }
+});
+
 describe("decideExitCode: mcp__atlassian__ and gh issue shapes (from research-loop)", () => {
   it("exits 0 for clean tool_input.commentBody", () => {
     const stdin = JSON.stringify({

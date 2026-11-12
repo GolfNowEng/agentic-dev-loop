@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { trackSession } from "../../src/worker/signal.ts";
+import { stopOnSignal, trackSession } from "../../src/worker/signal.ts";
 import type { Session } from "../../src/core/session.ts";
 import { makeSession } from "./helpers.ts";
 
@@ -35,6 +35,51 @@ describe("trackSession (SIGINT/SIGTERM)", () => {
     expect(await t.onSignal()).toBe("marked-interrupted");
     expect(fake.current).toEqual(FLIGHT);
     expect(logError).toHaveBeenCalledWith(expect.stringMatching(/interrupted/));
+  });
+});
+
+describe("stopOnSignal (final review I5)", () => {
+  it("stops the running child first, then marks the flight interrupted, then exits 143 on SIGTERM", async () => {
+    const order: string[] = [];
+    const fake = makeSession();
+    const t = trackSession(fake as unknown as Session);
+    await t.session.setInFlight(FLIGHT);
+    fake.setInFlight.mockImplementation(async () => {
+      order.push("mark");
+    });
+
+    await stopOnSignal("SIGTERM", {
+      tracked: t,
+      killChild: async () => {
+        order.push("kill");
+        return "killed";
+      },
+      exit: (code) => {
+        order.push(`exit ${code}`);
+      },
+    });
+
+    expect(order).toEqual(["kill", "mark", "exit 143"]);
+  });
+
+  it("exits 130 on SIGINT, and still exits when stopping the child throws", async () => {
+    const fake = makeSession();
+    const t = trackSession(fake as unknown as Session);
+    const exit = vi.fn();
+    const logError = vi.fn();
+
+    await stopOnSignal("SIGINT", {
+      tracked: t,
+      killChild: async () => {
+        throw new Error("boom");
+      },
+      exit,
+      logError,
+    });
+
+    expect(fake.release).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(130);
+    expect(logError).toHaveBeenCalledWith(expect.stringMatching(/boom/));
   });
 });
 

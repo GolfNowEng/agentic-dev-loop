@@ -158,4 +158,96 @@ describe("scripts/migrate-v1-folders.mjs", () => {
     const r = await run("node", [SCRIPT, "--dev-root", dev]).then(() => ({ code: 0 }), (e) => ({ code: e.code as number }));
     expect(r.code).not.toBe(0);
   });
+
+  describe("--v2-from <worktree> (final review I1, Ruling 40)", () => {
+    let wt: string, main: string;
+    beforeEach(async () => {
+      wt = join(tmp, "worktree");
+      main = join(tmp, "main");
+      await mkdir(join(wt, "runs/v2"), { recursive: true });
+      await mkdir(join(wt, ".pipeline/v2/webtarsthree/sessions"), { recursive: true });
+      await writeFile(join(wt, "runs/v2/webtarsthree.jsonl"), "landed #580\n");
+      await writeFile(join(wt, ".pipeline/v2/webtarsthree/sessions/dev-1.lock"), "{}\n");
+      await mkdir(join(main, "runs"), { recursive: true });
+    });
+
+    const v2go = (args: string[], pgrep: string, env: Record<string, string> = {}) =>
+      run("node", [SCRIPT, ...args], { env: { ...process.env, CUTOVER_PGREP: pgrep, ...env } }).then(
+        (r) => ({ code: 0, ...r }),
+        (e) => ({ code: e.code as number, stdout: e.stdout as string, stderr: e.stderr as string }),
+      );
+
+    it("on its own (no --research-root): dry run prints exactly the two v2 moves and moves nothing", async () => {
+      const before = await snapshot(tmp);
+      const r = await v2go(["--dev-root", main, "--v2-from", wt], noLoop);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toBe(
+        [`move ${wt}/.pipeline/v2 -> ${main}/.pipeline/v2`, `move ${wt}/runs/v2 -> ${main}/runs/v2`, ""].join("\n"),
+      );
+      expect(await snapshot(tmp)).toEqual(before);
+    });
+
+    it("--write moves runs/v2 and .pipeline/v2 into the dev root", async () => {
+      const r = await v2go(["--dev-root", main, "--v2-from", wt, "--write"], noLoop);
+      expect(r.code).toBe(0);
+      expect(await readFile(join(main, "runs/v2/webtarsthree.jsonl"), "utf8")).toBe("landed #580\n");
+      expect(await readFile(join(main, ".pipeline/v2/webtarsthree/sessions/dev-1.lock"), "utf8")).toBe("{}\n");
+      await expect(stat(join(wt, "runs/v2"))).rejects.toThrow();
+      await expect(stat(join(wt, ".pipeline/v2"))).rejects.toThrow();
+    });
+
+    it("plans only the sources that exist", async () => {
+      await rm(join(wt, ".pipeline"), { recursive: true });
+      const r = await v2go(["--dev-root", main, "--v2-from", wt], noLoop);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toBe(`move ${wt}/runs/v2 -> ${main}/runs/v2\n`);
+    });
+
+    it("combines with --research-root: the v1 moves plus the v2 moves, sorted", async () => {
+      const r = await v2go(["--dev-root", dev, "--research-root", research, "--v2-from", wt], noLoop);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain(`move ${wt}/runs/v2 -> ${dev}/runs/v2`);
+      expect(r.stdout).toContain(`move ${dev}/runs/webtarsthree.jsonl -> ${dev}/runs/v1/dev/webtarsthree.jsonl`);
+    });
+
+    it("refuses when a destination exists (the dev root already has runs/v2)", async () => {
+      await mkdir(join(main, "runs/v2"), { recursive: true });
+      const before = await snapshot(tmp);
+      const r = await v2go(["--dev-root", main, "--v2-from", wt, "--write"], noLoop);
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain("destination exists");
+      expect(await snapshot(tmp)).toEqual(before);
+    });
+
+    it("refuses --write while a loop is running", async () => {
+      const before = await snapshot(tmp);
+      const r = await v2go(["--dev-root", main, "--v2-from", wt, "--write"], loop);
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain("src/main.ts");
+      expect(await snapshot(tmp)).toEqual(before);
+    });
+
+    it("refuses a cross-device move before moving anything", async () => {
+      const before = await snapshot(tmp);
+      const r = await v2go(["--dev-root", main, "--v2-from", wt, "--write"], noLoop, { CUTOVER_FAKE_OTHER_DEVICE: wt });
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain("different filesystem");
+      expect(await snapshot(tmp)).toEqual(before);
+    });
+
+    it("refuses when --v2-from is the dev root (even via symlink)", async () => {
+      const alias = join(tmp, "alias-main");
+      await symlink(main, alias);
+      const r = await v2go(["--dev-root", main, "--v2-from", alias], noLoop);
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain("same directory");
+      expect(r.stdout).toBe("");
+    });
+
+    it("still requires --research-root when --v2-from is absent", async () => {
+      const r = await v2go(["--dev-root", main], noLoop);
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain("--research-root");
+    });
+  });
 });

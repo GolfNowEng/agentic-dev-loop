@@ -9,6 +9,8 @@ import {
   childEnv,
   killedTimeoutVerdict,
   POST_KILL_GRACE_MS,
+  KILL_GRACE_MS,
+  killActiveChild,
 } from "../../src/core/spawn-claude.ts";
 import type { SpawnClaudeOpts, SpawnFn, SpawnClaudeDeps } from "../../src/core/spawn-claude.ts";
 import { parseVerdict } from "../../src/core/verdict.ts";
@@ -499,6 +501,81 @@ describe("spawnClaudeRun", () => {
 
     expect(result.started).toBe("2026-11-10T10:00:00.000Z");
     expect(result.ended).toBe("2026-11-10T10:05:00.000Z");
+  });
+});
+
+describe("killActiveChild (final review I5: a signal stops the running claude -p)", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "spawn-claude-kill-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  const opts = (): SpawnClaudeOpts => ({
+    prompt: "/ticket-to-pr TARS-1",
+    model: "sonnet",
+    allowedTools: "Bash",
+    addDir: null,
+    timeoutMin: 75,
+    maxBudgetUsd: 20,
+    stream: false,
+    ticketKey: "TARS-1",
+    rawUsagePath: join(dir, "raw.json"),
+    env: {},
+  });
+  const quiet = { log: () => {}, logError: () => {} };
+
+  it("is a no-op ('none') when no child is running", async () => {
+    const timers = makeFakeTimers();
+    expect(await killActiveChild(timers)).toBe("none");
+    expect(timers.pendingCount()).toBe(0);
+  });
+
+  it("SIGTERMs the running child and resolves 'exited' when it exits, with no SIGKILL", async () => {
+    const timers = makeFakeTimers();
+    const child = new FakeChild("SIGTERM");
+    const run = spawnClaudeRun(opts(), { ...quiet, spawn: () => child as never, ...timers });
+    await flush();
+
+    const killed = killActiveChild(timers);
+    expect(child.signals).toEqual(["SIGTERM"]);
+    expect(await killed).toBe("exited");
+    await run;
+    timers.advance(KILL_GRACE_MS);
+    expect(child.signals).toEqual(["SIGTERM"]);
+  });
+
+  it("SIGKILLs a child still running KILL_GRACE_MS after the SIGTERM, then resolves 'killed'", async () => {
+    const timers = makeFakeTimers();
+    const child = new FakeChild(null); // ignores SIGTERM
+    const run = spawnClaudeRun(opts(), { ...quiet, spawn: () => child as never, ...timers });
+    await flush();
+
+    let done: string | null = null;
+    const killed = killActiveChild(timers).then((r) => (done = r));
+    expect(child.signals).toEqual(["SIGTERM"]);
+    timers.advance(KILL_GRACE_MS - 1);
+    await flush();
+    expect(child.signals).toEqual(["SIGTERM"]);
+    expect(done).toBeNull();
+    timers.advance(1);
+    expect(child.signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(await killed).toBe("killed");
+    await run;
+  });
+
+  it("forgets the child once its run has ended", async () => {
+    const child = new FakeChild();
+    await spawnClaudeRun(opts(), {
+      ...quiet,
+      spawn: () => {
+        child.finish("{}");
+        return child as never;
+      },
+    });
+    expect(await killActiveChild(makeFakeTimers())).toBe("none");
+    expect(child.signals).toEqual([]);
   });
 });
 

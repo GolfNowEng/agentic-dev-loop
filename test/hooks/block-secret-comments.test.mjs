@@ -60,6 +60,29 @@ const mcp = (tool_name, tool_input) => JSON.stringify({ tool_name, tool_input })
   check("gh pr view: exit code is 0", result.status === 0, `got ${result.status}`);
 }
 
+// Final review M4: gh pr comment, gh pr review --body/-b and gh api -f/-F body= are scanned too.
+for (const command of [
+  `gh pr comment 42 --body "${SECRET}"`,
+  `gh pr review 42 --comment -b "${SECRET}"`,
+  `gh api repos/o/r/issues/42/comments -f body="${SECRET}"`,
+  `gh api repos/o/r/pulls/42/reviews -F 'body=${SECRET}'`,
+  `direnv exec /tmp/w gh pr comment 42 --body "${SECRET}"`,
+]) {
+  const label = command.replace(SECRET, "<secret>");
+  const result = run(bash(command));
+  check(`secret-shaped ${label}: exit code is 2`, result.status === 2, `got ${result.status}`);
+  check(`secret-shaped ${label}: stderr does not echo the secret`, !result.stderr.includes("abcdefghijklmnop"), result.stderr);
+}
+for (const command of [
+  'gh pr comment 42 --body "clean"',
+  'gh pr review 42 --approve -b "clean"',
+  'gh api repos/o/r/issues/42/comments -f body="clean"',
+  `gh api repos/o/r/pulls/42 # ${SECRET}`,
+]) {
+  const result = run(bash(command));
+  check(`clean/unscanned ${JSON.stringify(command.replace(SECRET, "<secret>"))}: exit code is 0`, result.status === 0, `got ${result.status}, stderr: ${result.stderr}`);
+}
+
 // gh pr create split across lines (the reason the pre-filter is three
 // independent word checks, not one `.*` regex).
 {

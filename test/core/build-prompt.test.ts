@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolve } from "node:path";
-import { buildSkillPrompt, checkAbsPath, claudeEnvFor, repoDirFor, SKILL_NAME } from "../../src/core/build-prompt.ts";
+import { buildSkillPrompt, checkAbsPath, checkRepoDirPlacement, claudeEnvFor, repoDirFor, SKILL_NAME } from "../../src/core/build-prompt.ts";
 import { resolveRepoPath, v2CloneDir, UnsafePathError } from "../../src/core/paths.ts";
 import { makeV2Config } from "../fixtures/config.ts";
 
@@ -92,5 +92,31 @@ describe("claudeEnvFor", () => {
   it("follows the role's own timeout (research 120 min)", () => {
     const env = claudeEnvFor({ maxRunsPerDay: 100, maxCostPerRunUsd: 50, runTimeoutMin: 120 }, {});
     expect(env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBe(String(120 * 60_000));
+  });
+});
+
+describe("checkRepoDirPlacement (final review parked #1)", () => {
+  const ROOT = "/abs/Repos/dev-loop";
+  const CLONE = "/abs/Repos/dev-loop/.pipeline/v2/repo/repo";
+
+  it("accepts a sibling checkout and the v2 clone dir", () => {
+    expect(checkRepoDirPlacement("/abs/Repos/webtarsthree", ROOT, CLONE)).toBe("/abs/Repos/webtarsthree");
+    expect(checkRepoDirPlacement(CLONE, ROOT, CLONE)).toBe(CLONE);
+    expect(checkRepoDirPlacement("/abs/Repos/dev-loop-v2", ROOT, CLONE)).toBe("/abs/Repos/dev-loop-v2");
+  });
+
+  it("refuses the dev-loop root itself", () => {
+    expect(() => checkRepoDirPlacement(ROOT, ROOT, CLONE)).toThrow(/dev-loop root/);
+  });
+
+  it("refuses an ancestor of the dev-loop root (the research deny would cover RUN_DIR)", () => {
+    expect(() => checkRepoDirPlacement("/abs/Repos", ROOT, CLONE)).toThrow(/ancestor/);
+    expect(() => checkRepoDirPlacement("/", ROOT, CLONE)).toThrow(UnsafePathError);
+  });
+
+  it("refuses a dir inside the dev-loop root other than the v2 clone dir", () => {
+    expect(() => checkRepoDirPlacement(`${ROOT}/src`, ROOT, CLONE)).toThrow(/inside the dev-loop root/);
+    expect(() => checkRepoDirPlacement(`${CLONE}/sub`, ROOT, CLONE)).toThrow(UnsafePathError);
+    expect(() => checkRepoDirPlacement(`${ROOT}/.pipeline/v2/other/repo`, ROOT, CLONE)).toThrow(UnsafePathError);
   });
 });

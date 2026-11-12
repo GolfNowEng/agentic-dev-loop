@@ -286,3 +286,25 @@ describe("structure: research-loop/ is gone", () => {
     expect(existsSync(join(ROOT, "src/roles/research/stance.md"))).toBe(true);
   });
 });
+
+describe("structure: final-review fixes stay wired", () => {
+  it("settings.json denies Read as well as Edit of /.env* (I4)", () => {
+    const settings = JSON.parse(readFileSync(join(ROOT, ".claude/settings.json"), "utf8")) as { permissions: { deny: string[] } };
+    expect(settings.permissions.deny).toContain("Edit(/.env*)");
+    expect(settings.permissions.deny).toContain("Read(/.env*)");
+  });
+
+  it("main.ts checks REPO_DIR placement right after checkAbsPath (parked #1)", () => {
+    const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
+    expect(main).toMatch(/checkAbsPath\("repo-dir", [^\n]*\n[^\n]*checkRepoDirPlacement\(/);
+  });
+
+  it("main.ts's signal handler stops the running claude -p child (I5)", () => {
+    const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
+    expect(main).toMatch(/stopOnSignal\(sig, \{[^}]*killChild: \(\) => killActiveChild\(\)/s);
+  });
+
+  it("the throwaway v1 size-checkpoint script is gone (M3)", () => {
+    expect(existsSync(join(ROOT, "scripts/size-checkpoint.mjs"))).toBe(false);
+  });
+});
