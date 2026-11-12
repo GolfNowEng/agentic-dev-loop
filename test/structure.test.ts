@@ -212,6 +212,28 @@ describe("structure: skill prose (Ruling 24)", () => {
     });
   });
 
+  describe("target-repo env: every target command runs through direnv exec (Ruling 31)", () => {
+    it("ticket-to-pr's Target repo section names `direnv exec <worktree>` for tests, hooks and builds", () => {
+      const t = read("ticket-to-pr");
+      const target = t.slice(t.indexOf("## Target repo"), t.indexOf("### Resume"));
+      expect(target).toContain("Run every target-repo command through `direnv exec`");
+      expect(target).toMatch(/direnv exec <REPO_DIR>\/\.claude\/worktrees\/<TICKET>-<RUN_ID>/);
+      expect(target).toMatch(/git commit[^\n]*and `git push`/);
+      expect(target).toMatch(/not a bug on <defaultBranch>/i);
+    });
+
+    it("the baseline suite run uses it too", () => {
+      const t = read("ticket-to-pr");
+      const p0 = t.slice(t.indexOf("### Phase 0"), t.indexOf("### Phase 1"));
+      expect(p0).toMatch(/Baseline suite[\s\S]*direnv exec/);
+    });
+
+    it("qa-agent runs the app and tests through direnv exec", () => {
+      const qa = readFileSync(join(ROOT, ".claude/agents/qa-agent.md"), "utf8");
+      expect(qa).toContain("direnv exec");
+    });
+  });
+
   it("no skill mentions the removed auto-promote label", () => {
     for (const name of ["ticket-refine", "ticket-to-pr"]) expect(read(name)).not.toMatch(/auto-promote|autoPromote/);
   });
