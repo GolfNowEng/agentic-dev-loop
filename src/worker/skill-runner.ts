@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { roleView, targetRepoAddDir } from "../core/config.ts";
 import type { Config, Role } from "../core/types.ts";
 import { resolveRepoPath } from "../core/paths.ts";
-import { buildSkillPrompt, claudeEnvFor, repoDirFor, SKILL_NAME } from "../core/build-prompt.ts";
+import { buildSkillPrompt, checkAbsPath, claudeEnvFor, repoDirFor, SKILL_NAME } from "../core/build-prompt.ts";
 import { redactSensitive } from "../core/redact.ts";
 import type { RunSkillFn, RunSkillResult } from "../core/run-skill.ts";
 import { startProgressTail, type SpawnClaudeOpts, type SpawnClaudeResult } from "../core/spawn-claude.ts";
@@ -62,7 +62,9 @@ function logNoVerdictDiagnostics(logError: (m: string) => void, skill: string, t
 }
 
 export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
-  const repoDir = repoDirFor(deps.config, deps.slug);
+  // Validated here, at startup (main.ts builds this before the loop), so a
+  // malformed targetRepo.path exits 1 instead of failing every ticket.
+  const repoDir = checkAbsPath("repo-dir", repoDirFor(deps.config, deps.slug));
   // --add-dir: a targetRepo.path checkout sits outside the repo root, so
   // without it every Edit/Write in the worktree is denied (TARS-1393). The
   // v2 clone is under the repo root already.
@@ -88,6 +90,13 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
         addDir,
         cwd: deps.repoRoot,
         excludeClaudeMd: role === "research" ? researchClaudeMdExcludes(deps.repoRoot) : [],
+        // Research must not write the target checkout (Ruling 27). --allowedTools
+        // only auto-approves; acceptEdits + --add-dir would otherwise make
+        // REPO_DIR writable. RUN_DIR (under the repo root) stays writable for
+        // draft-spec.md/verdict.json. This is only partly read-only: research
+        // still has broad Bash, which this deny does not cover.
+        denyEditsUnder: role === "research" ? [repoDir] : [],
+        logPrefix: skill,
         ...(role === "research" ? { appendSystemPrompt: deps.researchStance } : {}),
         timeoutMin: view.limits.runTimeoutMin,
         maxBudgetUsd,

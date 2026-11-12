@@ -24,7 +24,7 @@ The loop runner (`src/worker/skill-runner.ts`) invokes each skill as
   (ticket-to-pr) or `...-<RUN_ID>-ground` (ticket-refine). `RUN_ID` is the last
   segment of `RUN_DIR` after its `<role>-` prefix.
 - `src/core/build-prompt.ts` builds the line from validated values only (the
-  key through `TICKET_KEY`, absolute normalized paths with no whitespace, a
+  key through `TICKET_KEY`, absolute normalized paths of `[A-Za-z0-9@._/+-]` only, a
   run dir ending in `/<KEY>/<role>-<RUN_ID>` under `/.pipeline/v2/`) and throws
   otherwise. The skills check again: a missing or malformed `run-dir=`/
   `repo-dir=` (not absolute, or no `/.pipeline/v2/`) means write no files and
@@ -32,7 +32,11 @@ The loop runner (`src/worker/skill-runner.ts`) invokes each skill as
 - Both roles spawn with cwd = the repo root. Research adds
   `--settings {"claudeMdExcludes":["<repo>/CLAUDE.md"]}` (the root CLAUDE.md
   is the dev stance) and `--append-system-prompt <src/roles/research/stance.md>`
-  (the skeptic stance; formerly `research-loop/CLAUDE.md`, which is gone).
+  (the skeptic stance; formerly `research-loop/CLAUDE.md`, which is gone),
+  plus `permissions.deny` on Edit/Write/NotebookEdit under `REPO_DIR`
+  (`--allowedTools` only auto-approves; without the deny, acceptEdits +
+  `--add-dir` let research write the target checkout). Research writes only
+  `RUN_DIR`; its Bash is not restricted, so it is only partly read-only.
 - Every spawn: `--max-budget-usd`, a kill at the role's `runTimeoutMin`, and
   `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = runTimeoutMin × 60000`.
 - The contract strings (`✅ research-loop -`, `❌ research-loop -`) are

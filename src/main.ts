@@ -50,7 +50,7 @@ import { acquireSession, isProcessAlive, LiveWorkerError } from "./core/session.
 import { trackSession, type TrackedSession } from "./worker/signal.ts";
 import { findLandedPrUrlAcross, hasLandedV1 } from "./core/iteration-log.ts";
 import { parseArgs, preflight, type Phase } from "./core/cli-args.ts";
-import { SKILL_NAME } from "./core/build-prompt.ts";
+import { checkAbsPath, repoDirFor, SKILL_NAME } from "./core/build-prompt.ts";
 import { spawnClaudeRun } from "./core/spawn-claude.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
 import { makeRunSkill } from "./worker/skill-runner.ts";
@@ -180,7 +180,7 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
         research: runsResearch ? gitFileSha(REFINE_SKILL_MD_PATH) : "",
         dev: runsDev ? gitFileSha(DEV_SKILL_MD_PATH) : "",
       },
-      spawn: (opts) => spawnClaudeRun(opts, { logPrefix: opts.prompt.split(" ")[0].slice(1), log, logError }),
+      spawn: (opts) => spawnClaudeRun(opts, { log, logError }),
       beforeRun: (_role, key) => ensureMirrorIssue(ctx, key),
       log,
       logError,
@@ -255,6 +255,8 @@ async function main(): Promise<void> {
   }
   // Fail before any I/O if the research stance is missing (it replaces the excluded root CLAUDE.md).
   const researchStance = roles.includes("research") ? await loadResearchStance(REPO_ROOT) : "";
+  // REPO_DIR goes into every prompt: a malformed targetRepo.path exits 1 here, before the lock.
+  checkAbsPath("repo-dir", repoDirFor(config, slug));
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();

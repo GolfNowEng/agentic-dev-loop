@@ -63,6 +63,17 @@ export interface SpawnClaudeOpts {
   appendSystemPrompt?: string;
   /** The child's working directory. Omitted: this process's cwd. */
   cwd?: string;
+  /**
+   * Absolute directories the child must not Edit/Write/NotebookEdit under,
+   * passed as `permissions.deny` (`Edit(//<dir>/**)` etc.; `//` anchors at
+   * the filesystem root) in the same `--settings` JSON as claudeMdExcludes.
+   * Verified live in 2.1.322: denied even under `--permission-mode
+   * acceptEdits` + `--add-dir <dir>`. Must be absolute with no glob
+   * characters, or the spawn is refused (spawnError).
+   */
+  denyEditsUnder?: string[];
+  /** Prefix for this run's log lines (the skill name). Overrides SpawnClaudeDeps.logPrefix. */
+  logPrefix?: string;
 }
 
 export interface SpawnClaudeResult {
@@ -254,7 +265,26 @@ export function startProgressTail(
   };
 }
 
+const DENY_DIR = /^\/[A-Za-z0-9@._/+-]*$/;
+
+/** The `--settings` JSON, or null when there is nothing to set. Throws on an unsafe deny dir. */
+export function settingsJson(opts: Pick<SpawnClaudeOpts, "excludeClaudeMd" | "denyEditsUnder">): string | null {
+  const settings: { claudeMdExcludes?: string[]; permissions?: { deny: string[] } } = {};
+  if (opts.excludeClaudeMd && opts.excludeClaudeMd.length > 0) settings.claudeMdExcludes = opts.excludeClaudeMd;
+  const dirs = opts.denyEditsUnder ?? [];
+  for (const d of dirs) {
+    if (!DENY_DIR.test(d)) throw new Error(`denyEditsUnder: ${JSON.stringify(d)} must be an absolute path with no glob characters`);
+  }
+  if (dirs.length > 0) {
+    settings.permissions = {
+      deny: dirs.flatMap((d) => ["Edit", "Write", "NotebookEdit"].map((tool) => `${tool}(/${d.replace(/\/+$/, "")}/**)`)),
+    };
+  }
+  return Object.keys(settings).length > 0 ? JSON.stringify(settings) : null;
+}
+
 function buildArgs(opts: SpawnClaudeOpts): string[] {
+  const settings = settingsJson(opts);
   return [
     "-p",
     opts.prompt,
@@ -267,9 +297,7 @@ function buildArgs(opts: SpawnClaudeOpts): string[] {
     opts.allowedTools,
     "--max-budget-usd",
     String(opts.maxBudgetUsd),
-    ...(opts.excludeClaudeMd && opts.excludeClaudeMd.length > 0
-      ? ["--settings", JSON.stringify({ claudeMdExcludes: opts.excludeClaudeMd })]
-      : []),
+    ...(settings !== null ? ["--settings", settings] : []),
     ...(opts.appendSystemPrompt ? ["--append-system-prompt", opts.appendSystemPrompt] : []),
     ...(opts.stream
       ? ["--output-format", "stream-json", "--verbose"]
@@ -410,7 +438,7 @@ export async function spawnClaudeRun(
     setTimeout: injected.setTimeout ?? setTimeout,
     clearTimeout: injected.clearTimeout ?? clearTimeout,
     now: injected.now ?? (() => new Date()),
-    logPrefix: injected.logPrefix ?? "claude",
+    logPrefix: opts.logPrefix ?? injected.logPrefix ?? "claude",
     log: injected.log ?? defaultLog,
     logError: injected.logError ?? defaultLogError,
   };

@@ -22,9 +22,18 @@ export interface SkillPromptArgs {
   repoDir: string;
 }
 
-function absPath(label: string, value: string): string {
-  if (typeof value !== "string" || value.length === 0 || /\s/.test(value)) {
-    throw new UnsafePathError(`${label} ${JSON.stringify(value)} must be a non-empty path with no whitespace`);
+/**
+ * Characters a path in the prompt may contain. The skills paste REPO_DIR and
+ * RUN_DIR unquoted into Bash (`git -C <REPO_DIR> fetch`), so this is an
+ * allowlist, not a denylist: no whitespace, quotes, `;`, `$`, backticks,
+ * globs or `\`. `@` stays allowed for an email-shaped $HOME.
+ */
+export const SAFE_PATH = /^[A-Za-z0-9@._/+-]+$/;
+
+/** Throws UnsafePathError unless `value` is an absolute, normalized path of SAFE_PATH characters. */
+export function checkAbsPath(label: string, value: string): string {
+  if (typeof value !== "string" || !SAFE_PATH.test(value)) {
+    throw new UnsafePathError(`${label} ${JSON.stringify(value)} must be a non-empty path of the characters ${SAFE_PATH}`);
   }
   if (!isAbsolute(value) || normalize(value) !== value || value.split("/").includes("..")) {
     throw new UnsafePathError(`${label} ${JSON.stringify(value)} must be absolute and normalized`);
@@ -38,8 +47,8 @@ export function buildSkillPrompt({ role, ticketKey, runDir, repoDir }: SkillProm
   if (typeof ticketKey !== "string" || !TICKET_KEY.test(ticketKey)) {
     throw new UnsafePathError(`ticket key ${JSON.stringify(ticketKey)} must match ${TICKET_KEY}`);
   }
-  absPath("run-dir", runDir);
-  absPath("repo-dir", repoDir);
+  checkAbsPath("run-dir", runDir);
+  checkAbsPath("repo-dir", repoDir);
   if (!runDir.includes("/.pipeline/v2/")) {
     throw new UnsafePathError(`run-dir ${JSON.stringify(runDir)} must be under .pipeline/v2/`);
   }
