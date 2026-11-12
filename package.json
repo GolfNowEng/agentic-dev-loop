@@ -1,5 +1,6 @@
 {
   "name": "dev-loop",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -7,13 +8,17 @@
   },
   "scripts": {
     "test": "vitest run",
+    "test:hooks": "for f in test/hooks/*.test.mjs; do node \"$f\" || exit 1; done",
     "build": "tsc",
-    "check-auth": "node --env-file=.env scripts/check-jira-auth.mjs",
+    "check-auth": "node --env-file=\"${DEVLOOP_ENV_FILE:-.env}\" scripts/check-jira-auth.mjs",
     "stats": "node scripts/stats.mjs",
-    "loop": "node --env-file=.env src/main.ts",
-    "reset-project": "node src/reset-cli.ts",
-    "reset-project:remote": "node --env-file=.env src/reset-cli.ts",
-    "setup-qa": "playwright install chromium"
+    "cutover:migrate": "node scripts/migrate-v1-folders.mjs",
+    "cutover:relabel": "node --env-file=\"${DEVLOOP_ENV_FILE:-.env}\" scripts/relabel-v1-refined.mjs",
+    "loop": "node --env-file=\"${DEVLOOP_ENV_FILE:-.env}\" src/main.ts",
+    "reset-project": "node src/core/reset-cli.ts",
+    "reset-project:remote": "node --env-file=\"${DEVLOOP_ENV_FILE:-.env}\" src/core/reset-cli.ts",
+    "setup-qa": "playwright install chromium",
+    "eval": "bash evals/run.sh"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

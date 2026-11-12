@@ -1,76 +1,129 @@
-// Success/failure rate rollup over a project's runs log. Run with:
-//   npm run stats [-- --project webtarsthree --days N]
+// Success/failure rollup over a project's run logs. Read-only, no
+// dependencies. Run with:
+//   npm run stats [-- --project webtarsthree --days N --v1 --root <dir>]
 //
-// Default project is "webtarsthree", default lookback is 7 days. This is
-// the "track success/failure rates over time" view -- runs/<project>.jsonl
-// already has everything needed (outcome, failure_category, timestamps);
-// this just aggregates it instead of making you remember a jq incantation.
+// Default (v2): runs/v2/<project>.jsonl, counted per role from PHASE
+// entries (a record may hold a research and a dev phase; records with no
+// phases, e.g. handoff-done or interrupted, contribute nothing). A phase
+// is in the window when its `started` is within --days (default 7).
+//
+// --v1: the v1 logs, dev and research reported separately. Each role reads
+// runs/v1/<role>/<project>.jsonl when it exists, else the pre-cutover live
+// log (dev: runs/<project>.jsonl, research: research-loop/runs/<project>.jsonl);
+// the output names the file read.
+//
+// --root: the state root the paths above are under (default: this repo's
+// root). Never writes anything.
 
 import { readFile } from "node:fs/promises";
+import { resolve, join } from "node:path";
 
-const daysArgIndex = process.argv.indexOf("--days");
-const days =
-  daysArgIndex !== -1 && process.argv[daysArgIndex + 1]
-    ? Number(process.argv[daysArgIndex + 1])
-    : 7;
+function arg(name, fallback) {
+  const eq = process.argv.find((a) => a.startsWith(`${name}=`));
+  if (eq) return eq.slice(name.length + 1);
+  const i = process.argv.indexOf(name);
+  return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+}
 
-const projectArgIndex = process.argv.indexOf("--project");
-const project =
-  projectArgIndex !== -1 && process.argv[projectArgIndex + 1]
-    ? process.argv[projectArgIndex + 1]
-    : "webtarsthree";
+const days = Number(arg("--days", "7"));
+const project = arg("--project", "webtarsthree");
+const root = resolve(arg("--root", resolve(import.meta.dirname, "..")));
+const v1 = process.argv.includes("--v1");
 
-const RUNS_LOG_PATH = `./runs/${project}.jsonl`;
-
-let raw;
-try {
-  raw = await readFile(RUNS_LOG_PATH, "utf8");
-} catch {
-  console.log(`No ${RUNS_LOG_PATH} yet -- no runs recorded.`);
-  process.exit(0);
+if (!/^[a-z0-9-]+$/.test(project)) {
+  console.error(`--project ${JSON.stringify(project)} must match /^[a-z0-9-]+$/`);
+  process.exit(1);
+}
+if (!Number.isFinite(days) || days <= 0) {
+  console.error(`--days must be a positive number`);
+  process.exit(1);
 }
 
 const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+const inWindow = (started) => {
+  const t = Date.parse(started);
+  return !Number.isNaN(t) && t >= cutoff;
+};
 
-const lines = raw
-  .split("\n")
-  .filter((l) => l.trim().length > 0)
-  .map((l) => JSON.parse(l))
-  .filter((line) => new Date(line.started).getTime() >= cutoff);
+/** Parsed objects, plus how many non-blank lines were unreadable; null if the file is missing. */
+async function readJsonl(path) {
+  let raw;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch {
+    return null;
+  }
+  const rows = [];
+  let skipped = 0;
+  for (const line of raw.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const v = JSON.parse(line);
+      if (v && typeof v === "object") rows.push(v);
+      else skipped++;
+    } catch {
+      skipped++;
+    }
+  }
+  return { rows, skipped };
+}
 
-if (lines.length === 0) {
-  console.log(`No runs in the last ${days} day(s).`);
+/** One summary line from entries with {outcome, cost_usd, failure_category}. */
+function tally(entries) {
+  const n = { total: entries.length, landed: 0, bounced: 0, failed: 0, cost: 0, other: {}, categories: {} };
+  for (const e of entries) {
+    if (e.outcome === "landed") n.landed++;
+    else if (e.outcome === "bounced") n.bounced++;
+    else if (e.outcome === "error" || e.outcome === "killed") n.failed++;
+    else n.other[e.outcome] = (n.other[e.outcome] ?? 0) + 1;
+    if (e.failure_category) n.categories[e.failure_category] = (n.categories[e.failure_category] ?? 0) + 1;
+    n.cost += typeof e.cost_usd === "number" ? e.cost_usd : 0;
+  }
+  return n;
+}
+
+function render(label, unit, n) {
+  const out = [`${label}${n.total} ${unit}(s) -- ${n.landed} landed, ${n.bounced} bounced, ${n.failed} error/killed, cost $${n.cost.toFixed(2)}`];
+  for (const [k, v] of Object.entries(n.other)) out.push(`    ${k}: ${v}`);
+  const cats = Object.entries(n.categories);
+  if (cats.length > 0) out.push(`    by failure_category: ${cats.map(([k, v]) => `${k} ${v}`).join(", ")}`);
+  return out.join("\n");
+}
+
+if (!v1) {
+  const path = join(root, "runs/v2", `${project}.jsonl`);
+  const log = await readJsonl(path);
+  if (!log) {
+    console.log(`No v2 log at ${path} yet -- no runs recorded. (Use --v1 for the v1 logs.)`);
+    process.exit(0);
+  }
+  console.log(`v2 ${path}, last ${days} day(s):`);
+  for (const role of ["research", "dev"]) {
+    const phases = log.rows
+      .flatMap((r) => (Array.isArray(r.phases) ? r.phases : []))
+      .filter((p) => p && p.role === role && inWindow(p.started));
+    console.log(render(`  ${role}: `, "phase", tally(phases)));
+  }
+  if (log.skipped > 0) console.log(`  (${log.skipped} unreadable line(s) skipped)`);
   process.exit(0);
 }
 
-const byOutcome = {};
-const byFailureCategory = {};
-let totalCostUsd = 0;
-
-for (const line of lines) {
-  byOutcome[line.outcome] = (byOutcome[line.outcome] ?? 0) + 1;
-  if (line.failure_category) {
-    byFailureCategory[line.failure_category] =
-      (byFailureCategory[line.failure_category] ?? 0) + 1;
+const PRE_CUTOVER = { dev: join(root, "runs", `${project}.jsonl`), research: join(root, "research-loop/runs", `${project}.jsonl`) };
+for (const role of ["dev", "research"]) {
+  const post = join(root, "runs/v1", role, `${project}.jsonl`);
+  let path = post;
+  let log = await readJsonl(post);
+  let layout = "post-cutover";
+  if (!log) {
+    path = PRE_CUTOVER[role];
+    log = await readJsonl(path);
+    layout = "pre-cutover";
   }
-  totalCostUsd += line.cost_usd ?? 0;
-}
-
-const total = lines.length;
-const landed = byOutcome.landed ?? 0;
-const pct = (n) => `${((n / total) * 100).toFixed(0)}%`;
-
-console.log(`Last ${days} day(s): ${total} run(s) -- ${landed} landed (${pct(landed)})`);
-for (const [outcome, count] of Object.entries(byOutcome)) {
-  if (outcome === "landed") continue;
-  console.log(`  ${outcome}: ${count} (${pct(count)})`);
-}
-
-if (Object.keys(byFailureCategory).length > 0) {
-  console.log("By failure_category:");
-  for (const [category, count] of Object.entries(byFailureCategory)) {
-    console.log(`  ${category}: ${count}`);
+  if (!log) {
+    console.log(`v1 ${role}: no log (looked for ${post} and ${PRE_CUTOVER[role]})`);
+    continue;
   }
+  console.log(`v1 ${role} (${path}, ${layout}), last ${days} day(s):`);
+  console.log(render("  ", "run", tally(log.rows.filter((l) => inWindow(l.started)))));
+  if (log.skipped > 0) console.log(`  (${log.skipped} unreadable line(s) skipped)`);
 }
-
-console.log(`Total cost: $${totalCostUsd.toFixed(2)}`);

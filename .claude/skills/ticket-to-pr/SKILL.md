@@ -7,7 +7,15 @@ description: Turn a single ready Jira ticket into a PR against the target repo (
 
 ## Arguments
 
-`$ARGUMENTS` — a single Jira ticket key, e.g. `TARS-1301`. Required.
+`$ARGUMENTS` — exactly `<TICKET> run-dir=<RUN_DIR> repo-dir=<REPO_DIR>`,
+e.g. `TARS-1301 run-dir=<abs path ending in /TARS-1301/dev-20261111T010203Z> repo-dir=<abs checkout path>`.
+All three are required. The loop runner builds this line (see "Invocation"
+below); never derive any of the three yourself.
+
+- `<TICKET>` — the Jira ticket key.
+- `run-dir=` — this run's directory (`RUN_DIR` below).
+- `repo-dir=` — the target repo checkout this run works against
+  (`REPO_DIR` below).
 
 ## Role: the executor
 
@@ -46,17 +54,26 @@ implementation is its worst failure mode.
 
 Before phase 0, establish:
 
-1. `RUN_ID` = current UTC timestamp as `YYYYMMDDTHHMMSSZ`.
-2. `SLUG` = the project slug derived from `pipeline.<project>.config.json`'s
-   `targetRepo.url` (same derivation as `repoSlugFromUrl` in `src/config.ts`
-   — the last path segment, minus a trailing `.git`), e.g. `webtarsthree`.
-3. `RUN_DIR` = `.pipeline/<SLUG>/runs/<TICKET>-<RUN_ID>/` (relative to this
-   repo's root, i.e. `dev-loop/`, NOT the target repo checkout). Create it.
-   Namespacing by `SLUG` lets multiple projects' runs coexist under one
-   `dev-loop` checkout without collision.
+1. **Use the `run-dir=` and `repo-dir=` you were given.** `run-dir` must be
+   absolute and contain `/.pipeline/v2/`. If either is missing or
+   malformed, write no files and stop with an `agent_error` verdict.
+   Never guess a path. (With no usable `RUN_DIR` there is nowhere to write
+   `verdict.json`; the loop runner records the missing verdict as
+   `agent_error` itself. Print the always-emitted result line,
+   `RESULT: error — missing or malformed run-dir=/repo-dir=`, and stop.)
+   `RUN_DIR` = the `run-dir=` value; `REPO_DIR` = the `repo-dir=` value.
+   Both are absolute; use them exactly as given.
+2. `RUN_ID` = the part of `RUN_DIR`'s last path segment after its first
+   `-`. The last segment is `dev-<RUN_ID>`, so for
+   `.../TARS-1301/dev-20261111T010203Z`, `RUN_ID` is `20261111T010203Z`.
+   It names this run's worktree (see "Target repo" below).
+3. `DEVLOOP_DIR` = `RUN_DIR` up to, not including, its `/.pipeline/v2/`
+   (the dev-loop checkout this run was started from). `RUN_DIR` already
+   exists (the loop runner creates it). Write only inside it — never
+   anywhere else in the dev-loop checkout.
 4. Every phase transition appends one JSON line to `RUN_DIR/progress.jsonl`
    (create the file with the first append). Never rewrite or delete existing
-   lines — append-only, same discipline as `runs/<SLUG>.jsonl`. Each line:
+   lines — append-only. Each line:
    ```json
    {"ts": "<ISO-8601 UTC>", "phase": "intake|plan|red|green|verify|pr", "event": "phase_start|phase_end|note", "detail": "one line"}
    ```
@@ -95,62 +112,73 @@ file.
 
 ## Target repo
 
-This repo's `pipeline.<project>.config.json`'s `targetRepo` field names the
-codebase this skill operates on — currently `pipeline.webtarsthree.config.json`
-points at `webtarsthree` (`git@github.com:fandango/webtarsthree.git`, default
-branch `master`). This is **not** the `dev-loop` repo itself; `dev-loop` only
-orchestrates. Adding a second project later means adding a second
-`pipeline.<project>.config.json` — no code or skill changes.
+The project config (`pipeline.<project>.config.json` at the dev-loop
+checkout's root, `DEVLOOP_DIR`) names the codebase this skill operates on
+in `targetRepo` — currently `pipeline.webtarsthree.config.json` points at
+`webtarsthree` (`git@github.com:fandango/webtarsthree.git`, default branch
+`master`). This is **not** the `dev-loop` repo itself; `dev-loop` only
+orchestrates. `REPO_DIR` (from `repo-dir=`) is that codebase's checkout on
+this machine: `targetRepo.path` when the config sets it (its `origin`
+remote is the real GitHub remote, so `git push`/`gh pr create` in Phase 5
+need no extra setup), otherwise a shared fetch-only clone the loop runner
+points you at. Read `targetRepo.url` and `targetRepo.defaultBranch` from
+the config; take the checkout's location only from `REPO_DIR`.
 
-**Per-run worktree, nested inside the target repo itself — never work
-directly in a shared checkout.** At the start of Phase 0, create an
-isolated worktree for this run, on its own branch, **inside** the target
-repo's own directory tree (`<targetRepo.path>/.claude/worktrees/...`, not a
+**Per-run worktree, nested inside `REPO_DIR` itself — never work directly
+in a shared checkout.** At the start of Phase 0, create an isolated
+worktree for this run, on its own branch, **inside** `REPO_DIR`'s own
+directory tree (`<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>`, not a
 sibling path elsewhere), so tools like `direnv` that activate by walking
 up from the current directory pick up the target repo's own
 `.envrc`/local env automatically — a worktree living outside that tree
-never can. `targetRepo.path`, if set in config, is a local checkout that
-already exists on this machine (its `origin` remote is the real GitHub
-remote, so `git push`/`gh pr create` in Phase 5 need no extra setup).
-Never work directly in `targetRepo.path` itself, since a human may `cd`
+never can. Never work directly in `REPO_DIR` itself, since a human may `cd`
 into it or be mid-inspection of a prior run's worktree at any moment
-while this loop runs unattended in the background:
+while this loop runs unattended in the background.
+
+**Run every target-repo command through `direnv exec`.** direnv's shell
+hook never fires in this headless session: `cd` alone loads nothing, so
+tests that need the repo's local env (e.g. webtarsthree's
+`PLACEMENT_SERVICE_ENDPOINT` from its git-ignored `.envrc`) fail as if they
+were broken. Prefix every install, test, lint, typecheck, build, dev-server,
+`git commit` and `git push` command with the worktree path, so commit and
+push hooks see the same env:
 
 ```bash
-git -C <targetRepo.path> fetch origin
-git -C <targetRepo.path> worktree add \
-  <targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID> \
-  -b <TICKET>-<slug> origin/<targetRepo.defaultBranch>
-cd <targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>
+direnv exec <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID> npm test
+direnv exec <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID> git commit -m "..."
 ```
 
-`<targetRepo.path>/.claude/worktrees/` is expected to be listed in that repo's
+Use the matching worktree path for the baseline and follow-up worktrees
+(`...-baseline`, `...-fu`). If `direnv` is missing or reports the `.envrc`
+as blocked (`direnv status`), bounce `env_setup` saying so; never run
+`direnv allow` yourself. A test that fails only without this env is not a
+bug on <defaultBranch>: never report it as pre-existing or file a
+follow-up for it.
+
+If `REPO_DIR` has no `.git` yet (the shared clone was never made on this
+machine), clone it first; otherwise skip straight to the fetch:
+
+```bash
+if [ ! -d <REPO_DIR>/.git ]; then
+  git clone <targetRepo.url> <REPO_DIR>
+fi
+git -C <REPO_DIR> fetch origin
+git -C <REPO_DIR> worktree add \
+  <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID> \
+  -b <TICKET>-<slug> origin/<targetRepo.defaultBranch>
+cd <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>
+```
+
+`<REPO_DIR>/.claude/worktrees/` is expected to be listed in that repo's
 own `.git/info/exclude` (a machine-local, never-committed ignore rule) —
 not this skill's job to add, but don't be alarmed that it's untracked and
 outside this repo.
 
-If `targetRepo.path` is **not** set (no local checkout on this machine
-yet), fall back to a shared fetch-only clone instead, worktree nested the
-same way inside it:
-
-```bash
-mkdir -p .pipeline/<SLUG>
-if [ ! -d .pipeline/<SLUG>/repo/.git ]; then
-  git clone <targetRepo.url> .pipeline/<SLUG>/repo
-fi
-git -C .pipeline/<SLUG>/repo fetch origin
-git -C .pipeline/<SLUG>/repo worktree add \
-  .pipeline/<SLUG>/repo/.claude/worktrees/<TICKET>-<RUN_ID> \
-  -b <TICKET>-<slug> origin/<targetRepo.defaultBranch>
-cd .pipeline/<SLUG>/repo/.claude/worktrees/<TICKET>-<RUN_ID>
-```
-
-(Three distinct identifiers here: `<SLUG>` uppercase is the *project* slug
-from the config path; `<RUN_ID>` is this run's timestamp, keeping this run's
-worktree separate from any other run's, past or concurrent; `<slug>`
-lowercase in the branch name is the per-ticket kebab-case summary described
-next — the branch name itself has no `<RUN_ID>` in it, since it's what gets
-pushed and PR'd.)
+(Two distinct identifiers here: `<RUN_ID>` is this run's id from `RUN_DIR`,
+keeping this run's worktree separate from any other run's, past or
+concurrent; `<slug>` in the branch name is the per-ticket kebab-case
+summary described next — the branch name itself has no `<RUN_ID>` in it,
+since it's what gets pushed and PR'd.)
 
 `<slug>` is a short kebab-case summary derived from the ticket's summary
 (lowercase, non-alphanumeric → `-`, truncate to a reasonable length — e.g.
@@ -167,8 +195,7 @@ existing name.** Before the `worktree add` above, after the `fetch`:
 
 1. **Look for prior work.** List `<TICKET>-*` branches, local
    (`git branch --list '<TICKET>-*'`) and remote
-   (`git branch -r --list 'origin/<TICKET>-*'`) in the checkout the worktree
-   is created from. A branch only counts as prior work if it has commits not
+   (`git branch -r --list 'origin/<TICKET>-*'`) in `REPO_DIR`. A branch only counts as prior work if it has commits not
    on `origin/<defaultBranch>` (`git rev-list --count
    origin/<defaultBranch>..<branch>` > 0); a branch with zero commits ahead
    is stale and is ignored (never reused, never deleted). Don't change the
@@ -277,7 +304,7 @@ Each phase's `progress.jsonl` events use the phase name shown.
      `[GitHub Issue](url)` link whose Issue has no matching
      `## ✅ research-loop -` comment, or whose body is still the
      unfilled placeholder with no comment at all) — this ticket should
-     never have carried the `pipeline:dev` label — bounce immediately
+     never have carried the dev trigger label (`roles.dev.triggerLabel`) — bounce immediately
      with `failure_category: "spec_ambiguous"` and detail naming exactly
      which of the three cases applied. Do not attempt to proceed on an
      unreadied ticket.
@@ -290,6 +317,19 @@ Each phase's `progress.jsonl` events use the phase name shown.
    `failure_category: "too_large"` before doing any further work. Better to
    stop here than after writing code.
 5. Set up the target repo working directory as described above.
+5a. **Baseline suite.** Before writing anything, run the target repo's full
+   test suite once on the fresh worktree (still identical to
+   `origin/<targetRepo.defaultBranch>`), via `direnv exec` (see "Target
+   repo"), the same way its commit hook does
+   (read `.husky/pre-commit` or the repo's hook config; usually `npm
+   test`). Record the failing tests as `baseline_failures` (`"<file> >
+   <test name>"`, empty when green) in one `progress.jsonl` note with the
+   baseline SHA. These failures are pre-existing by definition. Phase 4
+   step 1 and "Pre-existing failures blocking a hook" below use this list;
+   do not re-derive it later. When the list is non-empty and the repo has
+   a commit or push hook that runs the suite, go straight to "Pre-existing
+   failures blocking a hook" now, before Phase 1: every commit in this run
+   would otherwise be rejected.
 6. **Derive `COMMIT_TYPE` from the ticket's `issuetype`** — this drives both
    the Green commit (Phase 3) and the PR title (Phase 5), and, via the
    target repo's squash-merge-as-commit-message CI convention, the semver
@@ -326,13 +366,25 @@ For each Acceptance Criterion, in order:
    passed on baseline code.
 
 Once every AC's test is written and confirmed failing for the right reason,
-record `red_confirmed: true` (this goes into `verdict.json` later) and
-commit the tests alone, before any implementation code
-(`git commit -m "test(<TICKET>): add failing tests for ACs"`).
+record `red_confirmed: true` (this goes into `verdict.json` later).
+
+Then **mark each new test expected-to-fail** before committing, so a
+commit hook that runs the suite accepts the Red commit without any bypass:
+`it(...)`/`test(...)` becomes `it.fails(...)`/`test.fails(...)` in vitest,
+and `test.failing(...)` in jest (pick the one the target repo's runner
+supports; check its `package.json`). Run the new tests once more: each must
+now *pass* as expected-to-fail. A marked test that still reports a failure
+means the marker is wrong, not the code — fix the marker. Commit the tests
+alone, before any implementation code
+(`git commit -m "test(<TICKET>): add failing tests for ACs"`). The marker
+keeps the TDD evidence in git: the Red commit's tests are recorded as
+failing on that commit.
 
 ### Phase 3 — Green
 
-Implement the minimum change to make the Phase 2 tests pass. Touch **only**
+First **remove the expected-to-fail marker** from every test Phase 2 marked
+(`it.fails` → `it`, `test.failing` → `test`), then implement the minimum
+change to make those tests pass. Touch **only**
 the files enumerated in the ticket's Scope section. If implementing
 correctly requires touching a file not enumerated, or reveals the described
 bug isn't reproducible, or an AC turns out unimplementable as written — stop
@@ -344,11 +396,44 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
 
 ### Phase 4 — Verify
 
-1. Run the full existing test suite. It must be 100% green. If it's not,
-   and the failure is unrelated to this change, bounce with `tests_flaky`
-   naming the failing test(s); if the failure is caused by this change,
-   that's a Green-phase defect — go back and fix it, do not proceed to PR
-   with a broken suite.
+1. Run the full existing test suite. If it is 100% green, continue to
+   step 2. If anything fails, run the **Pre-existing failure check**
+   before deciding anything:
+   1. Note the exact set of failing tests (file + test name) on the branch.
+   2. Make a throwaway baseline worktree of the unmodified base branch and
+      install its dependencies the same way you did for the run's worktree:
+
+      ```bash
+      git -C <REPO_DIR> worktree add --detach \
+        <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-baseline \
+        origin/<targetRepo.defaultBranch>
+      ```
+
+   3. In the baseline, run **only the failing test files**, with the same
+      command and environment as the branch run. Record the baseline SHA
+      (`git -C <baseline> rev-parse --short HEAD`).
+   4. Remove it before going on, whatever the result:
+      `git -C <REPO_DIR> worktree remove <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-baseline`.
+      Ignored files (`node_modules`) do not block the removal.
+   5. Decide:
+      - Phase 0 step 5a's `baseline_failures` already lists the suite's
+        failures on this same base; when a branch failure is on that list
+        you may skip re-running it in a baseline worktree.
+      - If **every test that fails on the branch also fails, with the same
+        assertion, on the baseline**, the failures are pre-existing and not
+        caused by this change. Continue to step 2. Record each one as
+        `"<file> > <test name>"` in `verdict.json`'s `preexisting_failures`,
+        and carry them into the PR (step 7) and the result line.
+      - If any test **fails only on the branch**, that's a Green-phase
+        defect. Go back and fix it; do not proceed to PR with a broken
+        suite.
+      - If the baseline can't be set up or run (install fails, the command
+        errors before running tests), bounce `env_setup` with the output.
+      - If a failure passes on a re-run of the branch itself, it's
+        flaky, not pre-existing: bounce `tests_flaky` naming it.
+   Never bypass a push hook to get past these failures: if `push-branch`'s
+   push is blocked by a hook that runs the suite, bounce `tests_flaky` with
+   the hook output and the pre-existing list. Never use `--no-verify`.
 2. Run whatever the target repo's own CI would run beyond tests — lint,
    typecheck, and build, at minimum (check the target repo's own CI config
    or `package.json` scripts for the actual commands; don't assume names).
@@ -364,8 +449,10 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
 4. Spawn `qa-agent` (see `.claude/agents/qa-agent.md`) as a genuine
    fresh-context subagent — it must not be told how the fix was
    implemented, only given the ticket and the diff. Pass it the ticket key,
-   the branch name, and the absolute path of this `dev-loop` checkout (your
-   own working directory, from `pwd`) so it can run `src/qa-browser.ts`.
+   the branch name, the worktree path
+   (`<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>`), and `DEVLOOP_DIR`
+   (from Setup; not `pwd`, which is the worktree by now) so it can run
+   `src/roles/dev/qa-browser.ts`.
    That path is for the subagent's tool calls only — never write it into
    the PR, Jira, `qa_notes`, or `verdict.json`. Each `qa-agent` invocation is one verify loop —
    increment `verify_loops` when it runs, not when a fix is committed. If
@@ -431,7 +518,19 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
      the site URL from `getAccessibleAtlassianResources` (already called in
      Phase 0). The `## QA Notes` list is the `qa_notes` array from step 6,
      numbered, in order. No other sections — no "Core Architecture,"
-     "Files Changed," "Migration Notes," or similar.
+     "Files Changed," "Migration Notes," or similar — with one exception:
+     when step 1 recorded `preexisting_failures`, append this section last:
+
+     ```markdown
+     ## Pre-existing failures
+     These tests also fail on unmodified `origin/<defaultBranch>` <sha>; not caused by this change:
+     - `<file> > <test name>`
+     ```
+
+     Also add one `qa_notes` entry at the end: "Note: <n> test(s) fail
+     pre-existing on `origin/<defaultBranch>` <sha>, not caused by this
+     change — see the PR's Pre-existing failures section." The result line
+     says the same in a few words.
    - **Never write an absolute filesystem path into the title or body** —
      this machine's home directory is an email address, so an absolute
      path leaks PII into a PR anyone with repo access can see. Refer to
@@ -455,10 +554,14 @@ reorder, or "improve" the title or body here.
 1. Read `~/.claude/skills/push-branch/SKILL.md` with `Read` and follow it
    exactly, in its **content supplied** mode (`--title` + `Body:`), passing:
    the title and body from Phase 4 step 7 verbatim, and `--no-jira`
-   (`loop-runner.ts` owns the Jira transition and QA Notes field from
+   (the loop runner, `src/roles/dev/phase.ts`, owns the Jira transition and QA Notes field from
    `verdict.json`; `push-branch` must not also transition the ticket).
+   When that skill pushes, push with the literal branch name (e.g.
+   `git push -u origin TARS-1301-delete-tv-objects`) or `HEAD`, never a
+   shell variable: the unsafe-git hook denies a push argument it can only
+   know at run time.
    Read the file rather than invoking it as a skill: `Skill` is not in
-   `ALLOWED_TOOLS` (`src/main.ts`), so a nested skill call is unavailable
+   `ALLOWED_TOOLS` (`src/roles/dev/tools.ts`), so a nested skill call is unavailable
    in this headless run. That skill lives on the operator's machine, not in
    this repo. **If that file does not exist**, do not
    improvise your own push/`gh` steps (that would be a second copy of the
@@ -489,6 +592,88 @@ reorder, or "improve" the title or body here.
 4. Run Cleanup (see below), then emit the always-emitted result line and
    stop.
 
+## Pre-existing failures blocking a hook
+
+Reached from Phase 0 step 5a, or whenever a `git commit` or `git push` in
+this run is rejected by a hook that runs the suite and every failing test
+is on `baseline_failures`. A failure that is not on that list is this
+change's own defect: fix it, never route it here. **Never bypass the hook**:
+never `--no-verify`, `-n`, `HUSKY=0` or `core.hooksPath`. The goal is to
+make the hook pass honestly, with the fix itself landing in its own PR.
+
+1. **Decide the fix size.** A follow-up *fix* is allowed only when it
+   changes only test files (test setup, stubs, env defaults inside the
+   test, fixtures) and every file it touches can be named up front. A
+   failure that needs an application-code change is a real bug: skip to
+   step 6.
+2. **File the follow-up ticket** with `mcp__atlassian__createJiraIssue` in
+   the same Jira project and issue type `Bug`, summary
+   `Fix pre-existing test failures on <defaultBranch> (found by <TICKET>)`,
+   and a description listing each failing test, its assertion output (no
+   secret values, same rules as the PR body), the baseline SHA and, for a
+   fix, the files it will touch. Copy the ticket's `repo:` label only;
+   **never add the pipeline trigger label** (`pipeline:*`), so the loop
+   never picks the follow-up up on its own. Link it with
+   `mcp__atlassian__createIssueLink`, type `Relates`, to `<TICKET>`.
+   Record its key as `FOLLOW_UP`.
+3. **Fix it on its own branch, off `origin/<targetRepo.defaultBranch>`**,
+   never off this ticket's branch:
+
+   ```bash
+   git -C <REPO_DIR> worktree add \
+     <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-fu \
+     -b <FOLLOW_UP>-fix-preexisting-tests origin/<targetRepo.defaultBranch>
+   ```
+
+   Install dependencies as for the run's worktree. Make the minimum
+   test-only change, run the formerly failing tests (they must pass) and
+   the full suite (it must be green apart from failures that a test-only
+   change cannot reach; if any remain, stop and go to step 6). Commit
+   `fix(<FOLLOW_UP>): fix pre-existing test failures on <defaultBranch>`,
+   with the hooks running normally. Push it and open its PR exactly as
+   Phase 5 does (push-branch, content supplied, `--no-jira`), with title
+   `fix(<FOLLOW_UP>): fix pre-existing test failures on <defaultBranch>`
+   and a body in the Phase 4 step 7 shape whose Jira link is the
+   follow-up's. Record its PR URL. Then
+   `git -C <REPO_DIR> worktree remove <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-fu`.
+4. **Carry the committed fix into this ticket's worktree, unstaged**, only
+   while a commit or push needs the hook to pass:
+
+   ```bash
+   git -C <REPO_DIR> diff origin/<targetRepo.defaultBranch> <FOLLOW_UP>-fix-preexisting-tests > <RUN_DIR>/follow-up.patch
+   git apply <RUN_DIR>/follow-up.patch        # in this ticket's worktree; working tree only
+   ```
+
+   Before **every** commit and push while it is applied: stage only this
+   ticket's files by name (never `git add -A`, never `git add .`), and
+   check `git diff --cached --name-only` lists none of the patch's files
+   (`git apply --numstat <RUN_DIR>/follow-up.patch` names them). Before the
+   push, also check `git diff --name-only origin/<targetRepo.defaultBranch>...HEAD`
+   lists none of them. If a patch file overlaps this ticket's own scope,
+   stop and bounce `env_setup` naming the file: the two changes cannot be
+   separated.
+5. **Remove it** as soon as the push is done, and in Cleanup whatever the
+   outcome: `git apply -R <RUN_DIR>/follow-up.patch`, then check
+   `git status --short` shows none of the patch's files. In the ticket's
+   PR body (Phase 4 step 7), the `## Pre-existing failures` section adds:
+   `Fixed separately in <follow-up PR URL> (<FOLLOW_UP>); merge it first or
+   alongside.`
+6. **Files-only follow-up** (no fix possible within step 1's limits, or
+   step 3 could not get the suite green): file the ticket as in step 2 but
+   with a description of what was found and why it is not test-only, link
+   it with `mcp__atlassian__createIssueLink` so `<TICKET>` **is blocked by**
+   `<FOLLOW_UP>`, record `follow_up: {"ticket": "<FOLLOW_UP>", "pr": null}`,
+   and bounce `tests_flaky` naming the failures and the follow-up key. The
+   blocker gate keeps `<TICKET>` out of the queue until the follow-up's PR
+   merges.
+
+Record `follow_up: {"ticket": "<FOLLOW_UP>", "pr": "<url or null>"}` in
+`verdict.json` whenever a follow-up was filed. Never file a second follow-up
+for the same failures: before step 2, search for an open ticket whose
+summary starts `Fix pre-existing test failures on <defaultBranch>` and that
+names the same tests (`mcp__atlassian__getJiraIssue` on any linked issue),
+and reuse it and its open PR if one exists.
+
 ## Cleanup (hard gate, every run)
 
 Before this skill's final result line — regardless of outcome (landed,
@@ -500,9 +685,8 @@ bounced at any phase, or error):
 2. **Remove this run's worktree** — with one exception:
    - If the run **landed** (branch pushed, PR open) or **bounced with all
      in-progress work already committed** — remove it:
-     `git -C <targetRepo.path or .pipeline/<SLUG>/repo, whichever it was
-     created from> worktree remove
-     <that checkout's path>/.claude/worktrees/<TICKET>-<RUN_ID>`. The branch
+     `git -C <REPO_DIR> worktree remove
+     <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>`. The branch
      itself lives on in the remote (landed) or in that checkout's branch
      list (bounced) either way — removing the worktree doesn't lose
      anything.
@@ -510,7 +694,7 @@ bounced at any phase, or error):
      tree** (e.g. mid-Green, or Red confirmed but not yet fully
      implemented) — **keep the worktree**, and say so explicitly in the
      bounce `detail` / result line (e.g. "worktree left at
-     `<targetRepo.path>/.claude/worktrees/<TICKET>-<RUN_ID>` for inspection") so a
+     `<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>` for inspection") so a
      human or `ticket-refine`'s revision pass can inspect exactly what was
      tried. This is the only case where cleanup is conditional — everything
      else removes the worktree unconditionally.
@@ -547,7 +731,7 @@ or `blocked` — the remaining categories (`subagent_stall`, `agent_error`,
 ## verdict.json schema
 
 Write to `RUN_DIR/verdict.json` (never elsewhere — the loop runner reads it
-from this exact path):
+from this exact path, and only from there):
 
 ```json
 {
@@ -566,9 +750,18 @@ from this exact path):
   "qa_notes": [
     "Navigate to `/rotten-tomatoes/critics?query=tina+kakad`",
     "Expected: the Self-Service badge appears next to the critic's name"
-  ]
+  ],
+  "preexisting_failures": []
 }
 ```
+
+`follow_up` is optional: `{"ticket": "<KEY>", "pr": "<url>" | null}` when
+the run filed a follow-up for pre-existing failures that blocked a hook
+("Pre-existing failures blocking a hook"); omit it otherwise.
+
+`preexisting_failures` is optional: the `"<file> > <test name>"` of each
+test that failed on the branch and identically on the unmodified base
+branch (Phase 4 step 1). Omit it or leave it empty when there were none.
 
 `cost_usd` and `tokens` are left as `0`/zeros by this skill — the loop
 runner derives the real values from `claude -p --output-format json`'s own
@@ -584,9 +777,12 @@ this same list.
 ## Invocation (for the loop runner)
 
 ```
-claude -p "/ticket-to-pr <TICKET-KEY>" --model sonnet --permission-mode acceptEdits --output-format json
+claude -p "/ticket-to-pr <TICKET-KEY> run-dir=<abs RUN_DIR> repo-dir=<abs REPO_DIR>" --model sonnet --permission-mode acceptEdits --output-format json
 ```
 
+`src/worker/skill-runner.ts` builds this prompt from validated values only
+(`src/core/build-prompt.ts`), creates `RUN_DIR` first, spawns from the
+dev-loop checkout's root, and reads `RUN_DIR/verdict.json` afterwards.
 `--model sonnet` is explicit, not ambient-default — this skill is the
 literal-minded executor tier per the spec (§5.0), never the tier that
 questions the spec. `qa-agent` pins its own model in its frontmatter and does

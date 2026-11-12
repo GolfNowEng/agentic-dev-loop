@@ -1,0 +1,157 @@
+import { describe, it, expect, vi } from "vitest";
+import { runResearchPhase } from "../../../src/roles/research/phase.ts";
+import type { ResearchPhaseDeps } from "../../../src/roles/research/phase.ts";
+import type { JiraClient, JiraTicket } from "../../../src/core/jira-client.ts";
+import type { RunSkillFn, RunSkillResult } from "../../../src/core/run-skill.ts";
+import { roleView } from "../../../src/core/config.ts";
+import { makeV2Config } from "../../fixtures/config.ts";
+
+function makeTicket(o: Partial<JiraTicket> = {}): JiraTicket {
+  return { key: "PROJ-142", status: "In Progress", labels: ["auto-promote"], assignee: "user-123", ...o };
+}
+
+function makeMockJiraClient(o: Partial<JiraClient> = {}): JiraClient {
+  return {
+    pollOldestMatching: vi.fn(async () => null),
+    pollAllMatching: vi.fn(async () => []),
+    claimTicket: vi.fn(async () => true),
+    transitionStatus: vi.fn(async () => undefined),
+    swapLabel: vi.fn(async () => undefined),
+    removeLabel: vi.fn(async () => undefined),
+    assignTicket: vi.fn(async () => undefined),
+    addComment: vi.fn(async () => undefined),
+    closeTicket: vi.fn(async () => ({ result: "already-done" as const })),
+    getBlockedBy: vi.fn(async () => []),
+    ...o,
+  };
+}
+
+const verdict = (o: Record<string, unknown> = {}) =>
+  JSON.stringify({ outcome: "ready", phase_reached: "verify", failure_category: null, detail: "Looks good.", ...o });
+
+function skill(verdictRaw: string | undefined, o: Partial<RunSkillResult> = {}): RunSkillFn & ReturnType<typeof vi.fn> {
+  return vi.fn(async () => ({
+    verdictRaw,
+    started: "2026-08-16T14:02:11.000Z",
+    ended: "2026-08-16T14:19:40.000Z",
+    // Deliberately different from any verdict cost/tokens: the measured values must be recorded.
+    costUsd: 4.5,
+    tokens: { in: 1234, out: 567 },
+    skillVersion: "abc1234",
+    model: "sonnet",
+    ...o,
+  })) as unknown as RunSkillFn & ReturnType<typeof vi.fn>;
+}
+
+function makeDeps(o: Partial<ResearchPhaseDeps> = {}): ResearchPhaseDeps {
+  return {
+    jira: makeMockJiraClient(),
+    view: roleView(makeV2Config(), "research"),
+    runSkill: skill(verdict()),
+    runDir: ".pipeline/v2/repo/dev-1/PROJ-142/research-20260816T140211Z",
+    maxBudgetUsd: 50,
+    now: () => new Date("2026-08-16T14:00:00.000Z"),
+    ...o,
+  };
+}
+
+describe("runResearchPhase", () => {
+  it("calls runSkill with role research, the key, the run dir and the budget; never claims, polls, assigns or swaps", async () => {
+    const deps = makeDeps();
+    await runResearchPhase(makeTicket(), deps);
+    expect(deps.runSkill).toHaveBeenCalledWith({
+      role: "research",
+      ticketKey: "PROJ-142",
+      runDir: ".pipeline/v2/repo/dev-1/PROJ-142/research-20260816T140211Z",
+      maxBudgetUsd: 50,
+    });
+    for (const m of ["claimTicket", "pollOldestMatching", "assignTicket", "swapLabel", "transitionStatus"] as const) {
+      expect(deps.jira[m]).not.toHaveBeenCalled();
+    }
+  });
+
+  it('"ready" → landed, with the measured cost/tokens, run dir, and pr always null — and no label swap even with auto-promote (the cycle owns the handoff)', async () => {
+    const deps = makeDeps({ runSkill: skill(verdict({ pr: "https://github.com/org/repo/pull/1" })) });
+    const entry = await runResearchPhase(makeTicket(), deps);
+    expect(entry).toMatchObject({
+      role: "research",
+      skill: "ticket-refine",
+      skill_version: "abc1234",
+      model: "sonnet",
+      outcome: "landed",
+      phase_reached: "verify",
+      cost_usd: 4.5,
+      tokens: { in: 1234, out: 567 },
+      failure_category: null,
+      detail: "Looks good.",
+      pr: null,
+      run_dir: ".pipeline/v2/repo/dev-1/PROJ-142/research-20260816T140211Z",
+    });
+    expect(entry.handoff).toBeUndefined();
+    expect(deps.jira.swapLabel).not.toHaveBeenCalled();
+  });
+
+  it("bounced → transitions to the bounced status", async () => {
+    const deps = makeDeps({ runSkill: skill(verdict({ outcome: "bounced", failure_category: "spec_contradicted", detail: "AC2 vs AC4" })) });
+    const entry = await runResearchPhase(makeTicket(), deps);
+    expect(entry.outcome).toBe("bounced");
+    expect(deps.jira.transitionStatus).toHaveBeenCalledWith("PROJ-142", "Blocked");
+    expect(deps.jira.swapLabel).not.toHaveBeenCalled();
+  });
+
+  it("a bounced-status transition failure never throws: surfaced via jira_sync_error", async () => {
+    const jira = makeMockJiraClient({
+      transitionStatus: vi.fn(async () => {
+        throw new Error("Jira 500");
+      }),
+    });
+    const entry = await runResearchPhase(makeTicket(), makeDeps({ jira, runSkill: skill(verdict({ outcome: "bounced" })) }));
+    expect(entry.outcome).toBe("bounced");
+    expect(entry.jira_sync_error).toMatch(/Jira 500/);
+  });
+
+  it("malformed or missing verdict.json → error / agent_error, no Jira write", async () => {
+    for (const raw of ["{nope", undefined]) {
+      const deps = makeDeps({ runSkill: skill(raw) });
+      const entry = await runResearchPhase(makeTicket(), deps);
+      expect(entry.outcome).toBe("error");
+      expect(entry.failure_category).toBe("agent_error");
+      expect(deps.jira.transitionStatus).not.toHaveBeenCalled();
+    }
+  });
+
+  it("runSkill throws → error entry with agent_error and the message, no throw", async () => {
+    const runSkill = vi.fn(async () => {
+      throw new Error("ENOENT claude");
+    }) as unknown as RunSkillFn;
+    const entry = await runResearchPhase(makeTicket(), makeDeps({ runSkill }));
+    expect(entry.outcome).toBe("error");
+    expect(entry.failure_category).toBe("agent_error");
+    expect(entry.detail).toMatch(/ENOENT claude/);
+    expect(entry.cost_usd).toBe(0);
+  });
+
+  describe("size_trajectory", () => {
+    it("carries a well-formed size_trajectory", async () => {
+      const entry = await runResearchPhase(
+        makeTicket(),
+        makeDeps({ runSkill: skill(verdict({ size_trajectory: { step4_tshirt: "M", delta: "unchanged", final_score: 4.5 } })) }),
+      );
+      expect(entry.size_trajectory).toEqual({ step4_tshirt: "M", delta: "unchanged", final_score: 4.5 });
+    });
+
+    it("drops a malformed size_trajectory and never flips outcome to error", async () => {
+      const entry = await runResearchPhase(
+        makeTicket(),
+        makeDeps({ runSkill: skill(verdict({ size_trajectory: { step4_tshirt: "HUGE", delta: "grew", final_score: 999 } })) }),
+      );
+      expect(entry.outcome).toBe("landed");
+      expect(entry.size_trajectory).toBeUndefined();
+    });
+
+    it("absent → no size_trajectory field", async () => {
+      const entry = await runResearchPhase(makeTicket(), makeDeps());
+      expect("size_trajectory" in entry).toBe(false);
+    });
+  });
+});

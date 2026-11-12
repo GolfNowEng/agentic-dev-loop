@@ -1,26 +1,32 @@
 {
-  "jira": {
-    "triggerLabel": "pipeline:dev",
-    "handoffLabel": "pipeline:dev",
-    "repoLabel": "repo:catalog-ui-public",
-    "claimStatus": { "from": "___", "to": "___" },
-    "pollJql": {
-      "refine": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"___\" ORDER BY created ASC",
-      "dev": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND assignee = \"{assignee}\" AND status != \"{bouncedStatus}\" AND status != \"{prOpenStatus}\" ORDER BY created ASC"
-    },
-    "statusNames": { "bounced": "___", "prOpen": "___" },
-    "codeReviewFields": {
-      "piiField": "___",
-      "piiNoImpactOptionId": "___",
-      "qaNotesField": "___"
-    }
-  },
-  "ceilings": { "maxRunsPerDay": 100, "maxCostPerRunUsd": 20, "runTimeoutMin": 75 },
-  "autoPromoteLabel": "auto-promote",
   "targetRepo": {
     "url": "git@github.com:fandango/catalog-ui-public.git",
     "defaultBranch": "main",
     "path": "/Users/206618626@bwt3.com/Desktop/Repos/catalog-ui-public"
   },
-  "github": { "repo": "fandango/catalog-ui-public" }
+  "github": { "repo": "fandango/catalog-ui-public" },
+  "jira": {
+    "repoLabel": "repo:catalog-ui-public",
+    "statusNames": { "bounced": "Blocked", "prOpen": "Code Review" },
+    "claimStatus": { "from": "To Do", "to": "In Progress" }
+  },
+  "roles": {
+    "research": {
+      "triggerLabel": "pipeline:research",
+      "handoffLabel": "pipeline:dev",
+      "pollJql": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND status = \"To Do\" ORDER BY created ASC",
+      "ceilings": { "maxCostPerRunUsd": 50, "runTimeoutMin": 120 }
+    },
+    "dev": {
+      "triggerLabel": "pipeline:dev",
+      "pollJql": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND assignee = \"{assignee}\" AND status != \"{bouncedStatus}\" AND status != \"{prOpenStatus}\" ORDER BY created ASC",
+      "codeReviewFields": {
+        "piiField": "___",
+        "piiNoImpactOptionId": "___",
+        "qaNotesField": "___"
+      },
+      "ceilings": { "maxCostPerRunUsd": 20, "runTimeoutMin": 75 }
+    }
+  },
+  "ceilings": { "maxRunsPerDay": 100, "maxAttemptsPerTicket": 2, "maxCostPerTicketUsd": 50 }
 }

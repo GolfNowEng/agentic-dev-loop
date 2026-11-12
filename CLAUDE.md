@@ -1,45 +1,66 @@
 # CLAUDE.md — dev-loop
 
-This repo is **Terminal B / the executor** in a two-repo agentic Jira
-pipeline. The sibling repo, `research-loop`, is **Terminal A / the
-skeptic**. Full design: see the pipeline spec referenced in `docs/config.md`.
+One repo, two phases of an agentic Jira pipeline. The default `--phase worker`
+runs both on one session (research, then dev, on the same ticket);
+`--phase research|dev` runs one. Each phase has its own stance. Apply the stance
+of the phase/skill you are working in, not the other.
 
-## Your role here
+## Research phase (`ticket-refine`)
+
+The research spawn runs from this repo root but excludes this file
+(`claudeMdExcludes`) and loads its stance from `src/roles/research/stance.md`
+via `--append-system-prompt`. Edit the stance there, not here.
+
+- **Treat every raw ticket as an unverified claim.** Produce a ticket a
+  literal-minded Sonnet-tier implementer can execute without asking a question,
+  or bounce it with concrete evidence of why it isn't ready.
+- Ground claims against the actual codebase (`recon-agent`), attack your own
+  assumptions (`devils-advocate-agent`), and verify independently
+  (`verifier-agent`).
+
+## Dev phase (`ticket-to-pr`, `qa-agent`)
 
 - **Trust the ticket completely.** By the time a ticket reaches the "ready"
-  epic, `research-loop` has already refined it and a human has reviewed it.
-  Never relitigate the spec, the acceptance criteria, or the stated scope.
-  If something can't be reasoned to from the ticket's description +
-  comments, **bounce with concrete evidence** — do not guess, do not infer,
-  do not "helpfully" expand scope.
+  epic it has been refined and human-reviewed. Never relitigate the spec,
+  acceptance criteria, or scope. If something can't be reasoned to from the
+  ticket's description + comments, **bounce with concrete evidence** — do not
+  guess, infer, or "helpfully" expand scope.
 - **TDD, strictly.** Every acceptance criterion gets a failing test first
   (RED), committed before any implementation, then the minimum code to pass
-  (GREEN). This applies to *this repo's own code* too, not just the target
-  repo `ticket-to-pr` operates on — see `docs/logging.md` for the coverage
-  floor this repo's own test suite must maintain.
+  (GREEN).
+
+## Both phases
+
 - **A bounce is a success, not a failure.** `outcome: "bounced"` with good
-  evidence is the correct outcome when the ticket is wrong, ambiguous, or
-  bigger than stated. Guessing is the actual failure mode.
+  evidence is correct. Guessing is the actual failure mode.
+- TDD applies to this repo's own code too. `npm test`, `npm run test:hooks`
+  and `npx tsc --noEmit` must be green before and after any change to `src/`
+  or `.claude/hooks`.
 
 ## Before you touch code
 
-- `npm test` must be green before and after any change to `src/`.
-- Read `docs/skills.md` before editing `.claude/skills/ticket-to-pr/SKILL.md`
-  or `.claude/agents/qa-agent.md` — those are the actual pipeline logic, not
-  incidental files.
-- Read `docs/config.md` before touching `src/config.ts`, `src/types.ts`'s
-  `Config` shape, or any `pipeline.*.config.json` file.
+- Read `docs/skills.md` before editing `.claude/skills/*/SKILL.md` or
+  `.claude/agents/*.md` — those are the actual pipeline logic.
+- Read `docs/config.md` before touching `src/core/config.ts`, the `Config`
+  shape in `src/core/types.ts`, or any `pipeline.*.config.json` file.
 
 ## Docs map
 
+Each doc has `## Research phase` and `## Dev phase` sections.
+
 - `docs/config.md` — config shape, Appendix A, adding a new project.
-- `docs/skills.md` — what `ticket-to-pr` and `qa-agent` do, verdict.json
-  contract.
+- `docs/skills.md` — what each phase's skills and subagents do, the invocation
+  contract (`/<skill> <KEY> run-dir=<abs> repo-dir=<abs>`), verdict.json contract.
+- `src/roles/research/stance.md` — the research phase's stance (its CLAUDE.md).
 - `docs/logging.md` — `runs/<project>.jsonl`, per-run `progress.jsonl`,
   `.pipeline/` layout, the `stats` script.
-- `docs/reset.md` — `npm run reset-project`, what it deletes and what it
-  deliberately never touches. Use it to start a ticket or project fresh
-  after a diagnostic run, instead of hand-rolling `rm -rf`/`grep -v`.
-- `CHANGELOG.md` — notable fixes/behavior changes to the pipeline itself
-  (not the tickets it processes). Add an entry whenever you fix a bug a
-  human had to diagnose from a real run, same as the entry below.
+- `docs/reset.md` — `npm run reset-project`; use it to start a ticket or project
+  fresh instead of hand-rolling `rm -rf`/`grep -v`.
+- `docs/future-enhancements.md` — ideas not yet drafted into a change. When one
+  lands, move it to `CHANGELOG.md` and delete it here.
+- `docs/migration-ledger.md` — every divergence resolved when merging the two repos.
+- `CHANGELOG.md` — fixes/behavior changes to the pipeline itself (not the tickets
+  it processes). Add an entry whenever you fix a bug a human had to diagnose
+  from a real run. Tag each bullet `[core]`, `[research]`, `[dev]` or `[hooks]`.
+  Pre-2.0.0 history: `docs/changelog/`.
+- `docs/superpowers/` — dated specs and plans.
