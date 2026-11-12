@@ -229,6 +229,8 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
         break;
       case "paused":
         logError(`[${prefix}] PAUSED: ${result.reason}`);
+        // A signal is being handled: stopOnSignal owns the lock and the exit code (130/143).
+        if (tracked.isStopping()) await new Promise<never>(() => {});
         if (tracked.canRelease()) await session.release();
         process.exit(1);
     }

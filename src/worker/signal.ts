@@ -15,7 +15,13 @@
 // handler's awaits, makes no further session or log writes (no new flight
 // in a released lock, no `error` record for a killed child counted as an
 // attempt). onSignal writes through the raw session, so it is unaffected.
-// `canRelease()` is false once stopping: only onSignal decides the lock.
+// A cycle write already in flight when the signal arrives is awaited by
+// onSignal (its error swallowed) before it reads `current`, so it decides
+// from the state that landed: a set that landed is marked interrupted, a
+// clear that landed is released. That write's caller freezes too once it
+// lands (or fails), so the cycle never appends after a write the signal
+// overlapped. `canRelease()` is false once stopping: only onSignal decides
+// the lock; `isStopping()` lets main.ts's pause path leave the exit to it.
 // Pure over the session handle so the session fake can test it; main.ts installs it.
 
 import type { InFlight, Session } from "../core/session.ts";
@@ -33,6 +39,8 @@ export interface TrackedSession {
   canRelease: () => boolean;
   /** Synchronously enter "stopping": freeze the cycle's setInFlight, forbid canRelease. Idempotent. */
   beginStop: () => void;
+  /** True once beginStop has been called. */
+  isStopping: () => boolean;
   /** On a signal; never throws. */
   onSignal: () => Promise<SignalAction>;
 }
@@ -42,14 +50,28 @@ export function trackSession(session: Session, logError: (m: string) => void = (
   let recorded = adopted.length === 0;
   let current: InFlight | null = null;
   let stopping = false;
+  /** The cycle's setInFlight write in progress, if any; `current` is updated when it lands. */
+  let pending: Promise<void> | null = null;
+  const freeze = (): Promise<never> => new Promise<never>(() => {});
   const msg = (err: unknown) => (err instanceof Error ? err.message : String(err));
   return {
     session: {
       ...session,
       setInFlight: async (f) => {
-        if (stopping) return new Promise<never>(() => {});
-        await session.setInFlight(f);
-        current = f;
+        if (stopping) return freeze();
+        const write = session.setInFlight(f).then(() => {
+          current = f;
+        });
+        pending = write;
+        try {
+          await write;
+        } catch (err) {
+          if (stopping) return freeze();
+          throw err;
+        } finally {
+          if (pending === write) pending = null;
+        }
+        if (stopping) return freeze();
       },
     },
     current: () => current,
@@ -60,7 +82,10 @@ export function trackSession(session: Session, logError: (m: string) => void = (
     beginStop: () => {
       stopping = true;
     },
+    isStopping: () => stopping,
     onSignal: async () => {
+      // A cycle write already in flight: let it land (or fail) first, so `current` is the lock's real state.
+      if (pending !== null) await pending.catch(() => {});
       if (!recorded) {
         logError(
           `signal before the adopted in-flight runs were recorded; keeping the session lock. ` +
