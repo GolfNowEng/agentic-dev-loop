@@ -189,14 +189,12 @@ export function validateConfig(raw: unknown): Config {
 function validateSandbox(v: unknown): void {
   const sb = obj(v, "sandbox");
   keys(sb, "sandbox", [], ["adapter", "mode", ...adapterNames()]);
+  if (sb.adapter !== undefined) str(sb, "adapter", "sandbox");
   let adapter;
   try {
-    adapter = getAdapter(sb.adapter === undefined ? DEFAULT_ADAPTER : String(sb.adapter));
+    adapter = getAdapter((sb.adapter as string | undefined) ?? DEFAULT_ADAPTER);
   } catch (err) {
     throw new ConfigError(`sandbox.adapter: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  if (sb.adapter !== undefined && typeof sb.adapter !== "string") {
-    throw new ConfigError("sandbox.adapter must be a string");
   }
   if (sb.mode !== undefined && sb.mode !== "discover" && sb.mode !== "enforce") {
     throw new ConfigError(`sandbox.mode must be "discover" or "enforce" (got ${JSON.stringify(sb.mode)})`);
