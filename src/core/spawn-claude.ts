@@ -23,11 +23,18 @@
  * is still awaiting cannot start a child that would outlive the process.
  *
  * `spawnClaudeRun` never throws. A spawn failure (spawn() throwing, the
- * child's 'error' event, a nonzero exit) comes back as `spawnError` -- with
+ * child's 'error' event, a nonzero exit, or a 0 exit whose final result is
+ * missing, `is_error`, or has a `terminal_reason` outside
+ * ALLOWED_TERMINAL_REASONS) comes back as `spawnError` -- with
  * the parsed usage whenever the child printed any stdout; a
  * timeout kill comes back as `killedTimeout: true`, which the caller maps to
  * outcome "killed" / failure_category "killed_ceiling"
  * (`killedTimeoutVerdict`).
+ *
+ * With `opts.sandbox`, every spawn goes through the adapter in this order:
+ * prepare (timed), wrap, spawn, inspect after the child settles, then a
+ * once-guarded teardown in a `finally` (also called by `killActiveChild` and
+ * right after a timeout SIGKILL); without it the spawn is exactly as before.
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
@@ -38,6 +45,10 @@ import { extractUsage } from "./claude-usage.ts";
 import type { UsageResult } from "./claude-usage.ts";
 import { redactSensitive } from "./redact.ts";
 import type { ExecutorVerdict } from "./types.ts";
+import type { RunSandboxSpec, SandboxAdapter, SandboxHandle, SandboxReport, WrappedSpawn } from "../sandbox/types.ts";
+
+/** `terminal_reason` values of a successful run (every real local run reported "completed"). */
+export const ALLOWED_TERMINAL_REASONS: readonly string[] = ["completed"];
 
 /** Grace period between SIGTERM and SIGKILL on a timeout kill. */
 export const KILL_GRACE_MS = 30_000;
@@ -48,6 +59,13 @@ export const KILL_GRACE_MS = 30_000;
  * still holding the pipe can delay forever; the run must still return.
  */
 export const POST_KILL_GRACE_MS = 5_000;
+
+/**
+ * The longest any caller waits for a sandbox teardown (killActiveChild, the
+ * run's finally). A hung adapter must not stop a signal from exiting the
+ * process; past this, the wait is abandoned with a logged error.
+ */
+export const TEARDOWN_GRACE_MS = 30_000;
 
 export interface SpawnClaudeOpts {
   prompt: string;
@@ -85,6 +103,8 @@ export interface SpawnClaudeOpts {
   denyEditsUnder?: string[];
   /** Prefix for this run's log lines (the skill name). Overrides SpawnClaudeDeps.logPrefix. */
   logPrefix?: string;
+  /** Run the spawn through this sandbox adapter. Omitted: no sandbox, the spawn is unchanged. */
+  sandbox?: { adapter: SandboxAdapter; run: RunSandboxSpec };
 }
 
 export interface SpawnClaudeResult {
@@ -100,7 +120,11 @@ export interface SpawnClaudeResult {
   /** ISO-8601 UTC. */
   ended: string;
   spawnError?: string;
+  /** The parsed final result's error fields; set whenever a result object was parsed. */
+  resultError?: { is_error: boolean; terminal_reason?: string };
   killedTimeout: boolean;
+  /** Set only when `opts.sandbox` was given (and a sandbox was prepared or attempted). */
+  sandbox?: { adapter: string; instance: string; prepare_ms: number; report: SandboxReport };
 }
 
 export type SpawnFn = (
@@ -316,8 +340,12 @@ function buildArgs(opts: SpawnClaudeOpts): string[] {
   ];
 }
 
-/** The run in progress: its child, and a promise that settles when the run does. */
-let active: { child: ChildProcess; done: Promise<void> } | null = null;
+/**
+ * The run in progress: its child, a promise that settles when the run does,
+ * and a wait for its sandbox teardown (once-guarded, never rejecting, and
+ * bounded by TEARDOWN_GRACE_MS).
+ */
+let active: { child: ChildProcess; done: Promise<void>; teardown: () => Promise<void> } | null = null;
 
 export type KillActiveResult = "none" | "exited" | "killed";
 
@@ -364,13 +392,17 @@ export async function killActiveChild(
   } catch {
     // Already gone.
   }
-  if (await within(KILL_GRACE_MS)) return "exited";
+  if (await within(KILL_GRACE_MS)) {
+    await run.teardown();
+    return "exited";
+  }
   try {
     run.child.kill("SIGKILL");
   } catch {
     // Already gone.
   }
   await within(POST_KILL_GRACE_MS);
+  await run.teardown();
   return "killed";
 }
 
@@ -378,10 +410,29 @@ interface ChildOutcome {
   stdout: string;
   spawnError?: string;
   killedTimeout: boolean;
+  /** The 'close' code; null when killed, on an error, or when nothing was spawned. */
+  exitCode: number | null;
 }
 
+/** How runChild talks to a prepared sandbox. */
+interface ChildSandbox {
+  wrap: (cmd: string, args: string[], opts: WrappedSpawn["opts"]) => WrappedSpawn;
+  /** Starts the teardown (fire-and-forget). Once-guarded; never rejects. */
+  teardown: () => Promise<void>;
+  /** Waits for the teardown, at most TEARDOWN_GRACE_MS. Once-guarded; never rejects. */
+  waitTeardown: () => Promise<void>;
+}
+
+const noTeardown = async (): Promise<void> => {};
+
 /** Runs the child to completion (or kill). Never rejects. */
-function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promise<ChildOutcome> {
+function runChild(
+  opts: SpawnClaudeOpts,
+  deps: Required<SpawnClaudeDeps>,
+  sandbox?: ChildSandbox,
+): Promise<ChildOutcome> {
+  const teardown = sandbox?.teardown ?? noTeardown;
+  const waitTeardown = sandbox?.waitTeardown ?? noTeardown;
   let markDone: () => void = () => {};
   const done = new Promise<void>((r) => {
     markDone = r;
@@ -411,21 +462,23 @@ function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promi
     };
 
     if (stopping) {
-      settle({ stdout: "", spawnError: STOPPING_SPAWN_ERROR, killedTimeout: false });
+      settle({ stdout: "", spawnError: STOPPING_SPAWN_ERROR, killedTimeout: false, exitCode: null });
       return;
     }
     let child: ChildProcess;
     try {
-      child = deps.spawn("claude", buildArgs(opts), {
+      const spawnOpts: WrappedSpawn["opts"] = {
         stdio: ["ignore", "pipe", "pipe"],
         env: childEnv(opts.env),
         ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
-      });
+      };
+      const s = sandbox ? sandbox.wrap("claude", buildArgs(opts), spawnOpts) : { cmd: "claude", args: buildArgs(opts), opts: spawnOpts };
+      child = deps.spawn(s.cmd, s.args, s.opts);
     } catch (err) {
-      settle({ stdout: "", spawnError: err instanceof Error ? err.message : String(err), killedTimeout: false });
+      settle({ stdout: "", spawnError: err instanceof Error ? err.message : String(err), killedTimeout: false, exitCode: null });
       return;
     }
-    active = { child, done };
+    active = { child, done, teardown: waitTeardown };
 
     if (opts.stream) {
       if (child.stdout) {
@@ -460,28 +513,29 @@ function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promi
         killTimer = undefined;
         deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: no exit ${KILL_GRACE_MS / 1000}s after SIGTERM, sending SIGKILL`);
         child.kill("SIGKILL");
+        void teardown();
         postKillTimer = deps.setTimeout(() => {
           postKillTimer = undefined;
           deps.logError(
             `[${deps.logPrefix}] ${opts.ticketKey}: no exit/close ${POST_KILL_GRACE_MS / 1000}s after SIGKILL, giving up on the child`,
           );
-          settle({ stdout: collected(), killedTimeout: true });
+          settle({ stdout: collected(), killedTimeout: true, exitCode: null });
         }, POST_KILL_GRACE_MS);
       }, KILL_GRACE_MS);
     }, opts.timeoutMin * 60_000);
 
     child.on("error", (err: Error) => {
-      settle({ stdout: collected(), spawnError: err.message, killedTimeout });
+      settle({ stdout: collected(), spawnError: err.message, killedTimeout, exitCode: null });
     });
     // After a timeout kill, 'exit' is enough: 'close' can wait forever on a
     // grandchild that inherited the stdio pipes. Without a kill, keep
     // waiting for 'close' so no buffered stdout is lost.
     child.on("exit", () => {
-      if (killedTimeout) settle({ stdout: collected(), killedTimeout: true });
+      if (killedTimeout) settle({ stdout: collected(), killedTimeout: true, exitCode: null });
     });
     child.on("close", (code: number | null) => {
       if (killedTimeout) {
-        settle({ stdout: collected(), killedTimeout: true });
+        settle({ stdout: collected(), killedTimeout: true, exitCode: null });
         return;
       }
       if (code !== 0) {
@@ -490,10 +544,11 @@ function runChild(opts: SpawnClaudeOpts, deps: Required<SpawnClaudeDeps>): Promi
           stdout: collected(),
           spawnError: `claude exited with code ${code}. ${opts.stream ? "Last line" : "Output"}: ${tail}`,
           killedTimeout: false,
+          exitCode: code,
         });
         return;
       }
-      settle({ stdout: collected(), killedTimeout: false });
+      settle({ stdout: collected(), killedTimeout: false, exitCode: 0 });
     });
   });
 }
@@ -524,8 +579,107 @@ export async function spawnClaudeRun(
   };
 
   const started = deps.now().toISOString();
-  const outcome = await runChild(opts, deps);
+
+  // Prepare the sandbox, if any. A failure here means no child: return
+  // before the result checks, with an infra denial (Review Focus 2).
+  let prepared:
+    | {
+        adapter: SandboxAdapter;
+        handle: SandboxHandle;
+        prepare_ms: number;
+        /** The bounded wait. */
+        teardown: () => Promise<void>;
+        startTeardown: () => Promise<void>;
+      }
+    | undefined;
+  if (opts.sandbox !== undefined && !stopping) {
+    const { adapter, run } = opts.sandbox;
+    const t0 = deps.now().getTime();
+    let handle: SandboxHandle;
+    try {
+      handle = await adapter.prepare(run);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const spawnError = `sandbox prepare failed: ${message}`;
+      deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: spawn failed: ${spawnError}`);
+      return {
+        stdout: "",
+        usage: { costUsd: 0, tokens: { in: 0, out: 0 } },
+        started,
+        ended: deps.now().toISOString(),
+        spawnError,
+        killedTimeout: false,
+        sandbox: {
+          adapter: adapter.name,
+          instance: run.instanceName,
+          prepare_ms: deps.now().getTime() - t0,
+          // The message is the only thing sandbox:approvals can show for this
+          // park; the record path redacts it (appendIteration).
+          report: { denied: [{ kind: "infra", target: "prepare" }], approveHint: spawnError },
+        },
+      };
+    }
+    const prepare_ms = deps.now().getTime() - t0;
+    // Once-guarded and never rejecting: the finally, killActiveChild and the
+    // timeout path may all call it; the adapter's teardown runs once.
+    let torn: Promise<void> | undefined;
+    const teardown = (): Promise<void> =>
+      (torn ??= (async () => {
+        try {
+          await adapter.teardown(handle);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: sandbox teardown failed: ${message}`);
+        }
+      })());
+    // Bounded wait, also once-guarded so the kill path and the finally
+    // share one timer and one log line.
+    let waited: Promise<void> | undefined;
+    const waitTeardown = (): Promise<void> =>
+      (waited ??= new Promise<void>((resolve) => {
+        const timer = deps.setTimeout(() => {
+          deps.logError(
+            `[${deps.logPrefix}] ${opts.ticketKey}: sandbox teardown still running after ${TEARDOWN_GRACE_MS / 1000}s, not waiting for it`,
+          );
+          resolve();
+        }, TEARDOWN_GRACE_MS);
+        void teardown().then(() => {
+          deps.clearTimeout(timer);
+          resolve();
+        });
+      }));
+    prepared = { adapter, handle, prepare_ms, teardown: waitTeardown, startTeardown: teardown };
+  }
+
+  let outcome: ChildOutcome;
+  let report: SandboxReport | undefined;
+  try {
+    outcome = await runChild(
+      opts,
+      deps,
+      prepared && {
+        wrap: (cmd, args, spawnOpts) => prepared.adapter.wrap(prepared.handle, cmd, args, spawnOpts),
+        teardown: prepared.startTeardown,
+        waitTeardown: prepared.teardown,
+      },
+    );
+    if (prepared) {
+      try {
+        report = await prepared.adapter.inspect(prepared.handle, outcome.exitCode);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: sandbox inspect failed: ${message}`);
+        report = { denied: [{ kind: "infra", target: "inspect" }] };
+      }
+    }
+  } finally {
+    if (prepared) await prepared.teardown();
+  }
   const ended = deps.now().toISOString();
+  const sandbox: Pick<SpawnClaudeResult, "sandbox"> =
+    prepared && report
+      ? { sandbox: { adapter: prepared.adapter.name, instance: prepared.handle.instanceName, prepare_ms: prepared.prepare_ms, report } }
+      : {};
 
   if (outcome.spawnError !== undefined) {
     deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: spawn failed: ${outcome.spawnError}`);
@@ -541,6 +695,7 @@ export async function spawnClaudeRun(
       ended,
       spawnError: outcome.spawnError,
       killedTimeout: outcome.killedTimeout,
+      ...sandbox,
     };
   }
 
@@ -559,6 +714,26 @@ export async function spawnClaudeRun(
     usageRaw = null;
   }
 
+  let spawnError = outcome.spawnError;
+  let resultError: SpawnClaudeResult["resultError"];
+  const parsedResult =
+    typeof usageRaw === "object" && usageRaw !== null && (usageRaw as { type?: unknown }).type === "result"
+      ? (usageRaw as { is_error?: unknown; terminal_reason?: unknown })
+      : null;
+  if (parsedResult !== null) {
+    const isError = parsedResult.is_error === true;
+    const reason = typeof parsedResult.terminal_reason === "string" ? parsedResult.terminal_reason : undefined;
+    resultError = { is_error: isError, ...(reason !== undefined ? { terminal_reason: reason } : {}) };
+    if (spawnError === undefined && !outcome.killedTimeout && (isError || (reason !== undefined && !ALLOWED_TERMINAL_REASONS.includes(reason)))) {
+      spawnError = `claude reported a failed result (is_error=${isError}, terminal_reason=${reason})`;
+    }
+  } else if (spawnError === undefined && !outcome.killedTimeout) {
+    spawnError = "claude exited 0 without a result";
+  }
+  if (spawnError !== undefined && outcome.spawnError === undefined) {
+    deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: spawn failed: ${spawnError}`);
+  }
+
   // A nonzero exit that still printed a result (e.g. the --max-budget-usd
   // cap) keeps its real cost, so the ceilings and runs.jsonl never
   // undercount the most expensive runs; spawnError is still reported.
@@ -567,7 +742,9 @@ export async function spawnClaudeRun(
     usage: extractUsage(usageRaw),
     started,
     ended,
-    ...(outcome.spawnError !== undefined ? { spawnError: outcome.spawnError } : {}),
+    ...(spawnError !== undefined ? { spawnError } : {}),
+    ...(resultError !== undefined ? { resultError } : {}),
     killedTimeout: outcome.killedTimeout,
+    ...sandbox,
   };
 }

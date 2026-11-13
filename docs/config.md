@@ -185,6 +185,24 @@ no separate URL to configure or keep in sync. See `docs/skills.md` for the
 lifecycle (who starts/stops it, and the hard gate that it's always stopped
 before Ground ends).
 
+### Sandbox (optional)
+
+An optional top-level `sandbox` block selects a sandbox adapter for agent
+spawns. Absent means the `none` adapter: spawns are exactly as before.
+
+```json
+"sandbox": { "adapter": "none", "mode": "enforce" }
+```
+
+- `adapter` — a registered adapter name (currently only `none`). Default `none`.
+- `mode` — `"discover"` or `"enforce"`. Default `"enforce"`.
+- An adapter's own sub-block is keyed by its name (`sandbox.<adapter>`) and
+  validated by that adapter; errors are prefixed `sandbox.<adapter>: `.
+- Any other key is rejected (`sandbox: unknown key "<k>"`).
+- CLI precedence: `--sandbox=<name>` wins over `sandbox.adapter`.
+  `--sandbox=none` is the per-run off switch. An unknown name fails at
+  startup with `--sandbox: unknown sandbox adapter ...`.
+
 ### Ticket status never reverts
 
 Once this loop claims a ticket (`claimStatus.from` → `claimStatus.to`,
@@ -361,6 +379,24 @@ concurrent loop instances" below, which this change does not solve.
   mirror Issue there; this repo's `GitHubClient` (`src/core/github-client.ts`)
   reads and writes to the same repo once a ticket crosses to
   `pipeline:dev`.
+
+### Sandbox (optional)
+
+(Same as in the Research phase section.) An optional top-level `sandbox` block selects a sandbox adapter for agent
+spawns. Absent means the `none` adapter: spawns are exactly as before.
+
+```json
+"sandbox": { "adapter": "none", "mode": "enforce" }
+```
+
+- `adapter` — a registered adapter name (currently only `none`). Default `none`.
+- `mode` — `"discover"` or `"enforce"`. Default `"enforce"`.
+- An adapter's own sub-block is keyed by its name (`sandbox.<adapter>`) and
+  validated by that adapter; errors are prefixed `sandbox.<adapter>: `.
+- Any other key is rejected (`sandbox: unknown key "<k>"`).
+- CLI precedence: `--sandbox=<name>` wins over `sandbox.adapter`.
+  `--sandbox=none` is the per-run off switch. An unknown name fails at
+  startup with `--sandbox: unknown sandbox adapter ...`.
 
 ### Ticket status never reverts
 

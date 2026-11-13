@@ -5,6 +5,8 @@
 // dependencies (JiraClient, run-skill callback). No behavior lives here
 // beyond the CURRENT_LOG_VERSION constant.
 
+import type { SandboxConfig } from "../sandbox/types.ts";
+
 /**
  * Closed enum of failure categories a run can be tagged with. This must
  * match the pipeline spec's failure_category enum exactly - do not add or
@@ -21,7 +23,9 @@ export type FailureCategory =
   | "subagent_stall"
   | "merge_conflict"
   | "agent_error"
-  | "killed_ceiling";
+  | "killed_ceiling"
+  /** An enforcing sandbox refused the run (network, credential, infra): the ticket is parked, not judged. */
+  | "sandbox_denied";
 
 /**
  * The set of terminal outcomes a run can have.
@@ -342,6 +346,8 @@ export interface Config {
     dev: RoleSettings & { codeReviewFields: CodeReviewFieldsConfig };
   };
   ceilings: CeilingsConfig;
+  /** Optional sandbox for agent spawns; absent means the none adapter. */
+  sandbox?: SandboxConfig;
 }
 
 /** Per-run limits a role enforces (shape of ceilings.ts CeilingLimits). */

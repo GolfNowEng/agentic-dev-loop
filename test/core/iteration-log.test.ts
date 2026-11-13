@@ -87,6 +87,36 @@ describe("appendIteration / readIterations", () => {
     expect(withSync.ticket).toBe("TARS-1");
   });
 
+  it("appendIteration redacts parked.approveHint and denial targets", async () => {
+    const f = join(await tmp(), "log.jsonl");
+    await appendIteration(
+      f,
+      rec({
+        outcome: "parked",
+        phases: [],
+        resume: "dev",
+        parked: {
+          role: "dev",
+          failure_category: "sandbox_denied",
+          denied: [
+            { kind: "credential", target: `token ${FAKE_TOKEN}` },
+            { kind: "network", target: "api.example.com" },
+          ],
+          approveHint: `allow --token=${FAKE_TOKEN}`,
+          cost_usd: 0.5,
+          run_dir: "d",
+        },
+      }),
+    );
+    const raw = await readFile(f, "utf8");
+    expect(raw).not.toContain(FAKE_TOKEN);
+    const [r] = await readIterations(f);
+    expect(r.parked!.approveHint).toContain("REDACTED");
+    expect(r.parked!.denied[0].target).toContain("REDACTED");
+    expect(r.parked!.denied[1]).toEqual({ kind: "network", target: "api.example.com" });
+    expect(r.parked).toMatchObject({ role: "dev", failure_category: "sandbox_denied", cost_usd: 0.5, run_dir: "d" });
+  });
+
   it("skips blank lines and a truncated final line", async () => {
     const f = join(await tmp(), "log.jsonl");
     await appendIteration(f, rec());
@@ -144,6 +174,20 @@ describe("hasLandedPhase / failedAttempts", () => {
     expect(failedAttempts([...rs, e("landed", "dev", 7)], "TARS-1", "dev")).toBe(0);
     expect(failedAttempts(rs, "TARS-1", "research")).toBe(1);
     expect(failedAttempts(rs, "TARS-2", "dev")).toBe(0);
+  });
+
+  it("failedAttempts ignores parked records", () => {
+    const err = rec({ ended: "2026-11-10T11:00:00Z", phases: [phase({ outcome: "error", started: "2026-11-10T11:00:00Z" })] });
+    const parked = (n: number) =>
+      rec({
+        ended: `2026-11-10T1${n}:00:00Z`,
+        outcome: "parked",
+        phases: [],
+        resume: "dev",
+        parked: { role: "dev", failure_category: "sandbox_denied", denied: [{ kind: "network", target: "x.example" }], cost_usd: 1, run_dir: "d" },
+      });
+    expect(failedAttempts([err, parked(2), parked(3), parked(4)], "TARS-1", "dev")).toBe(1);
+    expect(failedAttempts([parked(2)], "TARS-1", "dev")).toBe(0);
   });
 });
 

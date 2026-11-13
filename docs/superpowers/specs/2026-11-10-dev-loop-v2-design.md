@@ -274,7 +274,11 @@ One `pipeline.<project>.config.json` per project:
   ticket, session, `loop_version`, start/end, overall outcome, and a
   `phases` array with one entry per phase that ran (skill, skill_version,
   model, outcome, phase_reached, cost, tokens, failure_category, detail,
-  PR URL for dev). A ticket that bounces in research has one phase entry; a
+  PR URL for dev). `failure_category` is the closed enum `spec_ambiguous ·
+  spec_contradicted · blocked · too_large · tests_flaky · env_setup ·
+  verify_rejected · subagent_stall · merge_conflict · agent_error ·
+  killed_ceiling · sandbox_denied` (`sandbox_denied` is the loop's own, on a
+  `parked` record's `parked` field, never a skill's). A ticket that bounces in research has one phase entry; a
   ticket resumed at dev after a restart starts a new record with only the
   dev phase.
 - The record is appended once the iteration ends. Live progress while it

@@ -11,7 +11,7 @@ import { buildPollJql, excludeIdsFromJql, excludeKeysFromJql, isIssueId } from "
 import { gateTicket } from "../core/blocker-gate.ts";
 import { checkCeilings } from "../core/ceilings.ts";
 import { TICKET_KEY, runIdNow, v2RunDir } from "../core/paths.ts";
-import { durationMin, errorMessage } from "../core/run-skill.ts";
+import { durationMin, errorMessage, type RunSkillFn, type RunSkillResult } from "../core/run-skill.ts";
 import { runResearchPhase } from "../roles/research/phase.ts";
 import { runDevPhase } from "../roles/dev/phase.ts";
 import { append, latestRecord, MAX_SKIPS, nowIso, type Ctx } from "./context.ts";
@@ -224,9 +224,14 @@ export const MIN_DEV_BUDGET_USD = 1;
 
 // ---- running a phase ----
 
+/** A run an enforcing sandbox refused: its denials, plus the measured cost, run dir and timing (for the ceilings). */
+export type PhaseParked = NonNullable<RunSkillResult["parked"]> & { cost_usd: number; run_dir: string; started: string; ended: string };
+
 export type PhaseRun =
   | {
       entry: PhaseEntry;
+      /** Set when the sandbox refused the run: `entry` is then a placeholder agent_error the caller ignores. */
+      parked?: PhaseParked;
       /** setInFlight(null) failed: the session lock is gone. Append the record, then pause. */
       fatal?: string;
     }
@@ -244,25 +249,33 @@ export async function runPhase(ctx: Ctx, role: Role, ticket: JiraTicket, maxBudg
     return { entry: null, fatal: `could not record the in-flight ${role} run for ${ticket.key} in the session lock: ${errorMessage(err)}` };
   }
   ctx.log(`[worker] ${ticket.key}: ${role} phase starting (budget $${maxBudgetUsd})`);
+  // Capture `parked` from the result; the phase functions see verdictRaw undefined and make no Jira write.
+  let parked: PhaseParked | undefined;
+  const runSkill: RunSkillFn = async (args) => {
+    const res = await deps.runSkill(args);
+    if (res.parked) parked = { ...res.parked, cost_usd: res.costUsd, run_dir: args.runDir, started: res.started, ended: res.ended };
+    return res;
+  };
   const entry =
     role === "research"
-      ? await runResearchPhase(ticket, { jira: deps.jira, view: ctx.research, runSkill: deps.runSkill, runDir, maxBudgetUsd, now: deps.now })
+      ? await runResearchPhase(ticket, { jira: deps.jira, view: ctx.research, runSkill, runDir, maxBudgetUsd, now: deps.now })
       : await runDevPhase(ticket, {
           jira: deps.jira,
           github: deps.github,
           view: ctx.dev,
-          runSkill: deps.runSkill,
+          runSkill,
           runDir,
           maxBudgetUsd,
           session: deps.session.name,
           now: deps.now,
         });
-  ctx.log(`[worker] ${ticket.key}: ${role} ${entry.outcome}: ${entry.detail}`);
+  ctx.log(parked ? `[worker] ${ticket.key}: ${role} parked (sandbox refused)` : `[worker] ${ticket.key}: ${role} ${entry.outcome}: ${entry.detail}`);
+  const out = parked ? { entry, parked } : { entry };
   try {
     await deps.session.setInFlight(null);
-    return { entry };
+    return out;
   } catch (err) {
-    return { entry, fatal: `could not clear the session's in-flight record: ${errorMessage(err)}` };
+    return { ...out, fatal: `could not clear the session's in-flight record: ${errorMessage(err)}` };
   }
 }
 
@@ -271,7 +284,7 @@ export async function runPhase(ctx: Ctx, role: Role, ticket: JiraTicket, maxBudg
  * limits. runs/day is checked before a role starts (per role), not here, so
  * one role reaching its cap never stops the other role's work.
  */
-export function postPhaseBreach(ctx: Ctx, entry: PhaseEntry): string | null {
+export function postPhaseBreach(ctx: Ctx, entry: Pick<PhaseEntry, "role" | "cost_usd" | "started" | "ended">): string | null {
   const view = entry.role === "research" ? ctx.research : ctx.dev;
   const c = checkCeilings({
     runsToday: 0,

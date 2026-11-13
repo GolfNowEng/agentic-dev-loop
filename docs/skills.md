@@ -305,7 +305,7 @@ itself). The loop runner (`src/loop-runner.ts`) reads it via
 **Closed `failure_category` enum** — do not add or remove values without
 updating the pipeline spec: `spec_ambiguous · spec_contradicted · blocked ·
 too_large · tests_flaky · env_setup · verify_rejected · subagent_stall ·
-merge_conflict · agent_error · killed_ceiling`. This skill only ever
+merge_conflict · agent_error · killed_ceiling · sandbox_denied`. This skill only ever
 self-reports `spec_ambiguous`, `spec_contradicted`, `too_large`, or
 `blocked`.
 
@@ -449,7 +449,7 @@ on a landed dev-loop verdict).
 **Closed `failure_category` enum** — do not add or remove values without
 updating the pipeline spec: `spec_ambiguous · spec_contradicted · blocked ·
 too_large · tests_flaky · env_setup · verify_rejected · subagent_stall ·
-merge_conflict · agent_error · killed_ceiling`.
+merge_conflict · agent_error · killed_ceiling · sandbox_denied`.
 
 **`qa_notes` (optional `string[]`)** — sequential manual-testing steps for
 a human QA reviewer (real routes/URLs, one action + one `Expected:` result

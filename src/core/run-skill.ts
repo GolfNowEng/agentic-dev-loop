@@ -3,6 +3,7 @@
 // pass a scripted fake. Both role phases take it.
 
 import type { Role } from "./types.ts";
+import type { SandboxDenial } from "../sandbox/types.ts";
 
 export interface RunSkillArgs {
   role: Role;
@@ -27,6 +28,11 @@ export interface RunSkillResult {
   /** Git SHA of the skill's SKILL.md at run time. */
   skillVersion: string;
   model: string;
+  /**
+   * Set only when an enforcing sandbox refused something (or could not start):
+   * the run is parked, not judged, and verdictRaw is undefined.
+   */
+  parked?: { denied: SandboxDenial[]; approveHint?: string };
 }
 
 export type RunSkillFn = (args: RunSkillArgs) => Promise<RunSkillResult>;

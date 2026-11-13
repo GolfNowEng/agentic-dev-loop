@@ -6,6 +6,8 @@
 // entries (a record may hold a research and a dev phase; records with no
 // phases, e.g. handoff-done or interrupted, contribute nothing). A phase
 // is in the window when its `started` is within --days=N (default 7).
+// After the role lines, "parked: <n> ticket(s) currently parked" when any
+// ticket's latest record is `parked` (not windowed).
 //
 // --v1: the v1 logs, dev and research reported separately. Each role reads
 // runs/v1/<role>/<project>.jsonl when it exists, else the pre-cutover live
@@ -106,6 +108,15 @@ if (!v1) {
       .filter((p) => p && p.role === role && inWindow(p.started));
     console.log(render(`  ${role}: `, "phase", tally(phases)));
   }
+  // Currently parked: the ticket's latest record (by ended, file order breaks ties) is "parked". Not windowed.
+  const latest = new Map();
+  for (const r of log.rows) {
+    if (typeof r.ticket !== "string") continue;
+    const prev = latest.get(r.ticket);
+    if (!prev || String(r.ended) >= String(prev.ended)) latest.set(r.ticket, r);
+  }
+  const parked = [...latest.values()].filter((r) => r.outcome === "parked").length;
+  if (parked > 0) console.log(`  parked: ${parked} ticket(s) currently parked`);
   if (log.skipped > 0) console.log(`  (${log.skipped} unreadable line(s) skipped)`);
   process.exit(0);
 }

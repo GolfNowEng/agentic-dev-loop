@@ -6,6 +6,7 @@ import { access, appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { redactSensitive } from "./redact.ts";
 import { resolveRepoPath, SESSION_ID, TICKET_KEY, v1PreCutoverRunsLog, v1RunsLog, v2RunsLog } from "./paths.ts";
+import type { SandboxDenial } from "../sandbox/types.ts";
 import type { FailureCategory, FollowUp, PhaseReached, Role, RunOutcome, SizeTrajectory } from "./types.ts";
 
 export interface PhaseEntry {
@@ -51,7 +52,22 @@ export type IterationOutcome =
   /** A phase run stopped by SIGINT/SIGTERM; not a failed attempt (phases: [], resume set). */
   | "interrupted"
   /** A pending resume whose ticket left <claimStatus.to>; phases: [], no resume (resolves the pending one), not an attempt. */
-  | "resume-dropped";
+  | "resume-dropped"
+  /** A phase run an enforcing sandbox refused (phases: [], resume set, not an attempt); the poll skips it until cleared. */
+  | "parked"
+  /** Written by `sandbox:approvals --clear`: resolves a park (phases: [], resume copied from it, so it re-runs). */
+  | "unparked";
+
+/** The refused run behind a "parked" record. */
+export interface ParkedRun {
+  role: Role;
+  failure_category: "sandbox_denied";
+  denied: SandboxDenial[];
+  approveHint?: string;
+  /** Measured cost of the refused run (it is not in `phases`). */
+  cost_usd: number;
+  run_dir: string;
+}
 
 export interface IterationRecord {
   ticket: string;
@@ -71,6 +87,8 @@ export interface IterationRecord {
   resume?: Role;
   detail?: string;
   jira_sync_error?: string;
+  /** Outcome "parked" only: what the sandbox refused. */
+  parked?: ParkedRun;
 }
 
 /** A landed ticket with its PR, from whichever log generation recorded it. */
@@ -103,6 +121,14 @@ export async function appendIteration(path: string, rec: IterationRecord): Promi
   };
   if (rec.detail !== undefined) out.detail = redactOpt(rec.detail);
   if (rec.jira_sync_error !== undefined) out.jira_sync_error = redactOpt(rec.jira_sync_error);
+  if (rec.parked !== undefined) {
+    const { approveHint, ...rest } = rec.parked;
+    out.parked = {
+      ...rest,
+      denied: rec.parked.denied.map((d) => ({ ...d, target: redactSensitive(d.target) })),
+      ...(approveHint !== undefined ? { approveHint: redactSensitive(approveHint) } : {}),
+    };
+  }
   await mkdir(dirname(path), { recursive: true });
   await appendFile(path, `${JSON.stringify(out)}\n`, "utf8");
 }

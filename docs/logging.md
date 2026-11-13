@@ -161,7 +161,10 @@ The two v1 `npm run stats` sections above describe the pre-2.0.0 script.
   **phase entries** (not records): phases run, landed, bounced,
   error/killed, cost sum, and a `failure_category` histogram. A phase is
   in the window when its `started` is within `--days`. Records with no
-  phases (`handoff-done`, `interrupted`, `resume-dropped`, `skipped-*`) add nothing.
+  phases (`handoff-done`, `interrupted`, `resume-dropped`, `parked`,
+  `unparked`, `skipped-*`) add nothing. After the role lines it prints
+  `parked: <n> ticket(s) currently parked` when any ticket's latest record
+  is `parked` (not windowed).
 - **`--v1`:** v1 dev and v1 research reported separately. Each reads
   `runs/v1/<role>/<project>.jsonl` when it exists, else the pre-cutover
   live log (dev: `runs/<project>.jsonl`, research:
@@ -202,6 +205,27 @@ One JSON line per ticket iteration (`src/core/iteration-log.ts`), append-only.
 `phases` has one entry per skill run (empty for `skipped-blocked` /
 `claim-error`). `detail` and `jira_sync_error` are redacted before writing.
 Readers skip blank, truncated and malformed lines.
+
+Outcomes: `landed`, `bounced`, `error`, `killed`, `skipped-blocked`,
+`claim-error`, `handoff-pending`, `handoff-done`, `skipped-pr-exists`,
+`blocked-attempts`, `interrupted`, `resume-dropped`, and (2.2.0, sandbox):
+
+- `parked`: an enforcing sandbox refused a phase run (network, credential
+  or infra). `resume: <role>` is set, but no phase entry is written for the
+  refused run, so it is not a failed attempt. A research phase that landed
+  before a refused dev phase stays in `phases`. The record carries
+  `parked: { role, failure_category: "sandbox_denied", denied: [{ kind,
+  target }], approveHint?, cost_usd, run_dir }`; `approveHint` and every
+  `target` are redacted. Jira is not touched after the run (the claim
+  before a research run still happens). A desktop notification fires
+  (macOS, `osascript`, redacted), and the loop carries on, unless the
+  refused run itself breached its role's cost or duration ceiling (its cost
+  is real but not in `phases`), which pauses after the record as for any
+  phase. While a ticket's
+  latest record is `parked`, step 2 excludes it from every poll and step 0
+  doesn't resume it.
+- `unparked`: written by `npm run sandbox:approvals -- --clear=<KEY>`
+  (`phases: []`, `resume` copied from the park), so step 0 re-runs it.
 
 ```json
 {"ticket":"TARS-1465","session":"s1","loop_version":"2.0.0","started":"2026-11-10T10:00:00.000Z","ended":"2026-11-10T10:41:00.000Z","outcome":"landed","phases":[{"role":"dev","skill":"ticket-to-pr","skill_version":"2.0.0","model":"opus","started":"2026-11-10T10:00:00.000Z","ended":"2026-11-10T10:41:00.000Z","outcome":"landed","phase_reached":"pr","cost_usd":4.2,"tokens":{"in":120000,"out":30000},"failure_category":null,"detail":"PR opened","pr":"https://github.com/org/repo/pull/12","run_dir":".pipeline/v2/webtarsthree/s1/TARS-1465/dev-20261110T100000Z"}]}
@@ -260,7 +284,8 @@ iteration writes nothing. The steps run in this order:
    record, and only when the ticket's previous record isn't already one. It
    never pauses.
 2. **Exclude**. Every poll excludes `recentlyEnded` (10 min, read from the
-   log, so the exclusion survives restarts) and tickets at
+   log, so the exclusion survives restarts), tickets whose latest record is
+   `parked`, and tickets at
    `maxAttemptsPerTicket` failed attempts of a role (`attempts.ts`). A ticket
    that has just reached the cap, for a role this process runs, gets a
    comment, the bounced status and one `blocked-attempts` record. A
@@ -297,3 +322,20 @@ comments end with a `— <session>` line.
 no dev, so a green ticket stays pending for a dev-enabled worker.
 `--phase=dev` runs it with only dev enabled: steps 1 and 3, plus the v1
 reconcile pass.
+
+## Parked tickets
+
+When an enforcing sandbox refuses a phase run, the loop appends a `parked`
+record (`phases: []`, `resume` set, details under `parked`) and skips the
+ticket until it is cleared.
+
+```
+npm run sandbox:approvals                          # list parked tickets (webtarsthree)
+npm run sandbox:approvals -- --project=<name>
+npm run sandbox:approvals -- --clear=TARS-123      # un-park one
+```
+
+The list shows each refusal (`kind target`) and the adapter's allow hint. The
+script only prints the hint; run it yourself, then `--clear=<KEY>`, which
+appends an `unparked` record. The next loop iteration resumes the ticket's
+parked role. A key that is not currently parked exits 1.

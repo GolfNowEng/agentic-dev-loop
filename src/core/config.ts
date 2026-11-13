@@ -8,6 +8,7 @@
 
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { DEFAULT_ADAPTER, adapterNames, getAdapter } from "../sandbox/index.ts";
 import type {
   Config,
   DevView,
@@ -120,7 +121,7 @@ export function validateConfig(raw: unknown): Config {
       "autoPromoteLabel was removed in 2.0.0: a green research verdict always hands off to dev (spec section 6.3). Delete the key.",
     );
   }
-  keys(root, "", ["targetRepo", "github", "jira", "roles", "ceilings"]);
+  keys(root, "", ["targetRepo", "github", "jira", "roles", "ceilings"], ["sandbox"]);
 
   const targetRepo = obj(root.targetRepo, "targetRepo");
   keys(targetRepo, "targetRepo", ["url", "defaultBranch"], ["path"]);
@@ -179,7 +180,30 @@ export function validateConfig(raw: unknown): Config {
   positive(ceilings, "maxAttemptsPerTicket", "ceilings", true);
   positive(ceilings, "maxCostPerTicketUsd", "ceilings");
 
+  if ("sandbox" in root) validateSandbox(root.sandbox);
+
   return raw as Config;
+}
+
+/** The optional sandbox block; each adapter validates its own sub-block. */
+function validateSandbox(v: unknown): void {
+  const sb = obj(v, "sandbox");
+  keys(sb, "sandbox", [], ["adapter", "mode", ...adapterNames()]);
+  if (sb.adapter !== undefined) str(sb, "adapter", "sandbox");
+  let adapter;
+  try {
+    adapter = getAdapter((sb.adapter as string | undefined) ?? DEFAULT_ADAPTER);
+  } catch (err) {
+    throw new ConfigError(`sandbox.adapter: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (sb.mode !== undefined && sb.mode !== "discover" && sb.mode !== "enforce") {
+    throw new ConfigError(`sandbox.mode must be "discover" or "enforce" (got ${JSON.stringify(sb.mode)})`);
+  }
+  try {
+    adapter.validateConfig(sb[adapter.name]);
+  } catch (err) {
+    throw new ConfigError(`sandbox.${adapter.name}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------

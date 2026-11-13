@@ -626,3 +626,37 @@ describe(".claude/ prose references only v2 config keys", () => {
     expect(passing).toContain('A passing verdict\'s comment never has a "Needs decision" section');
   });
 });
+
+describe("validateConfig: optional sandbox block", () => {
+  const withSandbox = (sb: unknown) => makeV2Config((c) => Object.assign(c, { sandbox: sb }));
+
+  it("accepts an absent sandbox, {adapter:none}, and {adapter:none, mode:discover}", () => {
+    expect(() => validateConfig(makeV2Config())).not.toThrow();
+    expect(() => validateConfig(withSandbox({ adapter: "none" }))).not.toThrow();
+    expect(() => validateConfig(withSandbox({ adapter: "none", mode: "discover" }))).not.toThrow();
+  });
+
+  it("rejects an unregistered adapter, naming sandbox.adapter and the valid names", () => {
+    expect(() => validateConfig(withSandbox({ adapter: "bogus" }))).toThrow(
+      'sandbox.adapter: unknown sandbox adapter "bogus"; valid: none',
+    );
+  });
+
+  it("rejects a non-string adapter with a type error", () => {
+    expect(() => validateConfig(withSandbox({ adapter: 5 }))).toThrow("sandbox.adapter must be a non-empty string");
+  });
+
+  it("rejects a bad mode", () => {
+    expect(() => validateConfig(withSandbox({ adapter: "none", mode: "loud" }))).toThrow(
+      'sandbox.mode must be "discover" or "enforce" (got "loud")',
+    );
+  });
+
+  it("rejects an unknown key (keys() wording)", () => {
+    expect(() => validateConfig(withSandbox({ adapter: "none", kitDir: "/x" }))).toThrow('sandbox: unknown key "kitDir"');
+  });
+
+  it("rejects a non-object sandbox", () => {
+    expect(() => validateConfig(withSandbox("none"))).toThrow("sandbox must be an object");
+  });
+});

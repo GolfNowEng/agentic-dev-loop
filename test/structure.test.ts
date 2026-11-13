@@ -341,3 +341,30 @@ describe("structure: final-review fixes stay wired", () => {
     expect(existsSync(join(ROOT, "scripts/size-checkpoint.mjs"))).toBe(false);
   });
 });
+
+describe("structure: sandbox names stay inside their adapter folder", () => {
+  const src = walk(join(ROOT, "src")).filter((f) => /\.(ts|md|json|mjs)$/.test(f));
+  const sbxDir = join(ROOT, "src/sandbox/sbx") + "/";
+
+  it("scans a non-empty src tree", () => expect(src.length).toBeGreaterThan(10));
+
+  it("no sandbox-specific names outside src/sandbox/<adapter>/", () => {
+    const hits = src.filter((f) => !f.startsWith(sbxDir) && /\bsbx\b/i.test(readFileSync(f, "utf8"))).map(rel);
+    expect(hits).toEqual([]);
+  });
+
+  it("no adapter-name branching outside src/sandbox/", () => {
+    const hits = src
+      .filter((f) => !f.startsWith(join(ROOT, "src/sandbox") + "/"))
+      .filter((f) => /adapter === "|adapter\.name === "/.test(readFileSync(f, "utf8")))
+      .map(rel);
+    expect(hits).toEqual([]);
+  });
+});
+
+describe("structure: node floor", () => {
+  it('package.json engines.node is ">=24.0.0"', () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { engines: { node: string } };
+    expect(pkg.engines.node).toBe(">=24.0.0");
+  });
+});

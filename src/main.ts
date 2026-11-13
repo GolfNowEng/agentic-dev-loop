@@ -1,6 +1,6 @@
 /**
  * CLI entrypoint:
- *   `node --env-file="${DEVLOOP_ENV_FILE:-.env}" src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--once] [--stream]`
+ *   `node --env-file="${DEVLOOP_ENV_FILE:-.env}" src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--sandbox=<name>] [--once] [--stream]`
  * `--config <path>` also works as a fallback for an arbitrary path outside
  * the naming convention; passing both --project and --config is an error
  * (src/core/cli-args.ts parses and tests all of it).
@@ -15,9 +15,11 @@
  * (requiredPlaceholderFree(phase), then in worker mode the label-version
  * guard: a v1-labelled project such as catalog-ui-* exits 1, a minor/patch
  * difference is a warning) -> leftover root .env warning (DEVLOOP_ENV_FILE
- * set and not the root .env itself) -> credentials -> acquireSession (one live worker
+ * set and not the root .env itself) -> REPO_DIR checks -> sandbox preflight
+ * (selected adapter) -> credentials -> acquireSession (one live worker
  * per project; a second start names the live session and exits 1) ->
- * record the adopted in-flight runs -> loop. REPO_DIR must be absolute and
+ * sandbox cleanupOrphans, scoped to `dl-<project>-` -> record the adopted
+ * in-flight runs -> loop. REPO_DIR must be absolute and
  * normalized, and may not be the dev-loop root, an ancestor of it, or inside
  * it (except the v2 clone dir). SIGINT/SIGTERM first stop the running
  * `claude -p` child (SIGTERM, then SIGKILL after KILL_GRACE_MS), then
@@ -56,12 +58,15 @@ import { PROJECT_SLUG, resolveRepoPath, v2CloneDir, v2RunsLog, v2SessionsDir } f
 import { acquireSession, isProcessAlive, LiveWorkerError } from "./core/session.ts";
 import { stopOnSignal, trackSession, type TrackedSession } from "./worker/signal.ts";
 import { findLandedPrUrlAcross, hasLandedV1 } from "./core/iteration-log.ts";
+import { DEFAULT_ADAPTER } from "./sandbox/index.ts";
+import { selectSandbox, type SandboxSelection } from "./sandbox/select.ts";
 import { parseArgs, preflight, type Phase } from "./core/cli-args.ts";
 import { FlagError } from "./core/flags.ts";
 import { checkAbsPath, checkRepoDirPlacement, repoDirFor, SKILL_NAME } from "./core/build-prompt.ts";
 import { killActiveChild, spawnClaudeRun } from "./core/spawn-claude.ts";
+import { notify } from "./core/notify.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
-import { makeRunSkill } from "./worker/skill-runner.ts";
+import { makeRunSkill, sandboxInstancePrefix, sandboxMounts } from "./worker/skill-runner.ts";
 import { reconcileMergedTickets } from "./roles/dev/reconcile.ts";
 import { loadResearchStance, REFINE_SKILL_MD_PATH } from "./roles/research/startup.ts";
 import pkg from "../package.json" with { type: "json" };
@@ -115,6 +120,8 @@ interface LoopContext {
   githubClient: RealGitHubClient;
   slug: string;
   researchStance: string;
+  /** The selected sandbox; attached to the runner only when it is not the default adapter. */
+  sandbox: SandboxSelection;
 }
 
 /** Research only: find or create the ticket's mirror GitHub Issue before the run. Never throws. */
@@ -189,6 +196,8 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
         dev: runsDev ? gitFileSha(DEV_SKILL_MD_PATH) : "",
       },
       spawn: (opts) => spawnClaudeRun(opts, { log, logError }),
+      // The default adapter is never attached, so its spawn stays byte-identical.
+      ...(ctx.sandbox.adapter.name !== DEFAULT_ADAPTER ? { sandbox: ctx.sandbox } : {}),
       beforeRun: (_role, key) => ensureMirrorIssue(ctx, key),
       log,
       logError,
@@ -206,6 +215,7 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
     roles: ctx.roles,
     // Never re-refine a ticket the v1 research runner already refined.
     hasLandedResearchV1: runsResearch ? (key) => hasLandedV1("research", slug, key) : undefined,
+    notify: (title, body) => notify(title, body),
     log,
   };
 
@@ -249,7 +259,7 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
 let activePhase: Phase | null = null;
 
 async function main(): Promise<void> {
-  const { phase, project, configPath, session: requestedSession, once, stream } = parseArgs(process.argv.slice(2));
+  const { phase, project, configPath, session: requestedSession, sandbox: sandboxName, once, stream } = parseArgs(process.argv.slice(2));
   activePhase = phase;
   const prefix = prefixOf(phase);
   const roles = rolesOf(phase);
@@ -258,6 +268,8 @@ async function main(): Promise<void> {
   const resolvedConfigPath = configPath ? resolve(configPath) : await resolveProjectConfigPath(project, REPO_ROOT);
   const config = await loadConfig(resolvedConfigPath);
   for (const warning of preflight(config, phase, LOOP_VERSION).warnings) logError(`[${prefix}] WARNING: ${warning}`);
+  // Fail on a bad --sandbox / config adapter before any session is acquired.
+  const sandboxSelection = selectSandbox(config, sandboxName);
   // Only existence is checked: the root .env is never read here.
   const rootEnvPath = resolve(REPO_ROOT, ".env");
   const envWarning = envFileWarning({ envFileVar: process.env.DEVLOOP_ENV_FILE, cwd: process.cwd(), rootEnvPath, rootEnvExists: existsSync(rootEnvPath) });
@@ -272,6 +284,8 @@ async function main(): Promise<void> {
   // REPO_DIR goes into every prompt: a malformed targetRepo.path exits 1 here, before the lock.
   checkAbsPath("repo-dir", repoDirFor(config, slug));
   checkRepoDirPlacement(repoDirFor(config, slug), REPO_ROOT, resolveRepoPath(v2CloneDir(slug)));
+  // Once at startup, before the lock: a throw exits 1 through the fatal path.
+  await sandboxSelection.adapter.preflight({ repoRoot: REPO_ROOT, mounts: sandboxMounts(REPO_ROOT, repoDirFor(config, slug)), config: sandboxSelection.config });
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();
@@ -319,8 +333,13 @@ async function main(): Promise<void> {
     githubClient,
     slug,
     researchStance,
+    sandbox: sandboxSelection,
   };
   try {
+    // After the lock, never before: a refused second start must not remove
+    // the live worker's sandboxes. Scoped to this project's name prefix. A
+    // throw releases the session through the finally below, then exits 1.
+    await sandboxSelection.adapter.cleanupOrphans({ prefix: sandboxInstancePrefix(slug) });
     await runLoop(ctx, tracked, assigneeAccountId);
   } finally {
     // Never release while an adopted flight is only in the lock, or a phase is mid-run.

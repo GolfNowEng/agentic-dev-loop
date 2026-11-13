@@ -1,6 +1,6 @@
 # Sandboxed agent spawns: a pluggable sandbox adapter (first adapter: sbx)
 
-Status: DRAFT, awaiting the user's review. No code yet.
+Status: Steps 1–2 built (plan 2026-11-12-sandbox-adapter-foundation.md); step 3+ pending the open user questions.
 Date: 2026-11-12. It builds on the sbx spike (same day) and the 2.0.0 design
 (`2026-11-10-dev-loop-v2-design.md`, §7 claim, §8 batch).
 
@@ -107,8 +107,10 @@ interface SandboxAdapter {
   name: string;                       // "none" | "sbx" | future
   /** Once at loop start. Throws a plain, fix-naming message on failure. */
   preflight(ctx: PreflightCtx): Promise<void>;
-  /** Once at loop start: remove instances a previous crash left behind. */
-  cleanupOrphans(): Promise<void>;
+  /** Once at loop start, after the session lock: remove instances a previous
+   *  crash left behind, only those whose name starts with scope.prefix
+   *  (`dl-<project>-`). */
+  cleanupOrphans(scope: { prefix: string }): Promise<void>;
   /** Per run, before spawn: create the instance with these mounts. */
   prepare(run: RunSandboxSpec): Promise<SandboxHandle>;
   /** Turn today's (command, args, options) into what actually gets spawned. */
@@ -120,7 +122,7 @@ interface SandboxAdapter {
 }
 
 interface RunSandboxSpec {
-  instanceName: string;   // unique per run, e.g. dl-<ticket>-<role>-<shortid>
+  instanceName: string;   // unique per run: dl-<project>-<ticket>-<role>-<shortid>, [a-z0-9-]
   mounts: string[];       // absolute host paths, see 4.4
   config: unknown;        // the adapter's own config sub-block, validated by the adapter
 }
@@ -138,7 +140,8 @@ interface SandboxReport {
 - **`sbx` adapter** (`src/sandbox/sbx/`): `prepare` = `sbx create`,
   `wrap` = `sbx exec <name> claude …`, `inspect` = `policy log` +
   `approval ls` + exit 125, `teardown` = `sbx rm --force`, and
-  `cleanupOrphans` = remove every `dl-*`. This is the only place sbx
+  `cleanupOrphans` = remove every instance starting with the given
+  `dl-<project>-` prefix. This is the only place sbx
   commands, flags and output formats are known.
 - **Registry** (`src/sandbox/index.ts`):
   `{ none: noneAdapter, sbx: sbxAdapter }`. An unknown name fails at
@@ -225,8 +228,8 @@ Today a zero exit code is a success (`spawn-claude.ts` ~487-496), and
   stream mode (already parsed, ~436), or the whole JSON document otherwise.
 - The run fails as `agent_error` if `is_error` is true,
   `terminal_reason` is outside the allowed set, or no result arrived.
-  **Builder:** capture the real `terminal_reason` values from a normal
-  run and pin the allowed set from that. Don't guess it.
+  The allowed set is pinned from real runs; see "Resolved during the
+  foundation build" in §9 (Allowed terminal reasons).
 
 ### 4.6 Denials: `sandbox_denied` and the `parked` outcome (shared, adapter-neutral)
 
@@ -354,10 +357,30 @@ on this Mac at about 3–4 concurrent sandboxed runs.
 ## 9. Open items
 
 - Builder verifies: same-path mounts for `/Users/...` (4.4), sbx log
-  without block (4.6), the real `terminal_reason` values (4.5), and that
+  without block (4.6), and that
   `teardown` actually stops the inner process when the wrapper is killed.
 - User decides: Atlassian MCP auth inside the sandbox (4.7), the kit's
   permanent location, and the GitHub token scope for the sandbox secret.
 - Builder's call: the exact instance-name format, the notification
   wording, and the TypeScript shape of the interface (keep it
   sandbox-neutral).
+
+### Resolved during the foundation build
+
+- **Allowed terminal reasons (Task 1).** `ALLOWED_TERMINAL_REASONS = ["completed"]`. Four local usage.json files from real runs all had `terminal_reason: "completed"`, and the spike's stall had `api_error`. An absent `terminal_reason` with `is_error: false` passes.
+- **`validateConfig(raw)` (Task 2).** It was added to the SandboxAdapter interface so each adapter validates its own `sandbox.<name>` sub-block, and config.ts never learns adapter keys.
+- **Mounts (Task 5).** `sandboxMounts(repoRoot, repoDir)` gives `[repoRoot, repoDir]`, deduplicated, with repoDir dropped when it is inside repoRoot. The per-run worktree lives inside repoDir, so there is no separate worktree mount.
+
+### Carried into step 3 (sbx adapter)
+
+Requirements found during the foundation build:
+
+- (a) On the timeout and kill paths, teardown starts before inspect. The sbx adapter must make inspect work on a torn-down instance, or have teardown snapshot the denial report first. Consider adding this to the contract suite.
+- (b) A signal during prepare leaves the instance behind, and cleanupOrphans is the backstop.
+- (c) `sandboxInstanceName` is now sanitized to `[a-z0-9-]` and carries the project slug, but has no length cap. Confirm sbx's naming rules and cap the length if needed.
+- (d) `TEARDOWN_GRACE_MS` (30s) bounds the teardown wait. An abandoned teardown keeps running, and cleanupOrphans cleans it up.
+- (e) The registry test pins `adapterNames()` to `["none"]`. Update it when sbx registers.
+- (f) An all-infra refusal (daemon down, prepare throws) is not ticket-specific; parking ticket after ticket walks the queue (each claimed + notified). Step 3 must make an all-infra report pause the worker instead (or in addition to parking).
+- (g) prepare / inspect / preflight / cleanupOrphans have no timeout; runTimeoutMin starts only in runChild. Add a prepare timeout that becomes an infra denial.
+- (h) Spec §6 run-log `sandbox: {adapter, instance, prepare_ms}` is built on SpawnClaudeResult but not persisted; carry it onto the PhaseEntry / parked record.
+- (i) ALLOWED_TERMINAL_REASONS is one value; a new success reason from a future CLI would turn every run into agent_error. Log unknown reasons prominently; document how to extend the list.

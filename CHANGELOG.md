@@ -15,23 +15,40 @@ History before 2.0.0 lives in two files, one per former repo:
 
 ## [Unreleased — 2.2.0] — planned
 
-Not built yet. Design: [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
+Steps 1–2 built (plan 2026-11-12-sandbox-adapter-foundation.md); the sbx
+adapter is pending. Design:
+[docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
-- `[core]` A failed `claude -p` is detected from its JSON result
-  (`is_error` / `terminal_reason`), not just its exit code. In the sbx
+- `[core]` Node 24 is now the minimum (engines >=24.0.0); a sandbox's node
+  must match the host's major version (spec §4.8).
+- `[core]` A `claude -p` run that exits 0 but reports a failed result
+  (`is_error`, a `terminal_reason` other than `completed`, or no result at
+  all) is now an `agent_error` instead of a silent success. In the sbx
   spike, a run with no credential hung for about 3 min, then exited 0 with
-  `terminal_reason: api_error`. Today's loop would record that as a
-  success.
-- `[core]` Pluggable sandbox adapter for agent spawns: `--sandbox=<name>`
-  or `sandbox.adapter` in project config. The default `none` keeps
-  today's behavior exactly. The first adapter is `sbx` (Docker Sandboxes
-  with the Keystone kit). Everything sbx-specific lives in
-  `src/sandbox/sbx/`, so it can be removed, or another sandbox added,
-  without touching the loop.
-- `[core]` New outcome `parked` and failure category `sandbox_denied`: a
-  sandbox block (network, credential, infra) puts the ticket on hold
-  without counting an attempt. `npm run sandbox:approvals` lists parked
-  tickets and prints the allow commands for a human to run.
+  `terminal_reason: api_error`; the old loop recorded that as a success.
+- `[core]` Pluggable sandbox adapter for agent spawns: an optional
+  `sandbox` config block and a `--sandbox=<name>` flag (CLI wins;
+  `--sandbox=none` forces it off). Only the `none` adapter exists so far,
+  and it keeps today's behavior exactly.
+- `[core]` New iteration outcome `parked` (failure category
+  `sandbox_denied`): a run the sandbox refused (network, credential,
+  infra) is held without counting an attempt or touching Jira, skipped by
+  the poll, and announced by a desktop notification. A failed sandbox
+  prepare parks with its error message as the hint.
+- `[core]` `npm run sandbox:approvals` lists parked tickets with what was
+  refused and the adapter's allow hint (printed, never run);
+  `--clear=<KEY>` un-parks one.
+- `[core]` The skill runner gives each sandboxed run its own instance name
+  (`dl-<project>-<ticket>-<role>-<6 hex>`, sanitized to `[a-z0-9-]`, shown
+  in the "running" line) and mounts (repo root plus the target checkout
+  when it is outside it). In enforce mode a sandbox refusal returns
+  `parked` before verdict.json is read; discover mode logs it and carries
+  on. The adapter's preflight runs once before the session lock; its
+  orphan cleanup runs once after the lock, scoped to `dl-<project>-`.
+- `[core]` Planned (step 3, not built): the first real adapter, `sbx`
+  (Docker Sandboxes with the Keystone kit). Everything sbx-specific will
+  live in `src/sandbox/sbx/`, so it can be removed, or another sandbox
+  added, without touching the loop.
 
 ## [2.1.0] — 2026-11-12
 
