@@ -638,7 +638,9 @@ export async function spawnClaudeRun(
       const raced = await raceTimeout(preparing, PREPARE_TIMEOUT_MS, deps);
       if (raced === TIMED_OUT) {
         // The prepare may still finish: tear its instance down then, or it leaks.
-        // A late rejection has nothing to clean up.
+        // A late rejection has nothing to clean up. A prepare timeout is an
+        // all-infra park, so the worker usually pauses and exits first; the
+        // real backstop is cleanupOrphans on the next start.
         preparing.then(
           (late) =>
             Promise.resolve()
@@ -788,7 +790,7 @@ export async function spawnClaudeRun(
     resultError = { is_error: isError, ...(reason !== undefined ? { terminal_reason: reason } : {}) };
     if (reason !== undefined && !ALLOWED_TERMINAL_REASONS.includes(reason)) {
       deps.logError(
-        `[${deps.logPrefix}] ${opts.ticketKey}: unknown terminal_reason "${reason}" -- treated as agent_error; if it is a new success reason, add it to ALLOWED_TERMINAL_REASONS (src/core/spawn-claude.ts)`,
+        `[${deps.logPrefix}] ${opts.ticketKey}: unknown terminal_reason "${reason.slice(0, 100)}" -- treated as agent_error; if it is a new success reason, add it to ALLOWED_TERMINAL_REASONS (src/core/spawn-claude.ts)`,
       );
     }
     if (spawnError === undefined && !outcome.killedTimeout && (isError || (reason !== undefined && !ALLOWED_TERMINAL_REASONS.includes(reason)))) {
