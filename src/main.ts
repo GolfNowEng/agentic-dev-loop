@@ -18,7 +18,7 @@
  * set and not the root .env itself) -> REPO_DIR checks -> sandbox preflight
  * (selected adapter) -> credentials -> acquireSession (one live worker
  * per project; a second start names the live session and exits 1) ->
- * sandbox cleanupOrphans, scoped to `dl-<project>-` -> record the adopted
+ * sandbox cleanupOrphans, scoped to `dl-<len>-<project>-` -> record the adopted
  * in-flight runs -> loop. REPO_DIR must be absolute and
  * normalized, and may not be the dev-loop root, an ancestor of it, or inside
  * it (except the v2 clone dir). SIGINT/SIGTERM first stop the running
@@ -338,7 +338,8 @@ async function main(): Promise<void> {
   try {
     // After the lock, never before: a refused second start must not remove
     // the live worker's sandboxes. Scoped to this project's name prefix. A
-    // throw releases the session through the finally below, then exits 1.
+    // throw exits 1 through the finally below, which releases the session
+    // only when canRelease() allows it; an adopted flight keeps the lock.
     await sandboxSelection.adapter.cleanupOrphans({ prefix: sandboxInstancePrefix(slug) });
     await runLoop(ctx, tracked, assigneeAccountId);
   } finally {

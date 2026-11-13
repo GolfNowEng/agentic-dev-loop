@@ -39,12 +39,13 @@ adapter is pending. Design:
   refused and the adapter's allow hint (printed, never run);
   `--clear=<KEY>` un-parks one.
 - `[core]` The skill runner gives each sandboxed run its own instance name
-  (`dl-<project>-<ticket>-<role>-<6 hex>`, sanitized to `[a-z0-9-]`, shown
-  in the "running" line) and mounts (repo root plus the target checkout
+  (`dl-<len>-<project>-<ticket>-<role>-<6 hex>`, sanitized to `[a-z0-9-]`;
+  `<len>` is the project name's length, so project `a` never matches
+  project `a-b`'s sandboxes; shown in the "running" line) and mounts (repo root plus the target checkout
   when it is outside it). In enforce mode a sandbox refusal returns
   `parked` before verdict.json is read; discover mode logs it and carries
   on. The adapter's preflight runs once before the session lock; its
-  orphan cleanup runs once after the lock, scoped to `dl-<project>-`.
+  orphan cleanup runs once after the lock, scoped to `dl-<len>-<project>-`.
 - `[core]` Planned (step 3, not built): the first real adapter, `sbx`
   (Docker Sandboxes with the Keystone kit). Everything sbx-specific will
   live in `src/sandbox/sbx/`, so it can be removed, or another sandbox

@@ -61,7 +61,7 @@ export interface SandboxAdapter {
   /**
    * Remove leftover instances from an earlier crashed run. Removes only
    * instances whose name starts with `scope.prefix` (this project's
-   * `dl-<project>-`); called after the session lock is held.
+   * `dl-<len>-<project>-`); called after the session lock is held.
    */
   cleanupOrphans(scope: { prefix: string }): Promise<void>;
   prepare(run: RunSandboxSpec): Promise<SandboxHandle>;

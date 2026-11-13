@@ -599,7 +599,9 @@ export async function spawnClaudeRun(
     try {
       handle = await adapter.prepare(run);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      // Redacted here, not only at print time: spawnError and approveHint
+      // also reach the iteration log and the desktop notification.
+      const message = redactSensitive(err instanceof Error ? err.message : String(err));
       const spawnError = `sandbox prepare failed: ${message}`;
       deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: spawn failed: ${spawnError}`);
       return {

@@ -109,7 +109,7 @@ interface SandboxAdapter {
   preflight(ctx: PreflightCtx): Promise<void>;
   /** Once at loop start, after the session lock: remove instances a previous
    *  crash left behind, only those whose name starts with scope.prefix
-   *  (`dl-<project>-`). */
+   *  (`dl-<len>-<project>-`). */
   cleanupOrphans(scope: { prefix: string }): Promise<void>;
   /** Per run, before spawn: create the instance with these mounts. */
   prepare(run: RunSandboxSpec): Promise<SandboxHandle>;
@@ -122,7 +122,7 @@ interface SandboxAdapter {
 }
 
 interface RunSandboxSpec {
-  instanceName: string;   // unique per run: dl-<project>-<ticket>-<role>-<shortid>, [a-z0-9-]
+  instanceName: string;   // unique per run: dl-<len>-<project>-<ticket>-<role>-<shortid>, [a-z0-9-]
   mounts: string[];       // absolute host paths, see 4.4
   config: unknown;        // the adapter's own config sub-block, validated by the adapter
 }
@@ -141,7 +141,7 @@ interface SandboxReport {
   `wrap` = `sbx exec <name> claude …`, `inspect` = `policy log` +
   `approval ls` + exit 125, `teardown` = `sbx rm --force`, and
   `cleanupOrphans` = remove every instance starting with the given
-  `dl-<project>-` prefix. This is the only place sbx
+  `dl-<len>-<project>-` prefix. This is the only place sbx
   commands, flags and output formats are known.
 - **Registry** (`src/sandbox/index.ts`):
   `{ none: noneAdapter, sbx: sbxAdapter }`. An unknown name fails at
@@ -329,7 +329,7 @@ on this Mac at about 3–4 concurrent sandboxed runs.
   test pins identical argv/env with and without `--sandbox=none`.
 - `sbx` adapter unit tests: argv for create/exec/rm, exit 125 → `infra`,
   `policy log` JSON parsing (from a captured fixture), and orphan cleanup
-  matching only `dl-*`.
+  matching only this project's `dl-<len>-<project>-` prefix.
 - Shared: `parked` not counted by `failedAttempts`, poll skip and clear,
   CLI precedence (`--sandbox=` over config), unknown adapter rejected, and
   4.5 result-error detection.
@@ -369,6 +369,7 @@ on this Mac at about 3–4 concurrent sandboxed runs.
 
 - **Allowed terminal reasons (Task 1).** `ALLOWED_TERMINAL_REASONS = ["completed"]`. Four local usage.json files from real runs all had `terminal_reason: "completed"`, and the spike's stall had `api_error`. An absent `terminal_reason` with `is_error: false` passes.
 - **`validateConfig(raw)` (Task 2).** It was added to the SandboxAdapter interface so each adapter validates its own `sandbox.<name>` sub-block, and config.ts never learns adapter keys.
+- **Instance names (step 3 prep).** `dl-<len>-<project>-<ticket>-<role>-<6 hex>`, sanitized to `[a-z0-9-]`, where `<len>` is the sanitized project name's length. With a bare `dl-<project>-`, project `a`'s cleanup scope would also match project `a-b`'s sandboxes; the length makes every prefix unique. The `prepare` failure message is redacted before it becomes `spawnError` / `approveHint`.
 - **Mounts (Task 5).** `sandboxMounts(repoRoot, repoDir)` gives `[repoRoot, repoDir]`, deduplicated, with repoDir dropped when it is inside repoRoot. The per-run worktree lives inside repoDir, so there is no separate worktree mount.
 
 ### Carried into step 3 (sbx adapter)
@@ -377,7 +378,7 @@ Requirements found during the foundation build:
 
 - (a) On the timeout and kill paths, teardown starts before inspect. The sbx adapter must make inspect work on a torn-down instance, or have teardown snapshot the denial report first. Consider adding this to the contract suite.
 - (b) A signal during prepare leaves the instance behind, and cleanupOrphans is the backstop.
-- (c) `sandboxInstanceName` is now sanitized to `[a-z0-9-]` and carries the project slug, but has no length cap. Confirm sbx's naming rules and cap the length if needed.
+- (c) `sandboxInstanceName` is now sanitized to `[a-z0-9-]` and carries `<len>-<project>`, but has no length cap. Confirm sbx's naming rules and cap the length if needed.
 - (d) `TEARDOWN_GRACE_MS` (30s) bounds the teardown wait. An abandoned teardown keeps running, and cleanupOrphans cleans it up.
 - (e) The registry test pins `adapterNames()` to `["none"]`. Update it when sbx registers.
 - (f) An all-infra refusal (daemon down, prepare throws) is not ticket-specific; parking ticket after ticket walks the queue (each claimed + notified). Step 3 must make an all-infra report pause the worker instead (or in addition to parking).

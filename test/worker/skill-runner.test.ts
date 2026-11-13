@@ -220,13 +220,13 @@ describe("makeRunSkill", () => {
       await makeRunSkill(deps({ sandbox: sel("enforce"), shortId: () => "a1b2c3" }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
       expect(spawned[0].sandbox).toEqual({
         adapter: fakeAdapter,
-        run: { instanceName: "dl-skill-runner-test-tars-1-dev-a1b2c3", mounts: ["/abs/dev-loop", repo], config: { k: 1 } },
+        run: { instanceName: "dl-17-skill-runner-test-tars-1-dev-a1b2c3", mounts: ["/abs/dev-loop", repo], config: { k: 1 } },
       });
     });
 
     it("the default shortId is 6 lowercase hex chars", async () => {
       await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
-      expect(spawned[0].sandbox!.run.instanceName).toMatch(/^dl-skill-runner-test-tars-1-dev-[0-9a-f]{6}$/);
+      expect(spawned[0].sandbox!.run.instanceName).toMatch(/^dl-17-skill-runner-test-tars-1-dev-[0-9a-f]{6}$/);
     });
 
     it("the running line names the sandbox instance only when a sandbox is attached", async () => {
@@ -241,7 +241,7 @@ describe("makeRunSkill", () => {
       const running = lines.filter((l) => l.includes(": running"));
       expect(running).toEqual([
         `[ticket-to-pr] TARS-1: running (run dir ${runDir("dev")}, budget $20)...`,
-        `[ticket-to-pr] TARS-1: running in dl-skill-runner-test-tars-1-dev-a1b2c3 (run dir ${runDir("dev")}, budget $20)...`,
+        `[ticket-to-pr] TARS-1: running in dl-17-skill-runner-test-tars-1-dev-a1b2c3 (run dir ${runDir("dev")}, budget $20)...`,
       ]);
     });
 

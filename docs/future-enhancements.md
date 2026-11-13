@@ -816,7 +816,7 @@ the batch design only plans an end-of-batch report table, nothing live.
 their in-flight record (`.pipeline/.../sessions/`), each run's
 `progress.jsonl`, and `runs/v2/<project>.jsonl`. The view only reads; no loop
 logic changes. Sandbox CPU/memory stays in sbx's own dashboard (`sbx` with no
-args) alongside it; sandbox instance names (`dl-<project>-<ticket>-<role>-<id>`) let the
+args) alongside it; sandbox instance names (`dl-<len>-<project>-<ticket>-<role>-<id>`) let the
 two be matched by eye.
 
 **Raised**: 2026-11-12, while planning the 2.2.0 sandbox adapter.

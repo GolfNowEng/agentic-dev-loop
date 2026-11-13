@@ -62,15 +62,17 @@ function sandboxNamePart(s: string): string {
 }
 
 /**
- * `dl-<project>-`: every instance name of this project starts with it, and
- * main.ts passes it as the `cleanupOrphans` scope, so one project's startup
- * never removes another project's sandboxes.
+ * `dl-<len>-<project>-`: every instance name of this project starts with it,
+ * and main.ts passes it as the `cleanupOrphans` scope, so one project's
+ * startup never removes another project's sandboxes. The length makes the
+ * prefixes prefix-free: without it, `dl-a-` would also match `dl-a-b-...`.
  */
 export function sandboxInstancePrefix(project: string): string {
-  return `dl-${sandboxNamePart(project)}-`;
+  const part = sandboxNamePart(project);
+  return `dl-${part.length}-${part}-`;
 }
 
-/** `dl-<project>-<ticket lowercased>-<role>-<shortId>`, sanitized to [a-z0-9-], e.g. dl-webtarsthree-tars-1-dev-a1b2c3. */
+/** `dl-<len>-<project>-<ticket lowercased>-<role>-<shortId>`, sanitized to [a-z0-9-], e.g. dl-12-webtarsthree-tars-1-dev-a1b2c3. */
 export function sandboxInstanceName(project: string, ticketKey: string, role: Role, shortId: string): string {
   return sandboxNamePart(`${sandboxInstancePrefix(project)}${ticketKey}-${role}-${shortId}`);
 }
