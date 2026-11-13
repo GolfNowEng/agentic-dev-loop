@@ -32,12 +32,13 @@ export function validateSbxConfig(raw: unknown): SbxConfig {
   }
   let extra: unknown[] = [];
   if (o.envAllow !== undefined) {
-    if (!Array.isArray(o.envAllow) || o.envAllow.some((n) => typeof n !== "string" || n === "")) {
+    if (!Array.isArray(o.envAllow) || o.envAllow.some((n) => typeof n !== "string")) {
       throw new Error("sandbox.sbx: envAllow must be an array of env var names");
     }
     extra = o.envAllow;
   }
   for (const n of extra as string[]) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(n)) throw new Error(`sandbox.sbx: envAllow entry "${n}" must be a bare env var name`);
     if (SECRET_SHAPED.test(n)) throw new Error(`sandbox.sbx: envAllow may not pass "${n}" (secret-shaped)`);
   }
   cfg.envAllow = [...new Set([...DEFAULT_ENV_ALLOW, ...(extra as string[])])];

@@ -26,7 +26,7 @@ export function makeSbxRunner(execFileImpl: SbxExecFile): SbxRunner {
       const timeout = opts.timeoutMs ?? SBX_CALL_TIMEOUT_MS;
       execFileImpl("sbx", args, { timeout, env: opts.env, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (!err) return resolve({ code: 0, stdout, stderr, timedOut: false });
-        const timedOut = err.killed === true;
+        const timedOut = err.killed === true && err.signal === "SIGTERM" && err.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
         resolve({ code: typeof err.code === "number" ? err.code : null, stdout, stderr, timedOut });
       });
     });

@@ -80,6 +80,9 @@ export function sandboxInstanceName(project: string, ticketKey: string, role: Ro
   const prefix = sandboxInstancePrefix(project);
   const tail = sandboxNamePart(`-${shortId}`);
   const middle = sandboxNamePart(`${ticketKey}-${role}`);
+  if (prefix.length + tail.length > MAX_INSTANCE_NAME) {
+    throw new Error(`sandbox instance prefix "${prefix}" is too long (max 56 chars); shorten the project name`);
+  }
   const room = Math.max(0, MAX_INSTANCE_NAME - prefix.length - tail.length);
   // Over the cap: trim only the ticket-role middle, then drop a dangling "-".
   const kept = middle.length > room ? middle.slice(0, room).replace(/-+$/, "") : middle;
@@ -114,6 +117,8 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
   // Validated here, at startup (main.ts builds this before the loop), so a
   // malformed targetRepo.path exits 1 instead of failing every ticket.
   const repoDir = checkAbsPath("repo-dir", repoDirFor(deps.config, deps.slug));
+  // Same reason: an over-long project slug must fail at startup, never mid-run.
+  if (deps.sandbox) sandboxInstanceName(deps.slug, "X-1", "dev", "000000");
   // --add-dir: a targetRepo.path checkout sits outside the repo root, so
   // without it every Edit/Write in the worktree is denied (TARS-1393). The
   // v2 clone is under the repo root already.
