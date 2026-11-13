@@ -372,6 +372,19 @@ on this Mac at about 3–4 concurrent sandboxed runs.
 - **Instance names (step 3 prep).** `dl-<len>-<project>-<ticket>-<role>-<6 hex>`, sanitized to `[a-z0-9-]`, where `<len>` is the sanitized project name's length. With a bare `dl-<project>-`, project `a`'s cleanup scope would also match project `a-b`'s sandboxes; the length makes every prefix unique. The `prepare` failure message is redacted before it becomes `spawnError` / `approveHint`.
 - **Mounts (Task 5).** `sandboxMounts(repoRoot, repoDir)` gives `[repoRoot, repoDir]`, deduplicated, with repoDir dropped when it is inside repoRoot. The per-run worktree lives inside repoDir, so there is no separate worktree mount.
 
+### Verified before step 3 (sbx v0.53.0, 2026-11-12)
+
+- **Same-path mounts work for `/Users/...`.** `sbx create … <path>` mounts each path at the identical container path (`host_mounts[].container_target == host_path`), writes show up on the host at once, and two paths in one create both mount read-write. **Case trap:** sbx canonicalizes the host path's case (a shell in `~/Desktop/repos/...` mounts at `.../Repos/...`), but the container's filesystem is case-sensitive, so a lowercase path in argv (`--add-dir`, `run-dir=`, `-w`) fails with "No such file or directory". The adapter's preflight must require every mount, and the cwd, to equal `fs.realpathSync.native(p)`, and name the fix ("cd into the real-case path and restart") otherwise.
+- **Discover mode is possible.** A blocked host returns HTTP 403 to the agent and the run carries on; `sbx policy log <name> --json` lists it under `blocked` (`host`, `reason`, `count`) and `sbx policy approval ls --json` lists a pending approval (`sandbox_name`, `title` = `host:port`). Nothing waits on the approval.
+- **inspect works after teardown** (carry item (a)): `policy log <name>` still returns the removed sandbox's blocked list. Pending approvals do not survive `rm`, so network denials come from `policy log`, not `approval ls`.
+- **Killing the `sbx exec` wrapper does not stop the inner process** (it kept running after SIGTERM to the wrapper). `sbx rm --force` removes the container and everything in it, so teardown is the stop. This matches the existing design: the kill path calls teardown.
+- **Exit codes:** the inner command's code passes through (`exit 7` → 7); a missing sandbox exits 125. `sbx rm --force` of a missing sandbox exits 1 with "not found", which teardown treats as done.
+- **Names:** 2–63 chars of letters, digits, hyphens, periods (`'default'` reserved). Instance names must be capped at 63.
+- **Create** with the claude agent plus the kit (`sbx create --name N --no-progress --no-input claude --kit <kitDir> <paths…>`) took ~5 s with a cached image, headless, no prompt.
+- **Env:** `sbx exec -e NAME` takes the value from the wrapper's own env, so allowlisted names pass without values in argv. The kit sets `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` (proxy-managed) and the agent sets `CLAUDE_MODEL`; the host's `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL` are not set inside and must be allowlisted so the `sonnet` alias resolves as on the host.
+- **Still missing in the image:** `node` (§4.8). `gh` is present but not logged in; the GitHub token goes in with `sbx secret set github` (user step 4).
+- **Kit:** `~/Desktop/Repos/keystone-bedrock-kit` and `/tmp/sbx-spike/kit` have identical kit files; config points at the permanent one.
+
 ### Carried into step 3 (sbx adapter)
 
 Requirements found during the foundation build:
