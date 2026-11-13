@@ -835,6 +835,7 @@ describe("sandbox adapter", () => {
     o: {
       report?: SandboxReport;
       prepareThrows?: boolean;
+      prepareMessage?: string;
       inspectThrows?: boolean;
       teardownGate?: Promise<void>;
       wrap?: (cmd: string, args: string[], opts: WrappedSpawn["opts"]) => WrappedSpawn;
@@ -850,7 +851,7 @@ describe("sandbox adapter", () => {
       prepare: async (spec) => {
         calls.push("prepare");
         o.onPrepare?.();
-        if (o.prepareThrows) throw new Error("daemon not running");
+        if (o.prepareThrows) throw new Error(o.prepareMessage ?? "daemon not running");
         return { adapter: "fake", instanceName: spec.instanceName };
       },
       wrap: (_h, cmd, args, opts) => {
@@ -1074,6 +1075,23 @@ describe("sandbox adapter", () => {
       instance: "dev-loop-TARS-1",
       report: { denied: [{ kind: "infra", target: "prepare" }], approveHint: "sandbox prepare failed: daemon not running" },
     });
+  });
+
+  it("redacts the prepare failure message before it reaches spawnError, approveHint or the log", async () => {
+    const { adapter } = recordingAdapter({ prepareThrows: true, prepareMessage: `no such dir ${homedir()}/x for someone@example.com` });
+    const errors: string[] = [];
+    const result = await spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), {
+      ...quiet,
+      logError: (m) => errors.push(m),
+      spawn: () => {
+        throw new Error("must not spawn");
+      },
+    });
+    for (const text of [result.spawnError ?? "", result.sandbox?.report.approveHint ?? "", ...errors]) {
+      expect(text).not.toContain(homedir());
+      expect(text).not.toContain("someone@example.com");
+    }
+    expect(result.spawnError).toBe("sandbox prepare failed: no such dir ~/x for REDACTED_EMAIL");
   });
 
   it("inspect throwing becomes an infra denial, not a throw", async () => {

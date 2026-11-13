@@ -317,12 +317,12 @@ describe("makeRunSkill", () => {
 });
 
 describe("sandboxInstanceName", () => {
-  it("is dl-<project>-<ticket lowercased>-<role>-<shortId>", () => {
-    expect(sandboxInstanceName("webtarsthree", "TARS-12", "dev", "a1b2c3")).toBe("dl-webtarsthree-tars-12-dev-a1b2c3");
-    expect(sandboxInstanceName("webtarsthree", "TARS-12", "research", "00ff00")).toBe("dl-webtarsthree-tars-12-research-00ff00");
+  it("is dl-<len>-<project>-<ticket lowercased>-<role>-<shortId>", () => {
+    expect(sandboxInstanceName("webtarsthree", "TARS-12", "dev", "a1b2c3")).toBe("dl-12-webtarsthree-tars-12-dev-a1b2c3");
+    expect(sandboxInstanceName("webtarsthree", "TARS-12", "research", "00ff00")).toBe("dl-12-webtarsthree-tars-12-research-00ff00");
   });
   it("turns any char outside [a-z0-9-] into -", () => {
-    expect(sandboxInstanceName("my_proj.x", "AB_C-1", "dev", "a1b2c3")).toBe("dl-my-proj-x-ab-c-1-dev-a1b2c3");
+    expect(sandboxInstanceName("my_proj.x", "AB_C-1", "dev", "a1b2c3")).toBe("dl-9-my-proj-x-ab-c-1-dev-a1b2c3");
   });
   it("starts with sandboxInstancePrefix(project), so cleanup scope and names cannot drift", () => {
     for (const project of ["webtarsthree", "my_proj.x"]) {
@@ -332,9 +332,19 @@ describe("sandboxInstanceName", () => {
 });
 
 describe("sandboxInstancePrefix", () => {
-  it("is dl-<project>-, sanitized", () => {
-    expect(sandboxInstancePrefix("webtarsthree")).toBe("dl-webtarsthree-");
-    expect(sandboxInstancePrefix("My_Proj")).toBe("dl-my-proj-");
+  it("is dl-<len>-<project>-, sanitized", () => {
+    expect(sandboxInstancePrefix("webtarsthree")).toBe("dl-12-webtarsthree-");
+    expect(sandboxInstancePrefix("My_Proj")).toBe("dl-7-my-proj-");
+  });
+  it("no project's prefix starts another project's prefix or instance names", () => {
+    const projects = ["a", "a-b", "a-b-c", "ab", "webtarsthree", "webtarsthree-eval", "catalog-ui", "catalog-ui-public", "catalog-ui-management"];
+    for (const p of projects) {
+      for (const q of projects) {
+        if (p === q) continue;
+        expect(sandboxInstancePrefix(q).startsWith(sandboxInstancePrefix(p))).toBe(false);
+        expect(sandboxInstanceName(q, "TARS-1", "dev", "a1b2c3").startsWith(sandboxInstancePrefix(p))).toBe(false);
+      }
+    }
   });
 });
 
