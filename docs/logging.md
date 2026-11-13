@@ -222,11 +222,17 @@ Outcomes: `landed`, `bounced`, `error`, `killed`, `skipped-blocked`,
   (macOS, `osascript`, redacted), and the loop carries on, unless the
   refused run itself breached its role's cost or duration ceiling (its cost
   is real but not in `phases`), which pauses after the record as for any
-  phase. While a ticket's
+  phase. When every refusal is `infra` (the sandbox itself failed), the
+  run parks in either sandbox mode (discover relaxes only network and
+  credential refusals) and the worker also pauses. While a ticket's
   latest record is `parked`, step 2 excludes it from every poll and step 0
   doesn't resume it.
 - A `phases` entry also carries `sandbox: { adapter, instance, prepare_ms }`
-  when the run was sandboxed.
+  when the run was sandboxed. In discover mode, when the sandbox refused
+  something but the run carried on, it also carries `denied: [{ kind,
+  target }]` and `approveHint?` (both redacted); `npm run
+  sandbox:approvals` lists these under "Discovered in discover mode (not
+  parked)".
 - `unparked`: written by `npm run sandbox:approvals -- --clear=<KEY>`
   (`phases: []`, `resume` copied from the park), so step 0 re-runs it.
 
@@ -333,7 +339,7 @@ record (`phases: []`, `resume` set, details under `parked`) and skips the
 ticket until it is cleared.
 
 ```
-npm run sandbox:approvals                          # list parked tickets (webtarsthree)
+npm run sandbox:approvals                          # list parked tickets + discover-mode denials (webtarsthree)
 npm run sandbox:approvals -- --project=<name>
 npm run sandbox:approvals -- --clear=TARS-123      # un-park one
 ```

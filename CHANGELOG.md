@@ -37,21 +37,28 @@ sbx adapter, not yet dogfooded). Design:
   prepare parks with its error message as the hint.
 - `[core]` `npm run sandbox:approvals` lists parked tickets with what was
   refused and the adapter's allow hint (printed, never run);
-  `--clear=<KEY>` un-parks one.
+  `--clear=<KEY>` un-parks one. It also lists discover-mode denials
+  (from the ticket's latest record) under "Discovered in discover mode
+  (not parked)".
 - `[core]` The skill runner gives each sandboxed run its own instance name
   (`dl-<len>-<project>-<ticket>-<role>-<6 hex>`, sanitized to `[a-z0-9-]`;
   `<len>` is the project name's length, so project `a` never matches
   project `a-b`'s sandboxes; shown in the "running" line) and mounts (repo root plus the target checkout
   when it is outside it). In enforce mode a sandbox refusal returns
   `parked` before verdict.json is read; discover mode logs it and carries
-  on. The adapter's preflight runs once before the session lock; its
+  on, keeping the denials and hint (redacted) on the phase entry's
+  `sandbox` block. The adapter's preflight runs once before the session lock; its
   orphan cleanup runs once after the lock, scoped to `dl-<len>-<project>-`.
 - `[core]` The `sbx` adapter (Docker Sandboxes with the Keystone kit):
   each agent run gets its own sandbox with only the repo folders mounted,
   and a blocked network host is logged and parked with a printed
   `sbx policy allow` line, never run for you. Preflight refuses a mount
   path whose case differs from the disk, a kit dir with no yaml, a
-  sandbox without the host's node major, and a missing GitHub login.
+  sandbox without the host's node major or without `jq`, and a missing
+  GitHub login (a wrong-case mount that is not the cwd also points at
+  `targetRepo.path`). It warns, without failing and naming no values,
+  when an `ANTHROPIC_DEFAULT_*_MODEL` name is unset, since the model
+  aliases would otherwise fall back to stock ids inside the sandbox.
   Config: `sandbox.sbx` `kitDir`, `memory`, `envAllow`. Setup:
   [docs/sandbox-sbx.md](docs/sandbox-sbx.md). Everything sbx-specific
   lives in `src/sandbox/sbx/`.
@@ -59,7 +66,8 @@ sbx adapter, not yet dogfooded). Design:
   inspection after 60 s; both become infra denials instead of hanging.
 - `[core]` When every refusal in a parked run is infra (daemon down,
   prepare failed), the worker pauses instead of parking ticket after
-  ticket.
+  ticket. This applies in discover mode too: discover relaxes only
+  network and credential refusals.
 - `[core]` Run-log phase entries and parked records carry
   `sandbox: {adapter, instance, prepare_ms}`.
 - `[core]` An unknown `terminal_reason` is logged with the instruction to

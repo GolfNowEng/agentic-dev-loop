@@ -256,7 +256,11 @@ Today a zero exit code is a success (`spawn-claude.ts` ~487-496), and
   `npm run sandbox:approvals -- --clear=<KEY>` appends a record that
   resolves the park. The existing resume/recover path then re-runs it.
 - `mode: "discover"`: `inspect` results are logged and reported but don't
-  park the ticket. **Builder must check whether sbx can log without
+  park the ticket. They are kept on the phase entry
+  (`sandbox.denied`, `sandbox.approveHint`, redacted) and listed by
+  `sandbox:approvals` under "Discovered in discover mode (not parked)".
+  An all-infra report (the sandbox itself failed) still parks and pauses
+  the worker: discover relaxes only network and credential refusals. **Builder must check whether sbx can log without
   blocking.** If it can't, discover mode means "run, collect, report", and
   a failed discovery run on a throwaway ticket is acceptable.
 
@@ -365,6 +369,32 @@ on this Mac at about 3–4 concurrent sandboxed runs.
   wording, and the TypeScript shape of the interface (keep it
   sandbox-neutral).
 
+- Preflight does not yet make a minimal Keystone call (§4.7); an
+  unapproved kit credential is caught only by the first run failing
+  (an agent error, not a park). The guide makes approving it a hard
+  prerequisite (`docs/sandbox-sbx.md` step 5).
+- SSH remotes: target repos use `git@github.com:` remotes and `~/.ssh` is
+  not mounted, so push/fetch fail inside the sandbox. Planned fix (not yet
+  verified): an HTTPS `insteadOf` rewrite baked into the template/kit, so
+  git uses the `sbx secret set github` token.
+- Atlassian MCP: configured in the user's home Claude config, which is not
+  mounted, so the sandboxed agent most likely has no Atlassian tools.
+  Unverified; options are a project-level `.mcp.json`, a kit-level MCP
+  config, or the host posting Jira comments (§4.7).
+
+### Known, accepted
+
+- `stripPort` does not handle an unbracketed IPv6 literal (`fe80::1`
+  has its last group taken for a port); the result is not hintable, so
+  it only affects the printed target.
+- A missing mount path surfaces as a raw ENOENT from the case check, not a
+  tailored message.
+- Preflight runs before the session lock, so a live worker's
+  `cleanupOrphans` can remove a refused second worker's preflight
+  instance. Only the second worker's error message is confusing.
+- An all-infra park that also breaches a cost or duration ceiling reports
+  the infra reason, not the ceiling.
+
 ### Resolved during the foundation build
 
 - **Allowed terminal reasons (Task 1).** `ALLOWED_TERMINAL_REASONS = ["completed"]`. Four local usage.json files from real runs all had `terminal_reason: "completed"`, and the spike's stall had `api_error`. An absent `terminal_reason` with `is_error: false` passes.
@@ -382,7 +412,7 @@ on this Mac at about 3–4 concurrent sandboxed runs.
 - **Names:** 2–63 chars of letters, digits, hyphens, periods (`'default'` reserved). Instance names must be capped at 63.
 - **Create** with the claude agent plus the kit (`sbx create --name N --no-progress --no-input claude --kit <kitDir> <paths…>`) took ~5 s with a cached image, headless, no prompt.
 - **Env:** `sbx exec -e NAME` takes the value from the wrapper's own env, so allowlisted names pass without values in argv. The kit sets `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` (proxy-managed) and the agent sets `CLAUDE_MODEL`; the host's `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL` are not set inside and must be allowlisted so the `sonnet` alias resolves as on the host.
-- **Still missing in the image:** `node` (§4.8). `gh` is present but not logged in; the GitHub token goes in with `sbx secret set github` (user step 4).
+- **Still missing in the image:** `node` (§4.8). `gh` is present but not logged in; the GitHub token goes in with `sbx secret set github` (guide step 3).
 - **Kit:** `~/Desktop/Repos/keystone-bedrock-kit` and `/tmp/sbx-spike/kit` have identical kit files; config points at the permanent one.
 
 ### Carried into step 3 (sbx adapter)
