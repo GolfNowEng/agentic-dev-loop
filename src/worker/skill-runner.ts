@@ -90,6 +90,22 @@ export function sandboxInstanceName(project: string, ticketKey: string, role: Ro
 }
 
 /**
+ * `dl-<len>-<project>-preflight-<shortId>`: the startup check's throwaway
+ * instance. Same prefix (so cleanupOrphans covers a crashed preflight) and
+ * the same 63-char cap as sandboxInstanceName.
+ */
+export function sandboxPreflightInstanceName(project: string, shortId: string): string {
+  const prefix = sandboxInstancePrefix(project);
+  const tail = sandboxNamePart(`-${shortId}`);
+  if (prefix.length + tail.length > MAX_INSTANCE_NAME) {
+    throw new Error(`sandbox instance prefix "${prefix}" is too long (max 56 chars); shorten the project name`);
+  }
+  const room = MAX_INSTANCE_NAME - prefix.length - tail.length;
+  const kept = "preflight".slice(0, room);
+  return kept ? `${prefix}${kept}${tail}` : `${prefix}${tail.slice(1)}`;
+}
+
+/**
  * [repoRoot, repoDir], deduplicated, with repoDir dropped when it is inside
  * repoRoot (the v2 clone). The per-run worktree is created inside repoDir,
  * so mounting repoDir covers it.

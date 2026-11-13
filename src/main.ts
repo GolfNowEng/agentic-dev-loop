@@ -38,6 +38,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { envFileWarning } from "./core/env-file.ts";
@@ -66,7 +67,7 @@ import { checkAbsPath, checkRepoDirPlacement, repoDirFor, SKILL_NAME } from "./c
 import { killActiveChild, spawnClaudeRun } from "./core/spawn-claude.ts";
 import { notify } from "./core/notify.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
-import { makeRunSkill, sandboxInstancePrefix, sandboxMounts } from "./worker/skill-runner.ts";
+import { makeRunSkill, sandboxInstancePrefix, sandboxMounts, sandboxPreflightInstanceName } from "./worker/skill-runner.ts";
 import { reconcileMergedTickets } from "./roles/dev/reconcile.ts";
 import { loadResearchStance, REFINE_SKILL_MD_PATH } from "./roles/research/startup.ts";
 import pkg from "../package.json" with { type: "json" };
@@ -285,7 +286,16 @@ async function main(): Promise<void> {
   checkAbsPath("repo-dir", repoDirFor(config, slug));
   checkRepoDirPlacement(repoDirFor(config, slug), REPO_ROOT, resolveRepoPath(v2CloneDir(slug)));
   // Once at startup, before the lock: a throw exits 1 through the fatal path.
-  await sandboxSelection.adapter.preflight({ repoRoot: REPO_ROOT, mounts: sandboxMounts(REPO_ROOT, repoDirFor(config, slug)), config: sandboxSelection.config });
+  // Built only for a real sandbox, so a long slug never fails the default (none) path.
+  const preflightInstanceName =
+    sandboxSelection.adapter.name !== DEFAULT_ADAPTER ? sandboxPreflightInstanceName(slug, randomBytes(3).toString("hex")) : "";
+  await sandboxSelection.adapter.preflight({
+    repoRoot: REPO_ROOT,
+    mounts: sandboxMounts(REPO_ROOT, repoDirFor(config, slug)),
+    cwd: REPO_ROOT,
+    instanceName: preflightInstanceName,
+    config: sandboxSelection.config,
+  });
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();

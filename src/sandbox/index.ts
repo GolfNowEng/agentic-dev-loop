@@ -1,9 +1,11 @@
 import { noneAdapter } from "./none.ts";
+import { sbxAdapter } from "./sbx/index.ts";
 import type { SandboxAdapter } from "./types.ts";
 
 /** The registry. One line per adapter. */
 export const ADAPTERS: Readonly<Record<string, SandboxAdapter>> = {
   none: noneAdapter,
+  sbx: sbxAdapter,
 };
 
 export const DEFAULT_ADAPTER = "none";

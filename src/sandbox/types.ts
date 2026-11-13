@@ -23,6 +23,10 @@ export interface SandboxConfig {
 export interface PreflightCtx {
   repoRoot: string;
   mounts: string[];
+  /** The cwd every spawn uses (the repo root); an adapter may check it like a mount. */
+  cwd: string;
+  /** A throwaway, project-scoped name for an adapter that needs a test instance. */
+  instanceName: string;
   config: unknown;
 }
 
