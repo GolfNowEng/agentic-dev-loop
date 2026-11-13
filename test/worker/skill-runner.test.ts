@@ -302,6 +302,42 @@ describe("makeRunSkill", () => {
       expect(lines).toContain("[ticket-to-pr] TARS-1: sandbox refused network evil.example; discover mode, not parking");
     });
 
+    it("discover + denied report: the result's sandbox meta carries the denials and the hint", async () => {
+      result = withReport(denied);
+      onSpawn = writeVerdict;
+      const r = await makeRunSkill(deps({ sandbox: sel("discover") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(r.sandbox).toEqual({ adapter: "fake", instance: "dl-x", prepare_ms: 5, denied, approveHint: "approve evil.example" });
+    });
+
+    it("enforce + denied, and discover + empty report: no denied/approveHint on the sandbox meta", async () => {
+      result = withReport(denied);
+      const parked = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(parked.sandbox).toEqual({ adapter: "fake", instance: "dl-x", prepare_ms: 5 });
+      result = withReport([]);
+      onSpawn = writeVerdict;
+      const clean = await makeRunSkill(deps({ sandbox: sel("discover") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(clean.sandbox).toEqual({ adapter: "fake", instance: "dl-x", prepare_ms: 5 });
+    });
+
+    it("discover + all-infra denials: parked with allInfra true (discover relaxes only network/credential)", async () => {
+      const infra: SandboxDenial[] = [{ kind: "infra", target: "prepare" }];
+      for (const role of ["dev", "research"] as const) {
+        result = withReport(infra, { spawnError: "sandbox prepare failed: boom" });
+        const r = await makeRunSkill(deps({ sandbox: sel("discover") }))({ role, ticketKey: "TARS-1", runDir: runDir(role), maxBudgetUsd: 20 });
+        expect(r.verdictRaw).toBeUndefined();
+        expect(r.parked).toEqual({ denied: infra, approveHint: "approve evil.example", allInfra: true });
+        expect(r.sandbox).toEqual({ adapter: "fake", instance: "dl-x", prepare_ms: 5 });
+      }
+    });
+
+    it("discover + mixed network and infra denials: not parked", async () => {
+      result = withReport([...denied, { kind: "infra", target: "inspect" }]);
+      onSpawn = writeVerdict;
+      const r = await makeRunSkill(deps({ sandbox: sel("discover") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(r.parked).toBeUndefined();
+      expect(r.verdictRaw).toContain('"outcome":"landed"');
+    });
+
     it("enforce + prepare failure (spawnError + infra denial): parked, not the agent_error early result", async () => {
       const infra: SandboxDenial[] = [{ kind: "infra", target: "prepare" }];
       for (const role of ["dev", "research"] as const) {

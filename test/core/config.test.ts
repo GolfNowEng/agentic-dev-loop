@@ -656,6 +656,10 @@ describe("validateConfig: optional sandbox block", () => {
     expect(() => validateConfig(withSandbox({ adapter: "none", kitDir: "/x" }))).toThrow('sandbox: unknown key "kitDir"');
   });
 
+  it("does not double the sandbox.<name> prefix when the adapter's message already has it", () => {
+    expect(() => validateConfig(withSandbox({ adapter: "sbx" }))).toThrow(/^sandbox\.sbx: kitDir is required$/);
+  });
+
   it("rejects a non-object sandbox", () => {
     expect(() => validateConfig(withSandbox("none"))).toThrow("sandbox must be an object");
   });

@@ -117,6 +117,29 @@ describe("appendIteration / readIterations", () => {
     expect(r.parked).toMatchObject({ role: "dev", failure_category: "sandbox_denied", cost_usd: 0.5, run_dir: "d" });
   });
 
+  it("appendIteration redacts phases[].sandbox.denied[].target and phases[].sandbox.approveHint", async () => {
+    const f = join(await tmp(), "log.jsonl");
+    const sandbox = {
+      adapter: "fake",
+      instance: "dl-x",
+      prepare_ms: 5,
+      denied: [
+        { kind: "credential" as const, target: `token ${FAKE_TOKEN}` },
+        { kind: "network" as const, target: "api.example.com" },
+      ],
+      approveHint: `allow --token=${FAKE_TOKEN}`,
+    };
+    await appendIteration(f, rec({ phases: [phase({ sandbox })] }));
+    const raw = await readFile(f, "utf8");
+    expect(raw).not.toContain(FAKE_TOKEN);
+    const [r] = await readIterations(f);
+    const s = r.phases[0].sandbox!;
+    expect(s.approveHint).toContain("REDACTED");
+    expect(s.denied![0].target).toContain("REDACTED");
+    expect(s.denied![1]).toEqual({ kind: "network", target: "api.example.com" });
+    expect(s).toMatchObject({ adapter: "fake", instance: "dl-x", prepare_ms: 5 });
+  });
+
   it("appendIteration keeps sandbox {adapter, instance, prepare_ms} on phases and parked records verbatim", async () => {
     const f = join(await tmp(), "log.jsonl");
     const meta = { adapter: "fake", instance: "dl-12-webtarsthree-tars-1-dev-a1b2c3", prepare_ms: 1234 };

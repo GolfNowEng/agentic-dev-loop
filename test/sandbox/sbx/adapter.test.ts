@@ -24,6 +24,8 @@ function fakeRunner(respond: (args: string[]) => SbxResult = () => ok()): { run:
 const CFG = { kitDir: "/kit", envAllow: ["ANTHROPIC_DEFAULT_SONNET_MODEL", "EXTRA_NAME"] };
 const N = "dl-12-webtarsthree-tars-1-dev-a1b2c3";
 const H: SandboxHandle = { adapter: "sbx", instanceName: N };
+/** Every *_MODEL default allowlist name set, so preflight tests don't warn. */
+const FULL_ENV = { ANTHROPIC_DEFAULT_HAIKU_MODEL: "h", ANTHROPIC_DEFAULT_SONNET_MODEL: "s", ANTHROPIC_DEFAULT_OPUS_MODEL: "o" };
 const FIXTURE = readFileSync(join(import.meta.dirname, "../../fixtures/sbx/policy-log-blocked.json"), "utf8");
 
 describe("sbx adapter: name and validateConfig", () => {
@@ -254,7 +256,7 @@ describe("sbx adapter: preflight", () => {
   afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
   const P = "dl-12-webtarsthree-preflight-abc123";
-  const CHECK = ["exec", P, "sh", "-c", "node --version && git --version && gh auth status"];
+  const CHECK = ["exec", P, "sh", "-c", "node --version && git --version && jq --version && gh auth status"];
   const identity = (p: string) => p;
   const ctx = (over: Partial<{ kitDir: string; mounts: string[]; cwd: string }> = {}) => ({
     repoRoot: "/abs/root",
@@ -263,12 +265,12 @@ describe("sbx adapter: preflight", () => {
     instanceName: P,
     config: { kitDir: over.kitDir ?? kit, envAllow: [] },
   });
-  const GOOD = ok("v24.3.0\ngit version 2.47.0\n", "Logged in to github.com\n");
+  const GOOD = ok("v24.3.0\ngit version 2.47.0\njq-1.7.1\n", "Logged in to github.com\n");
   const answer = (exec: SbxResult) => (args: string[]) => (args[0] === "exec" ? exec : ok());
 
   it("creates, runs the check, and removes the instance", async () => {
     const f = fakeRunner(answer(GOOD));
-    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24 }).preflight(ctx())).resolves.toBeUndefined();
+    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).resolves.toBeUndefined();
     expect(f.calls.map((c) => c.args)).toEqual([
       ["create", "--name", P, "--no-progress", "--no-input", "claude", "--kit", kit, "/abs/root", "/abs/repo"],
       CHECK,
@@ -281,22 +283,31 @@ describe("sbx adapter: preflight", () => {
     const f = fakeRunner();
     const realpath = (p: string) => p.replace("/abs/repos/", "/abs/Repos/");
     await expect(
-      makeSbxAdapter({ run: f.run, realpath, hostNodeMajor: 24 }).preflight(ctx({ mounts: ["/abs/repos/x"], cwd: "/abs/Repos/x" })),
+      makeSbxAdapter({ run: f.run, realpath, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx({ mounts: ["/abs/repos/x"], cwd: "/abs/Repos/x" })),
     ).rejects.toThrow('sandbox paths must match the disk\'s real case: "/abs/repos/x" is "/abs/Repos/x" on disk; cd into the real path and restart');
     expect(f.calls).toEqual([]);
+  });
+
+  it("a wrong-case mount that is not the cwd names targetRepo.path as the likely source", async () => {
+    const realpath = (p: string) => p.replace("/abs/repos/", "/abs/Repos/");
+    await expect(
+      makeSbxAdapter({ run: fakeRunner().run, realpath, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx({ mounts: ["/abs/repos/x"], cwd: "/abs/Repos/y" })),
+    ).rejects.toThrow(
+      'sandbox paths must match the disk\'s real case: "/abs/repos/x" is "/abs/Repos/x" on disk; cd into the real path and restart; if it comes from targetRepo.path, fix the case in the config',
+    );
   });
 
   it("refuses a cwd whose case differs from the disk's", async () => {
     const realpath = (p: string) => p.replace("/abs/root", "/abs/Root");
     await expect(
-      makeSbxAdapter({ run: fakeRunner().run, realpath, hostNodeMajor: 24 }).preflight(ctx({ mounts: [], cwd: "/abs/root" })),
+      makeSbxAdapter({ run: fakeRunner().run, realpath, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx({ mounts: [], cwd: "/abs/root" })),
     ).rejects.toThrow('"/abs/root" is "/abs/Root" on disk');
   });
 
   it("refuses a kitDir with no yaml, or one that does not exist", async () => {
     for (const dir of [emptyKit, join(tmp, "missing")]) {
       const f = fakeRunner();
-      await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24 }).preflight(ctx({ kitDir: dir }))).rejects.toThrow(
+      await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx({ kitDir: dir }))).rejects.toThrow(
         `sandbox.sbx.kitDir "${dir}" has no kit yaml`,
       );
       expect(f.calls).toEqual([]);
@@ -305,7 +316,7 @@ describe("sbx adapter: preflight", () => {
 
   it("refuses a node major different from the host's, and still removes the instance", async () => {
     const f = fakeRunner(answer(ok("v22.1.0\ngit version 2.47.0\n")));
-    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24 }).preflight(ctx())).rejects.toThrow(
+    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
       "sandbox image has no node 24: add node to the kit (see docs/sandbox-sbx.md)",
     );
     expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
@@ -313,23 +324,58 @@ describe("sbx adapter: preflight", () => {
 
   it("refuses a missing node", async () => {
     const f = fakeRunner(answer(fail(127, "sh: 1: node: not found")));
-    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24 }).preflight(ctx())).rejects.toThrow(
+    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
       "sandbox image has no node 24: add node to the kit (see docs/sandbox-sbx.md)",
     );
     expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
 
   it("refuses when gh is not logged in, and still removes the instance", async () => {
-    const f = fakeRunner(answer(fail(1, "You are not logged into any GitHub hosts.", "v24.3.0\ngit version 2.47.0\n")));
-    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24 }).preflight(ctx())).rejects.toThrow(
+    const f = fakeRunner(answer(fail(1, "You are not logged into any GitHub hosts.", "v24.3.0\ngit version 2.47.0\njq-1.7.1\n")));
+    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
       "gh is not logged in inside the sandbox: run sbx secret set github (see docs/sandbox-sbx.md)",
     );
     expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
 
+  it("refuses a missing jq (git ran, jq did not), and still removes the instance", async () => {
+    const f = fakeRunner(answer(fail(127, "sh: 1: jq: not found", "v24.3.0\ngit version 2.47.0\n")));
+    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
+      "sandbox image has no jq: add jq to the kit (see docs/sandbox-sbx.md)",
+    );
+    expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
+  });
+
+  it("a missing git (node ran, git did not) is sbx preflight failed, not a jq or gh message", async () => {
+    const f = fakeRunner(answer(fail(127, "sh: 1: git: not found", "v24.3.0\n")));
+    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
+      "sbx preflight failed: sh: 1: git: not found",
+    );
+  });
+
+  it("warns once, names only, when *_MODEL allowlist names are unset, and does not throw", async () => {
+    const warnings: string[] = [];
+    const env = { ANTHROPIC_DEFAULT_SONNET_MODEL: "secret-sonnet-value" };
+    const f = fakeRunner(answer(GOOD));
+    await expect(
+      makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env, warn: (m) => void warnings.push(m) }).preflight(ctx()),
+    ).resolves.toBeUndefined();
+    expect(warnings).toEqual([
+      "WARNING: ANTHROPIC_DEFAULT_HAIKU_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL not set; inside the sandbox the sonnet/opus/haiku aliases fall back to stock model ids. Set them in your DEVLOOP_ENV_FILE.",
+    ]);
+    expect(warnings.join("")).not.toContain("secret-sonnet-value");
+  });
+
+  it("no warning when every *_MODEL allowlist name is set", async () => {
+    const warnings: string[] = [];
+    const f = fakeRunner(answer(GOOD));
+    await makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV, warn: (m) => void warnings.push(m) }).preflight(ctx());
+    expect(warnings).toEqual([]);
+  });
+
   it("any other exec failure is sbx preflight failed with the first stderr line", async () => {
     const f = fakeRunner(answer(fail(125, `error: sandbox '${P}' not found\nmore`)));
-    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24 }).preflight(ctx())).rejects.toThrow(
+    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
       `sbx preflight failed: error: sandbox '${P}' not found`,
     );
     expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
@@ -337,7 +383,7 @@ describe("sbx adapter: preflight", () => {
 
   it("a failed create is sbx preflight failed, and still removes the instance", async () => {
     const f = fakeRunner((args) => (args[0] === "create" ? fail(1, "error: no daemon") : ok()));
-    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24 }).preflight(ctx())).rejects.toThrow(
+    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
       /^sbx preflight failed: .*error: no daemon/,
     );
     expect(f.calls.map((c) => c.args[0])).toEqual(["create", "rm"]);
@@ -345,7 +391,7 @@ describe("sbx adapter: preflight", () => {
 
   it("defaults hostNodeMajor to the running node's major", async () => {
     const major = process.versions.node.split(".")[0];
-    const f = fakeRunner(answer(ok(`v${major}.0.0\ngit version 2.47.0\n`)));
-    await expect(makeSbxAdapter({ run: f.run, realpath: identity }).preflight(ctx())).resolves.toBeUndefined();
+    const f = fakeRunner(answer(ok(`v${major}.0.0\ngit version 2.47.0\njq-1.7.1\n`)));
+    await expect(makeSbxAdapter({ run: f.run, realpath: identity, env: FULL_ENV }).preflight(ctx())).resolves.toBeUndefined();
   });
 });
