@@ -342,7 +342,9 @@ describe("makeRunSkill", () => {
       for (const role of ["dev", "research"] as const) {
         result = withReport([], { spawnError: "claude exited 1" });
         const early = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role, ticketKey: "TARS-1", runDir: runDir(role), maxBudgetUsd: 20 });
-        expect(early.verdictRaw).toBeDefined();
+        // The early (spawnError) result: dev serializes an agent_error verdict, research leaves it undefined.
+        if (role === "dev") expect(early.verdictRaw).toContain("agent_error");
+        else expect(early.verdictRaw).toBeUndefined();
         expect(early.sandbox).toEqual(meta);
       }
     });

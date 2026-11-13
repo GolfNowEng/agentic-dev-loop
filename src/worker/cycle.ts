@@ -14,6 +14,7 @@ import type { JiraTicket } from "../core/jira-client.ts";
 import type { IterationOutcome, IterationRecord, PhaseEntry } from "../core/iteration-log.ts";
 import { readIterations, recentlyEnded } from "../core/iteration-log.ts";
 import { errorMessage } from "../core/run-skill.ts";
+import { redactSensitive } from "../core/redact.ts";
 import { buildPollJql, excludeKeysFromJql } from "../core/jql.ts";
 import { append, latestRecord, makeCtx, nowIso, roleCapped, runsToday, workerState, type Ctx, type WorkerDeps, type WorkerIterationResult } from "./context.ts";
 import { completePendingHandoffs } from "./handoff.ts";
@@ -193,7 +194,9 @@ async function finish(
  * no Jira write; `prior` keeps a landed research), a notification, and the
  * loop carries on. A lost session lock, or the refused run breaching its
  * role's cost/duration ceiling (its cost is real but not in `phases`), still
- * pauses, after the record, as finish() does.
+ * pauses, after the record, as finish() does. So does an all-infra refusal
+ * (the sandbox itself failed: daemon down, prepare timed out): it is not
+ * ticket-specific, so carrying on would park ticket after ticket.
  */
 async function park(
   ctx: Ctx,
@@ -205,14 +208,31 @@ async function park(
   syncErrors: string[],
   fatal: string | undefined,
 ): Promise<WorkerIterationResult> {
-  const { denied, approveHint, cost_usd, run_dir, started: runStarted, ended: runEnded } = parked;
+  const { denied, approveHint, allInfra, cost_usd, run_dir, started: runStarted, ended: runEnded, sandbox } = parked;
   const record = await append(ctx, t.key, started, "parked", prior, {
     ...extra(syncErrors, `sandbox refused: ${denied.map((d) => `${d.kind} ${d.target}`).join(", ")}`),
     resume: role,
-    parked: { role, failure_category: "sandbox_denied", denied, ...(approveHint !== undefined ? { approveHint } : {}), cost_usd, run_dir },
+    parked: {
+      role,
+      failure_category: "sandbox_denied",
+      denied,
+      ...(approveHint !== undefined ? { approveHint } : {}),
+      cost_usd,
+      run_dir,
+      ...(sandbox !== undefined ? { sandbox } : {}),
+    },
   });
   ctx.deps.notify?.(`dev-loop: ${t.key} parked`, `sandbox refused ${denied.map((d) => d.target).join(", ")}; run npm run sandbox:approvals`);
   if (fatal) return { kind: "paused", reason: fatal, record };
+  if (allInfra) {
+    // approveHint is the (already redacted) failure message for a prepare failure; redact again, it is free text.
+    const what = approveHint !== undefined ? redactSensitive(approveHint) : denied.map((d) => `infra ${d.target}`).join(", ");
+    return {
+      kind: "paused",
+      reason: `sandbox infrastructure failed: ${what} (${t.key}); fix the sandbox, then run npm run sandbox:approvals -- --clear=${t.key}`,
+      record,
+    };
+  }
   const breach = postPhaseBreach(ctx, { role, cost_usd, started: runStarted, ended: runEnded });
   if (breach) return { kind: "paused", reason: breach, record };
   return { kind: "did", record };

@@ -9,6 +9,13 @@ import { resolveRepoPath, SESSION_ID, TICKET_KEY, v1PreCutoverRunsLog, v1RunsLog
 import type { SandboxDenial } from "../sandbox/types.ts";
 import type { FailureCategory, FollowUp, PhaseReached, Role, RunOutcome, SizeTrajectory } from "./types.ts";
 
+/** Which sandbox a run went through (spec §6). Instance names carry no PII, so they are logged as-is. */
+export interface RunSandboxMeta {
+  adapter: string;
+  instance: string;
+  prepare_ms: number;
+}
+
 export interface PhaseEntry {
   role: Role;
   skill: "ticket-refine" | "ticket-to-pr";
@@ -35,6 +42,8 @@ export interface PhaseEntry {
   /** Research entries with outcome landed only. */
   handoff?: "done" | "skipped-ceiling" | "failed";
   jira_sync_error?: string;
+  /** Set only when the run went through a sandbox adapter. */
+  sandbox?: RunSandboxMeta;
 }
 
 export type IterationOutcome =
@@ -67,6 +76,8 @@ export interface ParkedRun {
   /** Measured cost of the refused run (it is not in `phases`). */
   cost_usd: number;
   run_dir: string;
+  /** Set only when the run went through a sandbox adapter. */
+  sandbox?: RunSandboxMeta;
 }
 
 export interface IterationRecord {

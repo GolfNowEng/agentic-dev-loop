@@ -186,7 +186,8 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
       await tail.stop();
     }
 
-    const base = { skillVersion: deps.skillVersion[role], model: MODEL };
+    const meta = run.sandbox ? { sandbox: { adapter: run.sandbox.adapter, instance: run.sandbox.instance, prepare_ms: run.sandbox.prepare_ms } } : {};
+    const base = { skillVersion: deps.skillVersion[role], model: MODEL, ...meta };
     // Before the early results: a prepare failure also sets spawnError, and it must park, not error.
     const denied = run.sandbox?.report.denied ?? [];
     if (deps.sandbox && denied.length > 0) {
@@ -194,10 +195,11 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
       if (deps.sandbox.mode === "enforce") {
         deps.log(redactSensitive(`[${skill}] ${ticketKey}: sandbox refused ${refused}; parking`));
         const approveHint = run.sandbox!.report.approveHint;
+        const allInfra = denied.every((d) => d.kind === "infra");
         return {
           ...base,
           verdictRaw: undefined,
-          parked: { denied, ...(approveHint !== undefined ? { approveHint } : {}) },
+          parked: { denied, ...(approveHint !== undefined ? { approveHint } : {}), ...(allInfra ? { allInfra: true as const } : {}) },
           started: run.started,
           ended: run.ended,
           costUsd: run.usage.costUsd,
