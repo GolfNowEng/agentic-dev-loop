@@ -69,8 +69,9 @@ export interface SandboxAdapter {
    */
   cleanupOrphans(scope: { prefix: string }): Promise<void>;
   prepare(run: RunSandboxSpec): Promise<SandboxHandle>;
+  /** Turn (cmd, args, opts) into what actually gets spawned. h must be the handle prepare returned. */
   wrap(h: SandboxHandle, cmd: string, args: string[], opts: WrappedSpawn["opts"]): WrappedSpawn;
   inspect(h: SandboxHandle, exitCode: number | null): Promise<SandboxReport>;
-  /** Idempotent; never throws. */
+  /** Idempotent. May throw on a real failure; spawn-claude logs it and carries on. */
   teardown(h: SandboxHandle): Promise<void>;
 }

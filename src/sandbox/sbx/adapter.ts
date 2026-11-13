@@ -52,6 +52,14 @@ function blockedHosts(stdout: string): string[] | undefined {
 /** `example.org:443` -> `example.org`; leaves a bare host (or a bracketed IPv6 without a port) alone. */
 const stripPort = (host: string): string => host.replace(/:\d+$/, "");
 
+/**
+ * A blocked host is whatever the sandboxed agent tried to reach, so it is
+ * untrusted: only a plain DNS name or a bracketed IPv6 literal may go into a
+ * command a human is asked to run.
+ */
+const HINTABLE_HOST = [/^[A-Za-z0-9.-]+$/, /^\[[0-9a-fA-F:]+\]$/];
+const isHintable = (host: string): boolean => HINTABLE_HOST.some((re) => re.test(host));
+
 export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
   const { run } = deps;
   const realpath = deps.realpath ?? realpathSync.native;
@@ -65,8 +73,7 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
   }
 
   async function remove(name: string): Promise<void> {
-    // sbx rm's own flag, not git's (the git one stays banned).
-    const r = await run(["rm", "--force", name]); // banned-flag scan: sbx, not git
+    const r = await run(["rm", "-f", name]);
     if (r.code === 0 && !r.timedOut) return;
     if (r.stderr.includes("not found")) return;
     throw new Error(`sbx rm failed (${why(r)}): ${firstLine(r.stderr)}`);
@@ -158,8 +165,13 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
         return { denied };
       }
       for (const host of new Set(hosts)) denied.push({ kind: "network", target: host });
-      const approve = [...new Set(hosts.map(stripPort))];
-      return approve.length > 0 ? { denied, approveHint: [APPROVE_HEADING, ...approve.map((x) => `sbx policy allow network ${x}`)].join("\n") } : { denied };
+      if (hosts.length === 0) return { denied };
+      const bare = [...new Set(hosts.map(stripPort))];
+      const lines = bare.filter(isHintable).map((x) => `sbx policy allow network ${x}`);
+      if (bare.some((x) => !isHintable(x))) {
+        lines.push(`(not shown: a blocked host with unexpected characters; see sbx policy log ${h.instanceName})`);
+      }
+      return { denied, approveHint: [APPROVE_HEADING, ...lines].join("\n") };
     },
 
     teardown: (h) => remove(h.instanceName),
