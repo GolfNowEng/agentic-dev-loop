@@ -6,7 +6,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeRunSkill, sandboxInstanceName, sandboxMounts, type SkillRunnerDeps } from "../../src/worker/skill-runner.ts";
+import { makeRunSkill, sandboxInstanceName, sandboxInstancePrefix, sandboxMounts, type SkillRunnerDeps } from "../../src/worker/skill-runner.ts";
 import { noneAdapter } from "../../src/sandbox/none.ts";
 import type { SandboxSelection } from "../../src/sandbox/select.ts";
 import type { SandboxDenial } from "../../src/sandbox/types.ts";
@@ -220,13 +220,13 @@ describe("makeRunSkill", () => {
       await makeRunSkill(deps({ sandbox: sel("enforce"), shortId: () => "a1b2c3" }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
       expect(spawned[0].sandbox).toEqual({
         adapter: fakeAdapter,
-        run: { instanceName: "dl-tars-1-dev-a1b2c3", mounts: ["/abs/dev-loop", repo], config: { k: 1 } },
+        run: { instanceName: "dl-skill-runner-test-tars-1-dev-a1b2c3", mounts: ["/abs/dev-loop", repo], config: { k: 1 } },
       });
     });
 
     it("the default shortId is 6 lowercase hex chars", async () => {
       await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
-      expect(spawned[0].sandbox!.run.instanceName).toMatch(/^dl-tars-1-dev-[0-9a-f]{6}$/);
+      expect(spawned[0].sandbox!.run.instanceName).toMatch(/^dl-skill-runner-test-tars-1-dev-[0-9a-f]{6}$/);
     });
 
     it("the running line names the sandbox instance only when a sandbox is attached", async () => {
@@ -317,9 +317,24 @@ describe("makeRunSkill", () => {
 });
 
 describe("sandboxInstanceName", () => {
-  it("is dl-<ticket lowercased>-<role>-<shortId>", () => {
-    expect(sandboxInstanceName("TARS-12", "dev", "a1b2c3")).toBe("dl-tars-12-dev-a1b2c3");
-    expect(sandboxInstanceName("TARS-12", "research", "00ff00")).toBe("dl-tars-12-research-00ff00");
+  it("is dl-<project>-<ticket lowercased>-<role>-<shortId>", () => {
+    expect(sandboxInstanceName("webtarsthree", "TARS-12", "dev", "a1b2c3")).toBe("dl-webtarsthree-tars-12-dev-a1b2c3");
+    expect(sandboxInstanceName("webtarsthree", "TARS-12", "research", "00ff00")).toBe("dl-webtarsthree-tars-12-research-00ff00");
+  });
+  it("turns any char outside [a-z0-9-] into -", () => {
+    expect(sandboxInstanceName("my_proj.x", "AB_C-1", "dev", "a1b2c3")).toBe("dl-my-proj-x-ab-c-1-dev-a1b2c3");
+  });
+  it("starts with sandboxInstancePrefix(project), so cleanup scope and names cannot drift", () => {
+    for (const project of ["webtarsthree", "my_proj.x"]) {
+      expect(sandboxInstanceName(project, "TARS-1", "dev", "a1b2c3").startsWith(sandboxInstancePrefix(project))).toBe(true);
+    }
+  });
+});
+
+describe("sandboxInstancePrefix", () => {
+  it("is dl-<project>-, sanitized", () => {
+    expect(sandboxInstancePrefix("webtarsthree")).toBe("dl-webtarsthree-");
+    expect(sandboxInstancePrefix("My_Proj")).toBe("dl-my-proj-");
   });
 });
 

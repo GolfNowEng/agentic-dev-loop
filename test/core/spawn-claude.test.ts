@@ -1072,7 +1072,7 @@ describe("sandbox adapter", () => {
     expect(result.sandbox).toMatchObject({
       adapter: "fake",
       instance: "dev-loop-TARS-1",
-      report: { denied: [{ kind: "infra", target: "prepare" }] },
+      report: { denied: [{ kind: "infra", target: "prepare" }], approveHint: "sandbox prepare failed: daemon not running" },
     });
   });
 

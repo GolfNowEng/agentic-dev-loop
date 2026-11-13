@@ -43,6 +43,10 @@ describe.each(Object.values(ADAPTERS))("sandbox adapter contract: $name", (adapt
     await expect(adapter.teardown(h)).resolves.toBeUndefined();
   });
 
+  it("cleanupOrphans accepts a prefix scope and resolves", async () => {
+    await expect(adapter.cleanupOrphans({ prefix: "dl-test-" })).resolves.toBeUndefined();
+  });
+
   it("validateConfig(undefined) does not throw", () => {
     expect(() => adapter.validateConfig(undefined)).not.toThrow();
   });
