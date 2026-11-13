@@ -24,4 +24,9 @@ describe("validateSbxConfig", () => {
   it("rejects secret-shaped env names", () => {
     expect(() => validateSbxConfig({ kitDir: "/k", envAllow: ["MY_api_key"] })).toThrow('sandbox.sbx: envAllow may not pass "MY_api_key" (secret-shaped)');
   });
+  it("rejects envAllow entries that are not bare names", () => {
+    for (const bad of ["FOO=bar", "", "1A", "A B"]) {
+      expect(() => validateSbxConfig({ kitDir: "/k", envAllow: [bad] })).toThrow(`sandbox.sbx: envAllow entry "${bad}" must be a bare env var name`);
+    }
+  });
 });

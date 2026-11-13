@@ -25,4 +25,8 @@ describe("makeSbxRunner", () => {
     expect(r.timedOut).toBe(true);
     expect(r.code).toBeNull();
   });
+  it("a maxBuffer kill is not a timeout", async () => {
+    const fake: SbxExecFile = (_c, _a, _o, cb) => cb(Object.assign(new Error("x"), { killed: true, signal: "SIGTERM", code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }), "", "");
+    expect((await makeSbxRunner(fake)(["x"])).timedOut).toBe(false);
+  });
 });

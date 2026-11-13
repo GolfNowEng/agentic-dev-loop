@@ -216,6 +216,12 @@ describe("makeRunSkill", () => {
       expect(Object.hasOwn(spawned[0], "sandbox")).toBe(false);
     });
 
+    it("a slug whose prefix leaves no room fails at construction with a sandbox, not without", () => {
+      const slug = "p".repeat(60);
+      expect(() => makeRunSkill({ ...deps({ sandbox: sel("enforce") }), slug })).toThrow(/is too long \(max 56 chars\)/);
+      expect(() => makeRunSkill({ ...deps(), slug })).not.toThrow();
+    });
+
     it("with a selection, spawn opts carry the adapter, instance name, mounts and adapter config", async () => {
       await makeRunSkill(deps({ sandbox: sel("enforce"), shortId: () => "a1b2c3" }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
       expect(spawned[0].sandbox).toEqual({
@@ -331,6 +337,9 @@ describe("sandboxInstanceName", () => {
     expect(name.startsWith(sandboxInstancePrefix(project))).toBe(true);
     expect(name.endsWith("-a1b2c3")).toBe(true);
     expect(name).toMatch(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/);
+  });
+  it("throws when the prefix leaves no room for the shortId", () => {
+    expect(() => sandboxInstanceName("p".repeat(60), "TARS-1", "dev", "a1b2c3")).toThrow(/sandbox instance prefix ".*" is too long \(max 56 chars\); shorten the project name/);
   });
   it("starts with sandboxInstancePrefix(project), so cleanup scope and names cannot drift", () => {
     for (const project of ["webtarsthree", "my_proj.x"]) {
