@@ -345,12 +345,32 @@ describe("structure: final-review fixes stay wired", () => {
 describe("structure: sandbox names stay inside their adapter folder", () => {
   const src = walk(join(ROOT, "src")).filter((f) => /\.(ts|md|json|mjs)$/.test(f));
   const sbxDir = join(ROOT, "src/sandbox/sbx") + "/";
+  // The registry is the one sanctioned mention outside the adapter folder:
+  // its import line and its `sbx: sbxAdapter` line. Exempted by exact path.
+  const REGISTRY = "src/sandbox/index.ts";
 
   it("scans a non-empty src tree", () => expect(src.length).toBeGreaterThan(10));
 
   it("no sandbox-specific names outside src/sandbox/<adapter>/", () => {
-    const hits = src.filter((f) => !f.startsWith(sbxDir) && /\bsbx\b/i.test(readFileSync(f, "utf8"))).map(rel);
+    const hits = src.filter((f) => !f.startsWith(sbxDir) && rel(f) !== REGISTRY && /\bsbx\b/i.test(readFileSync(f, "utf8"))).map(rel);
     expect(hits).toEqual([]);
+  });
+
+  it("the registry mentions sbx only on its import line and its registry line", () => {
+    const lines = readFileSync(join(ROOT, REGISTRY), "utf8")
+      .split("\n")
+      .filter((l) => /\bsbx\b/i.test(l))
+      .map((l) => l.trim());
+    expect(lines).toEqual(['import { sbxAdapter } from "./sbx/index.ts";', "sbx: sbxAdapter,"]);
+  });
+
+  it("main.ts gives preflight a project-scoped throwaway instance name and the repo root as cwd", () => {
+    const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
+    // Built only for a real sandbox, so a long slug never fails the default (none) path.
+    expect(main).toMatch(/sandboxSelection\.adapter\.name !== DEFAULT_ADAPTER \? sandboxPreflightInstanceName\(slug, randomBytes\(3\)\.toString\("hex"\)\) : ""/);
+    const call = main.slice(main.indexOf("adapter.preflight({"), main.indexOf("});", main.indexOf("adapter.preflight({")));
+    expect(call).toMatch(/instanceName: preflightInstanceName/);
+    expect(call).toMatch(/cwd: REPO_ROOT/);
   });
 
   it("no adapter-name branching outside src/sandbox/", () => {

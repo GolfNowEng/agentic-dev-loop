@@ -1,11 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { ADAPTERS } from "../../src/sandbox/index.ts";
+import { adapterNames } from "../../src/sandbox/index.ts";
 import { noneAdapter } from "../../src/sandbox/none.ts";
-import type { SandboxAdapter } from "../../src/sandbox/types.ts";
+import { makeSbxAdapter } from "../../src/sandbox/sbx/adapter.ts";
+import type { SbxRunner } from "../../src/sandbox/sbx/run.ts";
+import type { RunSandboxSpec, SandboxAdapter } from "../../src/sandbox/types.ts";
 
 const RUN = { instanceName: "dev-loop-TEST-1", mounts: ["/tmp/repo"], config: undefined };
 
-describe.each(Object.values(ADAPTERS))("sandbox adapter contract: $name", (adapter: SandboxAdapter) => {
+/** Answers create/rm with 0, policy log with an empty log, ls with []. Never runs the real binary. */
+const fakeOk: SbxRunner = async (args) => {
+  const stdout = args[0] === "policy" ? '{"allowed":[],"blocked":[]}' : args[0] === "ls" ? "[]" : "";
+  return { code: 0, stdout, stderr: "", timedOut: false };
+};
+
+/** One case per registered adapter, each with its own config sub-block. */
+const CASES: Array<{ name: string; adapter: SandboxAdapter; config: unknown }> = [
+  { name: "none", adapter: noneAdapter, config: undefined },
+  { name: "sbx", adapter: makeSbxAdapter({ run: fakeOk }), config: { kitDir: "/kit", envAllow: [] } },
+];
+
+it("every registered adapter has a contract case", () => {
+  expect(CASES.map((c) => c.name).sort()).toEqual([...adapterNames()].sort());
+  for (const c of CASES) expect(c.adapter.name).toBe(c.name);
+});
+
+describe.each(CASES)("sandbox adapter contract: $name", ({ adapter, config }) => {
+  const RUN: RunSandboxSpec = { instanceName: "dev-loop-TEST-1", mounts: ["/tmp/repo"], config };
+
   it("prepare returns a handle naming this adapter and the instance", async () => {
     const h = await adapter.prepare(RUN);
     expect(h.adapter).toBe(adapter.name);
@@ -47,8 +68,8 @@ describe.each(Object.values(ADAPTERS))("sandbox adapter contract: $name", (adapt
     await expect(adapter.cleanupOrphans({ prefix: "dl-test-" })).resolves.toBeUndefined();
   });
 
-  it("validateConfig(undefined) does not throw", () => {
-    expect(() => adapter.validateConfig(undefined)).not.toThrow();
+  it("validateConfig accepts this adapter's own config", () => {
+    expect(() => adapter.validateConfig(config)).not.toThrow();
   });
 });
 

@@ -6,7 +6,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeRunSkill, sandboxInstanceName, sandboxInstancePrefix, sandboxMounts, type SkillRunnerDeps } from "../../src/worker/skill-runner.ts";
+import { makeRunSkill, sandboxInstanceName, sandboxInstancePrefix, sandboxMounts, sandboxPreflightInstanceName, type SkillRunnerDeps } from "../../src/worker/skill-runner.ts";
 import { noneAdapter } from "../../src/sandbox/none.ts";
 import type { SandboxSelection } from "../../src/sandbox/select.ts";
 import type { SandboxDenial } from "../../src/sandbox/types.ts";
@@ -345,6 +345,23 @@ describe("sandboxInstanceName", () => {
     for (const project of ["webtarsthree", "my_proj.x"]) {
       expect(sandboxInstanceName(project, "TARS-1", "dev", "a1b2c3").startsWith(sandboxInstancePrefix(project))).toBe(true);
     }
+  });
+});
+
+describe("sandboxPreflightInstanceName", () => {
+  it("is sandboxInstancePrefix(project) + preflight- + shortId", () => {
+    expect(sandboxPreflightInstanceName("webtarsthree", "abc123")).toBe("dl-12-webtarsthree-preflight-abc123");
+  });
+  it("caps at 63 chars by trimming the preflight word, keeping prefix and shortId", () => {
+    const project = "p".repeat(45);
+    const name = sandboxPreflightInstanceName(project, "abc123");
+    expect(name.length).toBeLessThanOrEqual(63);
+    expect(name.startsWith(sandboxInstancePrefix(project))).toBe(true);
+    expect(name.endsWith("-abc123")).toBe(true);
+    expect(name).toMatch(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/);
+  });
+  it("throws when the prefix leaves no room for the shortId", () => {
+    expect(() => sandboxPreflightInstanceName("p".repeat(60), "abc123")).toThrow(/sandbox instance prefix ".*" is too long \(max 56 chars\); shorten the project name/);
   });
 });
 

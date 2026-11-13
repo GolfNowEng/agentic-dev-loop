@@ -638,7 +638,7 @@ describe("validateConfig: optional sandbox block", () => {
 
   it("rejects an unregistered adapter, naming sandbox.adapter and the valid names", () => {
     expect(() => validateConfig(withSandbox({ adapter: "bogus" }))).toThrow(
-      'sandbox.adapter: unknown sandbox adapter "bogus"; valid: none',
+      'sandbox.adapter: unknown sandbox adapter "bogus"; valid: none, sbx',
     );
   });
 
