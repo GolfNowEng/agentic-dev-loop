@@ -5,7 +5,7 @@ export const noneAdapter: SandboxAdapter = {
   name: "none",
   validateConfig: (raw) => raw,
   preflight: async () => {},
-  cleanupOrphans: async () => {},
+  cleanupOrphans: async (_scope) => {},
   prepare: async (run) => ({ adapter: "none", instanceName: run.instanceName }),
   wrap: (_h, cmd, args, opts) => ({ cmd, args, opts }),
   inspect: async () => ({ denied: [] }),

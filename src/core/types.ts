@@ -5,13 +5,13 @@
 // dependencies (JiraClient, run-skill callback). No behavior lives here
 // beyond the CURRENT_LOG_VERSION constant.
 
+import type { SandboxConfig } from "../sandbox/types.ts";
+
 /**
  * Closed enum of failure categories a run can be tagged with. This must
  * match the pipeline spec's failure_category enum exactly - do not add or
  * remove values without updating the spec.
  */
-import type { SandboxConfig } from "../sandbox/types.ts";
-
 export type FailureCategory =
   | "spec_ambiguous"
   | "spec_contradicted"

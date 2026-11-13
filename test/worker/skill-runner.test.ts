@@ -241,7 +241,7 @@ describe("makeRunSkill", () => {
       const running = lines.filter((l) => l.includes(": running"));
       expect(running).toEqual([
         `[ticket-to-pr] TARS-1: running (run dir ${runDir("dev")}, budget $20)...`,
-        `[ticket-to-pr] TARS-1: running in dl-tars-1-dev-a1b2c3 (run dir ${runDir("dev")}, budget $20)...`,
+        `[ticket-to-pr] TARS-1: running in dl-skill-runner-test-tars-1-dev-a1b2c3 (run dir ${runDir("dev")}, budget $20)...`,
       ]);
     });
 

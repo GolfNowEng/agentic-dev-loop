@@ -14,7 +14,8 @@ export type SandboxMode = "discover" | "enforce";
 
 /** The optional `sandbox` block of a project config. Adapter sub-blocks are keyed by adapter name. */
 export interface SandboxConfig {
-  adapter: string;
+  /** Absent means the default adapter. */
+  adapter?: string;
   mode?: SandboxMode;
   [adapterName: string]: unknown;
 }
@@ -57,7 +58,12 @@ export interface SandboxAdapter {
   /** Validate and normalize this adapter's own config sub-block (undefined when absent). Throws Error with a fix-naming message. */
   validateConfig(raw: unknown): unknown;
   preflight(ctx: PreflightCtx): Promise<void>;
-  cleanupOrphans(): Promise<void>;
+  /**
+   * Remove leftover instances from an earlier crashed run. Removes only
+   * instances whose name starts with `scope.prefix` (this project's
+   * `dl-<project>-`); called after the session lock is held.
+   */
+  cleanupOrphans(scope: { prefix: string }): Promise<void>;
   prepare(run: RunSandboxSpec): Promise<SandboxHandle>;
   wrap(h: SandboxHandle, cmd: string, args: string[], opts: WrappedSpawn["opts"]): WrappedSpawn;
   inspect(h: SandboxHandle, exitCode: number | null): Promise<SandboxReport>;

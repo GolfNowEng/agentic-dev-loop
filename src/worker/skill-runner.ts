@@ -56,9 +56,23 @@ export interface SkillRunnerDeps {
   shortId?: () => string;
 }
 
-/** `dl-<ticket lowercased>-<role>-<shortId>`, e.g. dl-tars-1-dev-a1b2c3. */
-export function sandboxInstanceName(ticketKey: string, role: Role, shortId: string): string {
-  return `dl-${ticketKey.toLowerCase()}-${role}-${shortId}`;
+/** Lowercase, and any char outside [a-z0-9-] becomes "-". */
+function sandboxNamePart(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+}
+
+/**
+ * `dl-<project>-`: every instance name of this project starts with it, and
+ * main.ts passes it as the `cleanupOrphans` scope, so one project's startup
+ * never removes another project's sandboxes.
+ */
+export function sandboxInstancePrefix(project: string): string {
+  return `dl-${sandboxNamePart(project)}-`;
+}
+
+/** `dl-<project>-<ticket lowercased>-<role>-<shortId>`, sanitized to [a-z0-9-], e.g. dl-webtarsthree-tars-1-dev-a1b2c3. */
+export function sandboxInstanceName(project: string, ticketKey: string, role: Role, shortId: string): string {
+  return sandboxNamePart(`${sandboxInstancePrefix(project)}${ticketKey}-${role}-${shortId}`);
 }
 
 /**
@@ -106,7 +120,7 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
     await mkdir(absRunDir, { recursive: true });
 
     const sandbox = deps.sandbox
-      ? { adapter: deps.sandbox.adapter, run: { instanceName: sandboxInstanceName(ticketKey, role, shortId()), mounts, config: deps.sandbox.config } }
+      ? { adapter: deps.sandbox.adapter, run: { instanceName: sandboxInstanceName(deps.slug, ticketKey, role, shortId()), mounts, config: deps.sandbox.config } }
       : undefined;
     const where = sandbox ? ` in ${sandbox.run.instanceName}` : "";
     deps.log(`[${skill}] ${ticketKey}: running${where} (run dir ${runDir}, budget $${maxBudgetUsd})...`);

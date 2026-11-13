@@ -613,7 +613,9 @@ export async function spawnClaudeRun(
           adapter: adapter.name,
           instance: run.instanceName,
           prepare_ms: deps.now().getTime() - t0,
-          report: { denied: [{ kind: "infra", target: "prepare" }] },
+          // The message is the only thing sandbox:approvals can show for this
+          // park; the record path redacts it (appendIteration).
+          report: { denied: [{ kind: "infra", target: "prepare" }], approveHint: spawnError },
         },
       };
     }
