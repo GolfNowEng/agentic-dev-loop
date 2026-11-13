@@ -186,16 +186,21 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
       await tail.stop();
     }
 
-    const meta = run.sandbox ? { sandbox: { adapter: run.sandbox.adapter, instance: run.sandbox.instance, prepare_ms: run.sandbox.prepare_ms } } : {};
-    const base = { skillVersion: deps.skillVersion[role], model: MODEL, ...meta };
     // Before the early results: a prepare failure also sets spawnError, and it must park, not error.
     const denied = run.sandbox?.report.denied ?? [];
+    const approveHint = run.sandbox?.report.approveHint;
+    const allInfra = denied.length > 0 && denied.every((d) => d.kind === "infra");
+    // Discover relaxes only network/credential refusals: an all-infra report (the sandbox itself
+    // failed) parks, and so pauses the worker, in both modes.
+    const parks = deps.sandbox !== undefined && denied.length > 0 && (deps.sandbox.mode === "enforce" || allInfra);
+    // A discover run that carried on keeps what was refused on its phase entry, for sandbox:approvals.
+    const discovered = deps.sandbox?.mode === "discover" && denied.length > 0 && !parks ? { denied, ...(approveHint !== undefined ? { approveHint } : {}) } : {};
+    const meta = run.sandbox ? { sandbox: { adapter: run.sandbox.adapter, instance: run.sandbox.instance, prepare_ms: run.sandbox.prepare_ms, ...discovered } } : {};
+    const base = { skillVersion: deps.skillVersion[role], model: MODEL, ...meta };
     if (deps.sandbox && denied.length > 0) {
       const refused = denied.map((d) => `${d.kind} ${d.target}`).join(", ");
-      if (deps.sandbox.mode === "enforce") {
+      if (parks) {
         deps.log(redactSensitive(`[${skill}] ${ticketKey}: sandbox refused ${refused}; parking`));
-        const approveHint = run.sandbox!.report.approveHint;
-        const allInfra = denied.every((d) => d.kind === "infra");
         return {
           ...base,
           verdictRaw: undefined,

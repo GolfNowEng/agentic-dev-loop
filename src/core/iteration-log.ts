@@ -14,6 +14,10 @@ export interface RunSandboxMeta {
   adapter: string;
   instance: string;
   prepare_ms: number;
+  /** Discover mode only, when the sandbox refused something but the run carried on. Targets redacted. */
+  denied?: SandboxDenial[];
+  /** Discover mode only, with `denied`: the adapter's allow hint (redacted). */
+  approveHint?: string;
 }
 
 export interface PhaseEntry {
@@ -114,6 +118,15 @@ function redactOpt(s: string | undefined): string | undefined {
   return s === undefined ? undefined : redactSensitive(s);
 }
 
+function redactSandboxMeta(m: RunSandboxMeta): RunSandboxMeta {
+  const { denied, approveHint, ...rest } = m;
+  return {
+    ...rest,
+    ...(denied !== undefined ? { denied: denied.map((d) => ({ ...d, target: redactSensitive(d.target) })) } : {}),
+    ...(approveHint !== undefined ? { approveHint: redactSensitive(approveHint) } : {}),
+  };
+}
+
 /** Append one JSON line (single appendFile call). Validates ticket/session; redacts free text. */
 export async function appendIteration(path: string, rec: IterationRecord): Promise<void> {
   if (typeof rec.ticket !== "string" || !TICKET_KEY.test(rec.ticket)) {
@@ -127,6 +140,7 @@ export async function appendIteration(path: string, rec: IterationRecord): Promi
     phases: rec.phases.map((p) => {
       const q: PhaseEntry = { ...p, detail: redactSensitive(p.detail) };
       if (p.jira_sync_error !== undefined) q.jira_sync_error = redactSensitive(p.jira_sync_error);
+      if (p.sandbox !== undefined) q.sandbox = redactSandboxMeta(p.sandbox);
       return q;
     }),
   };

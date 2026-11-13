@@ -1,5 +1,6 @@
 // Parked tickets: runs an enforcing sandbox refused. Lists them with what was
-// refused and the adapter's allow hint, and un-parks one. It only PRINTS the
+// refused and the adapter's allow hint, and un-parks one. Also lists what a
+// discover-mode run would have been refused (it carried on, so nothing to clear). It only PRINTS the
 // hint; it never runs it. Run with:
 //   npm run sandbox:approvals [-- --project=webtarsthree --root=<dir>]
 //   npm run sandbox:approvals -- --clear=<KEY>
@@ -66,14 +67,25 @@ if (clear !== undefined) {
   process.exit(0);
 }
 
-if (parked.length === 0) {
-  console.log(`No parked tickets in ${path}.`);
-  process.exit(0);
-}
+// Discover mode: what the sandbox would have refused, kept on the latest record's phase entries.
+const discovered = [...latest.values()].filter((r) => (r.phases ?? []).some((p) => (p.sandbox?.denied ?? []).length > 0));
+
+if (parked.length === 0) console.log(`No parked tickets in ${path}.`);
 for (const r of parked) {
   const p = r.parked ?? {};
   console.log(`${r.ticket} (${p.role ?? r.resume}, parked ${r.ended}):`);
   for (const d of p.denied ?? []) console.log(`  refused: ${d.kind} ${d.target}`);
   if (p.approveHint) console.log(`  to allow (run these yourself): ${p.approveHint}`);
   console.log(`  then: npm run sandbox:approvals -- --clear=${r.ticket}`);
+}
+if (discovered.length > 0) {
+  console.log("");
+  console.log("Discovered in discover mode (not parked):");
+  for (const r of discovered) {
+    for (const p of r.phases.filter((x) => (x.sandbox?.denied ?? []).length > 0)) {
+      console.log(`${r.ticket} (${p.role}, ${p.ended}):`);
+      for (const d of p.sandbox.denied) console.log(`  refused: ${d.kind} ${d.target}`);
+      if (p.sandbox.approveHint) console.log(`  to allow (run these yourself): ${p.sandbox.approveHint}`);
+    }
+  }
 }

@@ -202,7 +202,9 @@ function validateSandbox(v: unknown): void {
   try {
     adapter.validateConfig(sb[adapter.name]);
   } catch (err) {
-    throw new ConfigError(`sandbox.${adapter.name}: ${err instanceof Error ? err.message : String(err)}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    const prefix = `sandbox.${adapter.name}: `;
+    throw new ConfigError(msg.startsWith(prefix) ? msg : `${prefix}${msg}`);
   }
 }
 

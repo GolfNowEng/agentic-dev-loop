@@ -5,14 +5,15 @@
 
 import { readdirSync, realpathSync } from "node:fs";
 import type { SandboxAdapter, SandboxDenial, SandboxHandle } from "../types.ts";
-import { validateSbxConfig, type SbxConfig } from "./config.ts";
+import { DEFAULT_ENV_ALLOW, validateSbxConfig, type SbxConfig } from "./config.ts";
 import type { SbxResult, SbxRunner } from "./run.ts";
 
 /** `sbx create` pulls an image on a cold cache; ~5 s when cached. */
 export const CREATE_TIMEOUT_MS = 180_000;
 
 const APPROVE_HEADING = "Review, then run yourself if you approve:";
-const PREFLIGHT_CHECK = "node --version && git --version && gh auth status";
+/** Ordered so a failure is attributed by which version lines appeared before it. */
+const PREFLIGHT_CHECK = "node --version && git --version && jq --version && gh auth status";
 /** sbx exec's own failure (e.g. a missing sandbox); the inner command's code passes through otherwise. */
 const EXEC_INFRA_EXIT = 125;
 
@@ -20,6 +21,10 @@ export interface SbxAdapterDeps {
   run: SbxRunner;
   realpath?: (p: string) => string;
   hostNodeMajor?: number;
+  /** The host env preflight checks the model-alias names against (default process.env). */
+  env?: NodeJS.ProcessEnv;
+  /** Non-fatal preflight warnings (default console.error). */
+  warn?: (m: string) => void;
 }
 
 const firstLine = (s: string): string => s.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
@@ -64,6 +69,8 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
   const { run } = deps;
   const realpath = deps.realpath ?? realpathSync.native;
   const hostNodeMajor = deps.hostNodeMajor ?? Number(process.versions.node.split(".")[0]);
+  const env = deps.env ?? process.env;
+  const warn = deps.warn ?? ((m: string) => console.error(m));
   // The handle type is adapter-neutral, so prepare remembers each handle's envAllow here for wrap.
   const handleEnvAllow = new WeakMap<SandboxHandle, string[]>();
 
@@ -89,10 +96,18 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
       for (const p of [...ctx.mounts, ctx.cwd]) {
         const real = realpath(p);
         if (real !== p) {
-          throw new Error(`sandbox paths must match the disk's real case: "${p}" is "${real}" on disk; cd into the real path and restart`);
+          const fromConfig = p !== ctx.cwd ? "; if it comes from targetRepo.path, fix the case in the config" : "";
+          throw new Error(`sandbox paths must match the disk's real case: "${p}" is "${real}" on disk; cd into the real path and restart${fromConfig}`);
         }
       }
       const cfg = sbxConfig(ctx.config);
+      // Names only, never values.
+      const unsetModels = DEFAULT_ENV_ALLOW.filter((n) => /_MODEL$/.test(n) && !env[n]);
+      if (unsetModels.length > 0) {
+        warn(
+          `WARNING: ${unsetModels.join(", ")} not set; inside the sandbox the sonnet/opus/haiku aliases fall back to stock model ids. Set them in your DEVLOOP_ENV_FILE.`,
+        );
+      }
       let entries: string[] = [];
       try {
         entries = readdirSync(cfg.kitDir);
@@ -114,9 +129,12 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
         if (nodeMajor(r.stdout) !== hostNodeMajor) {
           throw new Error(`sandbox image has no node ${hostNodeMajor}: add node to the kit (see docs/sandbox-sbx.md)`);
         }
-        // node and git passed (the && chain reached gh): gh is the failure.
-        if (/^git version /m.test(r.stdout)) {
+        // The && chain stops at the first failure; the last version line printed names the step after it.
+        if (/^jq-/m.test(r.stdout)) {
           throw new Error("gh is not logged in inside the sandbox: run sbx secret set github (see docs/sandbox-sbx.md)");
+        }
+        if (/^git version /m.test(r.stdout)) {
+          throw new Error("sandbox image has no jq: add jq to the kit (see docs/sandbox-sbx.md)");
         }
         throw new Error(`sbx preflight failed: ${firstLine(r.stderr)}`);
       } finally {

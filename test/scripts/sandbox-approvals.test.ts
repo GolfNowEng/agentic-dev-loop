@@ -28,7 +28,7 @@ const landedRec = (ticket: string): IterationRecord => ({
   ticket, session: "dev-1", loop_version: "2.0.0",
   started: "2026-11-11T01:00:00.000Z", ended: "2026-11-11T01:10:00.000Z", outcome: "landed", phases: [],
 });
-function discoveredRec(ticket: string, extra: Partial<IterationRecord> = {}, hint: string | undefined = "sbx policy allow network evil.example"): IterationRecord {
+function discoveredRec(ticket: string, extra: Partial<IterationRecord> = {}, hint: string | null = "sbx policy allow network evil.example"): IterationRecord {
   return {
     ticket, session: "dev-1", loop_version: "2.0.0",
     started: "2026-11-11T02:00:00.000Z", ended: "2026-11-11T02:30:00.000Z", outcome: "landed",
@@ -41,7 +41,7 @@ function discoveredRec(ticket: string, extra: Partial<IterationRecord> = {}, hin
         sandbox: {
           adapter: "fake", instance: "dl-x", prepare_ms: 5,
           denied: [{ kind: "network", target: "evil.example" }],
-          ...(hint !== undefined ? { approveHint: hint } : {}),
+          ...(hint !== null ? { approveHint: hint } : {}),
         },
       },
     ],
@@ -110,7 +110,7 @@ describe("scripts/sandbox-approvals.mjs", () => {
   });
 
   it("reports both parked and discovered sections; omits the allow line without a hint", async () => {
-    await writeFile(log, jsonl([parkedRec("TARS-1", "dev"), discoveredRec("TARS-3", {}, undefined)]));
+    await writeFile(log, jsonl([parkedRec("TARS-1", "dev"), discoveredRec("TARS-3", {}, null)]));
     const { stdout } = await exec();
     expect(stdout).toContain("then: npm run sandbox:approvals -- --clear=TARS-1");
     expect(stdout).not.toContain("No parked tickets");
