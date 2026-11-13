@@ -62,17 +62,47 @@ function sandboxNamePart(s: string): string {
 }
 
 /**
- * `dl-<project>-`: every instance name of this project starts with it, and
- * main.ts passes it as the `cleanupOrphans` scope, so one project's startup
- * never removes another project's sandboxes.
+ * `dl-<len>-<project>-`: every instance name of this project starts with it,
+ * and main.ts passes it as the `cleanupOrphans` scope, so one project's
+ * startup never removes another project's sandboxes. The length makes the
+ * prefixes prefix-free: without it, `dl-a-` would also match `dl-a-b-...`.
  */
 export function sandboxInstancePrefix(project: string): string {
-  return `dl-${sandboxNamePart(project)}-`;
+  const part = sandboxNamePart(project);
+  return `dl-${part.length}-${part}-`;
 }
 
-/** `dl-<project>-<ticket lowercased>-<role>-<shortId>`, sanitized to [a-z0-9-], e.g. dl-webtarsthree-tars-1-dev-a1b2c3. */
+/** Docker-style name limit. */
+const MAX_INSTANCE_NAME = 63;
+
+/** `dl-<len>-<project>-<ticket lowercased>-<role>-<shortId>`, sanitized to [a-z0-9-], e.g. dl-12-webtarsthree-tars-1-dev-a1b2c3. */
 export function sandboxInstanceName(project: string, ticketKey: string, role: Role, shortId: string): string {
-  return sandboxNamePart(`${sandboxInstancePrefix(project)}${ticketKey}-${role}-${shortId}`);
+  const prefix = sandboxInstancePrefix(project);
+  const tail = sandboxNamePart(`-${shortId}`);
+  const middle = sandboxNamePart(`${ticketKey}-${role}`);
+  if (prefix.length + tail.length > MAX_INSTANCE_NAME) {
+    throw new Error(`sandbox instance prefix "${prefix}" is too long (max 56 chars); shorten the project name`);
+  }
+  const room = Math.max(0, MAX_INSTANCE_NAME - prefix.length - tail.length);
+  // Over the cap: trim only the ticket-role middle, then drop a dangling "-".
+  const kept = middle.length > room ? middle.slice(0, room).replace(/-+$/, "") : middle;
+  return kept ? `${prefix}${kept}${tail}` : `${prefix}${tail.slice(1)}`;
+}
+
+/**
+ * `dl-<len>-<project>-preflight-<shortId>`: the startup check's throwaway
+ * instance. Same prefix (so cleanupOrphans covers a crashed preflight) and
+ * the same 63-char cap as sandboxInstanceName.
+ */
+export function sandboxPreflightInstanceName(project: string, shortId: string): string {
+  const prefix = sandboxInstancePrefix(project);
+  const tail = sandboxNamePart(`-${shortId}`);
+  if (prefix.length + tail.length > MAX_INSTANCE_NAME) {
+    throw new Error(`sandbox instance prefix "${prefix}" is too long (max 56 chars); shorten the project name`);
+  }
+  const room = MAX_INSTANCE_NAME - prefix.length - tail.length;
+  const kept = "preflight".slice(0, room);
+  return kept ? `${prefix}${kept}${tail}` : `${prefix}${tail.slice(1)}`;
 }
 
 /**
@@ -103,6 +133,8 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
   // Validated here, at startup (main.ts builds this before the loop), so a
   // malformed targetRepo.path exits 1 instead of failing every ticket.
   const repoDir = checkAbsPath("repo-dir", repoDirFor(deps.config, deps.slug));
+  // Same reason: an over-long project slug must fail at startup, never mid-run.
+  if (deps.sandbox) sandboxInstanceName(deps.slug, "X-1", "dev", "000000");
   // --add-dir: a targetRepo.path checkout sits outside the repo root, so
   // without it every Edit/Write in the worktree is denied (TARS-1393). The
   // v2 clone is under the repo root already.
@@ -154,18 +186,25 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
       await tail.stop();
     }
 
-    const base = { skillVersion: deps.skillVersion[role], model: MODEL };
     // Before the early results: a prepare failure also sets spawnError, and it must park, not error.
     const denied = run.sandbox?.report.denied ?? [];
+    const approveHint = run.sandbox?.report.approveHint;
+    const allInfra = denied.length > 0 && denied.every((d) => d.kind === "infra");
+    // Discover relaxes only network/credential refusals: an all-infra report (the sandbox itself
+    // failed) parks, and so pauses the worker, in both modes.
+    const parks = deps.sandbox !== undefined && denied.length > 0 && (deps.sandbox.mode === "enforce" || allInfra);
+    // A discover run that carried on keeps what was refused on its phase entry, for sandbox:approvals.
+    const discovered = deps.sandbox?.mode === "discover" && denied.length > 0 && !parks ? { denied, ...(approveHint !== undefined ? { approveHint } : {}) } : {};
+    const meta = run.sandbox ? { sandbox: { adapter: run.sandbox.adapter, instance: run.sandbox.instance, prepare_ms: run.sandbox.prepare_ms, ...discovered } } : {};
+    const base = { skillVersion: deps.skillVersion[role], model: MODEL, ...meta };
     if (deps.sandbox && denied.length > 0) {
       const refused = denied.map((d) => `${d.kind} ${d.target}`).join(", ");
-      if (deps.sandbox.mode === "enforce") {
+      if (parks) {
         deps.log(redactSensitive(`[${skill}] ${ticketKey}: sandbox refused ${refused}; parking`));
-        const approveHint = run.sandbox!.report.approveHint;
         return {
           ...base,
           verdictRaw: undefined,
-          parked: { denied, ...(approveHint !== undefined ? { approveHint } : {}) },
+          parked: { denied, ...(approveHint !== undefined ? { approveHint } : {}), ...(allInfra ? { allInfra: true as const } : {}) },
           started: run.started,
           ended: run.ended,
           costUsd: run.usage.costUsd,

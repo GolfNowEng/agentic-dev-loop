@@ -3,6 +3,7 @@
 // pass a scripted fake. Both role phases take it.
 
 import type { Role } from "./types.ts";
+import type { RunSandboxMeta } from "./iteration-log.ts";
 import type { SandboxDenial } from "../sandbox/types.ts";
 
 export interface RunSkillArgs {
@@ -32,7 +33,14 @@ export interface RunSkillResult {
    * Set only when an enforcing sandbox refused something (or could not start):
    * the run is parked, not judged, and verdictRaw is undefined.
    */
-  parked?: { denied: SandboxDenial[]; approveHint?: string };
+  parked?: {
+    denied: SandboxDenial[];
+    approveHint?: string;
+    /** Every denial is kind "infra" (the sandbox itself failed, nothing ticket-specific): the worker pauses. */
+    allInfra?: true;
+  };
+  /** Set only when the spawn went through a sandbox: which one (no report). */
+  sandbox?: RunSandboxMeta;
 }
 
 export type RunSkillFn = (args: RunSkillArgs) => Promise<RunSkillResult>;

@@ -15,8 +15,8 @@ History before 2.0.0 lives in two files, one per former repo:
 
 ## [Unreleased — 2.2.0] — planned
 
-Steps 1–2 built (plan 2026-11-12-sandbox-adapter-foundation.md); the sbx
-adapter is pending. Design:
+Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
+sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
 - `[core]` Node 24 is now the minimum (engines >=24.0.0); a sandbox's node
@@ -37,18 +37,44 @@ adapter is pending. Design:
   prepare parks with its error message as the hint.
 - `[core]` `npm run sandbox:approvals` lists parked tickets with what was
   refused and the adapter's allow hint (printed, never run);
-  `--clear=<KEY>` un-parks one.
+  `--clear=<KEY>` un-parks one. It also lists discover-mode denials
+  (from the ticket's latest record) under "Discovered in discover mode
+  (not parked)".
 - `[core]` The skill runner gives each sandboxed run its own instance name
-  (`dl-<project>-<ticket>-<role>-<6 hex>`, sanitized to `[a-z0-9-]`, shown
-  in the "running" line) and mounts (repo root plus the target checkout
+  (`dl-<len>-<project>-<ticket>-<role>-<6 hex>`, sanitized to `[a-z0-9-]`;
+  `<len>` is the project name's length, so project `a` never matches
+  project `a-b`'s sandboxes; shown in the "running" line) and mounts (repo root plus the target checkout
   when it is outside it). In enforce mode a sandbox refusal returns
   `parked` before verdict.json is read; discover mode logs it and carries
-  on. The adapter's preflight runs once before the session lock; its
-  orphan cleanup runs once after the lock, scoped to `dl-<project>-`.
-- `[core]` Planned (step 3, not built): the first real adapter, `sbx`
-  (Docker Sandboxes with the Keystone kit). Everything sbx-specific will
-  live in `src/sandbox/sbx/`, so it can be removed, or another sandbox
-  added, without touching the loop.
+  on, keeping the denials and hint (redacted) on the phase entry's
+  `sandbox` block. The adapter's preflight runs once before the session lock; its
+  orphan cleanup runs once after the lock, scoped to `dl-<len>-<project>-`.
+- `[core]` The `sbx` adapter (Docker Sandboxes with the Keystone kit):
+  each agent run gets its own sandbox with only the repo folders mounted,
+  and a blocked network host is logged and parked with a printed
+  `sbx policy allow` line, never run for you. Preflight refuses a mount
+  path whose case differs from the disk, a kit dir with no yaml, a
+  sandbox without the host's node major or without `jq`, and a missing
+  GitHub login (a wrong-case mount that is not the cwd also points at
+  `targetRepo.path`). It warns, without failing and naming no values,
+  when an `ANTHROPIC_DEFAULT_*_MODEL` name is unset, since the model
+  aliases would otherwise fall back to stock ids inside the sandbox.
+  Config: `sandbox.sbx` `kitDir`, `memory`, `envAllow`. Setup:
+  [docs/sandbox-sbx.md](docs/sandbox-sbx.md). Everything sbx-specific
+  lives in `src/sandbox/sbx/`.
+- `[core]` Sandbox prepare now times out after 300 s and the denial
+  inspection after 60 s; both become infra denials instead of hanging.
+- `[core]` When every refusal in a parked run is infra (daemon down,
+  prepare failed), the worker pauses instead of parking ticket after
+  ticket. This applies in discover mode too: discover relaxes only
+  network and credential refusals.
+- `[core]` Run-log phase entries and parked records carry
+  `sandbox: {adapter, instance, prepare_ms}`.
+- `[core]` An unknown `terminal_reason` is logged with the instruction to
+  add it to `ALLOWED_TERMINAL_REASONS` if it is a new success reason.
+- `[core]` Sandbox instance names are capped at 63 characters (sbx's
+  limit); a project name that makes the prefix longer than 56 characters
+  fails at startup. The prepare failure message is redacted.
 
 ## [2.1.0] — 2026-11-12
 

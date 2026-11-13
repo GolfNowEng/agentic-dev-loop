@@ -1,0 +1,15 @@
+{
+  "allowed": [],
+  "blocked": [
+    {
+      "sandbox_id": "dl-12-webtarsthree-tars-1-dev-a1b2c3",
+      "host": "example.org:443",
+      "proxy_type": "forward",
+      "rule": "no applicable policies for op(action=net:connect:tcp, resource=net:domain:example.org:443)",
+      "reason": "No matching allow rule (default deny)",
+      "count": 1,
+      "first_seen": "2026-11-12T16:52:18.922101-08:00",
+      "last_seen": "2026-11-12T16:52:18.922101-08:00"
+    }
+  ]
+}

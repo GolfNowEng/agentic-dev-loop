@@ -22,6 +22,6 @@ describe("selectSandbox", () => {
   });
 
   it("an unknown cliName throws with the --sandbox: prefix", () => {
-    expect(() => selectSandbox(makeV2Config(), "x")).toThrow('--sandbox: unknown sandbox adapter "x"; valid: none');
+    expect(() => selectSandbox(makeV2Config(), "x")).toThrow('--sandbox: unknown sandbox adapter "x"; valid: none, sbx');
   });
 });

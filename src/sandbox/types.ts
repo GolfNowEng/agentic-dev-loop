@@ -23,6 +23,10 @@ export interface SandboxConfig {
 export interface PreflightCtx {
   repoRoot: string;
   mounts: string[];
+  /** The cwd every spawn uses (the repo root); an adapter may check it like a mount. */
+  cwd: string;
+  /** A throwaway, project-scoped name for an adapter that needs a test instance. */
+  instanceName: string;
   config: unknown;
 }
 
@@ -61,12 +65,13 @@ export interface SandboxAdapter {
   /**
    * Remove leftover instances from an earlier crashed run. Removes only
    * instances whose name starts with `scope.prefix` (this project's
-   * `dl-<project>-`); called after the session lock is held.
+   * `dl-<len>-<project>-`); called after the session lock is held.
    */
   cleanupOrphans(scope: { prefix: string }): Promise<void>;
   prepare(run: RunSandboxSpec): Promise<SandboxHandle>;
+  /** Turn (cmd, args, opts) into what actually gets spawned. h must be the handle prepare returned. */
   wrap(h: SandboxHandle, cmd: string, args: string[], opts: WrappedSpawn["opts"]): WrappedSpawn;
   inspect(h: SandboxHandle, exitCode: number | null): Promise<SandboxReport>;
-  /** Idempotent; never throws. */
+  /** Idempotent. May throw on a real failure; spawn-claude logs it and carries on. */
   teardown(h: SandboxHandle): Promise<void>;
 }

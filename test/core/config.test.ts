@@ -638,7 +638,7 @@ describe("validateConfig: optional sandbox block", () => {
 
   it("rejects an unregistered adapter, naming sandbox.adapter and the valid names", () => {
     expect(() => validateConfig(withSandbox({ adapter: "bogus" }))).toThrow(
-      'sandbox.adapter: unknown sandbox adapter "bogus"; valid: none',
+      'sandbox.adapter: unknown sandbox adapter "bogus"; valid: none, sbx',
     );
   });
 
@@ -654,6 +654,10 @@ describe("validateConfig: optional sandbox block", () => {
 
   it("rejects an unknown key (keys() wording)", () => {
     expect(() => validateConfig(withSandbox({ adapter: "none", kitDir: "/x" }))).toThrow('sandbox: unknown key "kitDir"');
+  });
+
+  it("does not double the sandbox.<name> prefix when the adapter's message already has it", () => {
+    expect(() => validateConfig(withSandbox({ adapter: "sbx" }))).toThrow(/^sandbox\.sbx: kitDir is required$/);
   });
 
   it("rejects a non-object sandbox", () => {

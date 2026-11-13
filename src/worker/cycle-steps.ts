@@ -225,7 +225,13 @@ export const MIN_DEV_BUDGET_USD = 1;
 // ---- running a phase ----
 
 /** A run an enforcing sandbox refused: its denials, plus the measured cost, run dir and timing (for the ceilings). */
-export type PhaseParked = NonNullable<RunSkillResult["parked"]> & { cost_usd: number; run_dir: string; started: string; ended: string };
+export type PhaseParked = NonNullable<RunSkillResult["parked"]> & {
+  cost_usd: number;
+  run_dir: string;
+  started: string;
+  ended: string;
+  sandbox?: NonNullable<RunSkillResult["sandbox"]>;
+};
 
 export type PhaseRun =
   | {
@@ -250,13 +256,18 @@ export async function runPhase(ctx: Ctx, role: Role, ticket: JiraTicket, maxBudg
   }
   ctx.log(`[worker] ${ticket.key}: ${role} phase starting (budget $${maxBudgetUsd})`);
   // Capture `parked` from the result; the phase functions see verdictRaw undefined and make no Jira write.
+  // Also capture which sandbox ran it, for the PhaseEntry / parked record (spec §6).
   let parked: PhaseParked | undefined;
+  let sandbox: RunSkillResult["sandbox"];
   const runSkill: RunSkillFn = async (args) => {
     const res = await deps.runSkill(args);
-    if (res.parked) parked = { ...res.parked, cost_usd: res.costUsd, run_dir: args.runDir, started: res.started, ended: res.ended };
+    sandbox = res.sandbox;
+    if (res.parked) {
+      parked = { ...res.parked, cost_usd: res.costUsd, run_dir: args.runDir, started: res.started, ended: res.ended, ...(sandbox ? { sandbox } : {}) };
+    }
     return res;
   };
-  const entry =
+  const phaseEntry =
     role === "research"
       ? await runResearchPhase(ticket, { jira: deps.jira, view: ctx.research, runSkill, runDir, maxBudgetUsd, now: deps.now })
       : await runDevPhase(ticket, {
@@ -269,6 +280,7 @@ export async function runPhase(ctx: Ctx, role: Role, ticket: JiraTicket, maxBudg
           session: deps.session.name,
           now: deps.now,
         });
+  const entry: PhaseEntry = sandbox ? { ...phaseEntry, sandbox } : phaseEntry;
   ctx.log(parked ? `[worker] ${ticket.key}: ${role} parked (sandbox refused)` : `[worker] ${ticket.key}: ${role} ${entry.outcome}: ${entry.detail}`);
   const out = parked ? { entry, parked } : { entry };
   try {

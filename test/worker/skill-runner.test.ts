@@ -6,7 +6,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeRunSkill, sandboxInstanceName, sandboxInstancePrefix, sandboxMounts, type SkillRunnerDeps } from "../../src/worker/skill-runner.ts";
+import { makeRunSkill, sandboxInstanceName, sandboxInstancePrefix, sandboxMounts, sandboxPreflightInstanceName, type SkillRunnerDeps } from "../../src/worker/skill-runner.ts";
 import { noneAdapter } from "../../src/sandbox/none.ts";
 import type { SandboxSelection } from "../../src/sandbox/select.ts";
 import type { SandboxDenial } from "../../src/sandbox/types.ts";
@@ -216,17 +216,23 @@ describe("makeRunSkill", () => {
       expect(Object.hasOwn(spawned[0], "sandbox")).toBe(false);
     });
 
+    it("a slug whose prefix leaves no room fails at construction with a sandbox, not without", () => {
+      const slug = "p".repeat(60);
+      expect(() => makeRunSkill({ ...deps({ sandbox: sel("enforce") }), slug })).toThrow(/is too long \(max 56 chars\)/);
+      expect(() => makeRunSkill({ ...deps(), slug })).not.toThrow();
+    });
+
     it("with a selection, spawn opts carry the adapter, instance name, mounts and adapter config", async () => {
       await makeRunSkill(deps({ sandbox: sel("enforce"), shortId: () => "a1b2c3" }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
       expect(spawned[0].sandbox).toEqual({
         adapter: fakeAdapter,
-        run: { instanceName: "dl-skill-runner-test-tars-1-dev-a1b2c3", mounts: ["/abs/dev-loop", repo], config: { k: 1 } },
+        run: { instanceName: "dl-17-skill-runner-test-tars-1-dev-a1b2c3", mounts: ["/abs/dev-loop", repo], config: { k: 1 } },
       });
     });
 
     it("the default shortId is 6 lowercase hex chars", async () => {
       await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
-      expect(spawned[0].sandbox!.run.instanceName).toMatch(/^dl-skill-runner-test-tars-1-dev-[0-9a-f]{6}$/);
+      expect(spawned[0].sandbox!.run.instanceName).toMatch(/^dl-17-skill-runner-test-tars-1-dev-[0-9a-f]{6}$/);
     });
 
     it("the running line names the sandbox instance only when a sandbox is attached", async () => {
@@ -241,7 +247,7 @@ describe("makeRunSkill", () => {
       const running = lines.filter((l) => l.includes(": running"));
       expect(running).toEqual([
         `[ticket-to-pr] TARS-1: running (run dir ${runDir("dev")}, budget $20)...`,
-        `[ticket-to-pr] TARS-1: running in dl-skill-runner-test-tars-1-dev-a1b2c3 (run dir ${runDir("dev")}, budget $20)...`,
+        `[ticket-to-pr] TARS-1: running in dl-17-skill-runner-test-tars-1-dev-a1b2c3 (run dir ${runDir("dev")}, budget $20)...`,
       ]);
     });
 
@@ -296,6 +302,42 @@ describe("makeRunSkill", () => {
       expect(lines).toContain("[ticket-to-pr] TARS-1: sandbox refused network evil.example; discover mode, not parking");
     });
 
+    it("discover + denied report: the result's sandbox meta carries the denials and the hint", async () => {
+      result = withReport(denied);
+      onSpawn = writeVerdict;
+      const r = await makeRunSkill(deps({ sandbox: sel("discover") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(r.sandbox).toEqual({ adapter: "fake", instance: "dl-x", prepare_ms: 5, denied, approveHint: "approve evil.example" });
+    });
+
+    it("enforce + denied, and discover + empty report: no denied/approveHint on the sandbox meta", async () => {
+      result = withReport(denied);
+      const parked = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(parked.sandbox).toEqual({ adapter: "fake", instance: "dl-x", prepare_ms: 5 });
+      result = withReport([]);
+      onSpawn = writeVerdict;
+      const clean = await makeRunSkill(deps({ sandbox: sel("discover") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(clean.sandbox).toEqual({ adapter: "fake", instance: "dl-x", prepare_ms: 5 });
+    });
+
+    it("discover + all-infra denials: parked with allInfra true (discover relaxes only network/credential)", async () => {
+      const infra: SandboxDenial[] = [{ kind: "infra", target: "prepare" }];
+      for (const role of ["dev", "research"] as const) {
+        result = withReport(infra, { spawnError: "sandbox prepare failed: boom" });
+        const r = await makeRunSkill(deps({ sandbox: sel("discover") }))({ role, ticketKey: "TARS-1", runDir: runDir(role), maxBudgetUsd: 20 });
+        expect(r.verdictRaw).toBeUndefined();
+        expect(r.parked).toEqual({ denied: infra, approveHint: "approve evil.example", allInfra: true });
+        expect(r.sandbox).toEqual({ adapter: "fake", instance: "dl-x", prepare_ms: 5 });
+      }
+    });
+
+    it("discover + mixed network and infra denials: not parked", async () => {
+      result = withReport([...denied, { kind: "infra", target: "inspect" }]);
+      onSpawn = writeVerdict;
+      const r = await makeRunSkill(deps({ sandbox: sel("discover") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(r.parked).toBeUndefined();
+      expect(r.verdictRaw).toContain('"outcome":"landed"');
+    });
+
     it("enforce + prepare failure (spawnError + infra denial): parked, not the agent_error early result", async () => {
       const infra: SandboxDenial[] = [{ kind: "infra", target: "prepare" }];
       for (const role of ["dev", "research"] as const) {
@@ -304,6 +346,49 @@ describe("makeRunSkill", () => {
         expect(r.verdictRaw).toBeUndefined();
         expect(r.parked?.denied).toEqual(infra);
       }
+    });
+
+    it("enforce + all-infra denials: parked with allInfra true", async () => {
+      const infra: SandboxDenial[] = [{ kind: "infra", target: "prepare" }];
+      result = withReport(infra, { spawnError: "sandbox prepare failed: boom" });
+      const r = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(r.parked).toEqual({ denied: infra, approveHint: "approve evil.example", allInfra: true });
+    });
+
+    it("enforce + mixed network and infra denials: parked without allInfra", async () => {
+      const mixed: SandboxDenial[] = [...denied, { kind: "infra", target: "inspect" }];
+      result = withReport(mixed);
+      const r = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(r.parked?.denied).toEqual(mixed);
+      expect(r.parked && "allInfra" in r.parked).toBe(false);
+    });
+
+    it("carries sandbox {adapter, instance, prepare_ms} (no report) on parked, normal and early results", async () => {
+      const meta = { adapter: "fake", instance: "dl-x", prepare_ms: 5 };
+      result = withReport(denied);
+      const parked = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(parked.sandbox).toEqual(meta);
+
+      result = withReport([]);
+      onSpawn = writeVerdict;
+      const normal = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(normal.sandbox).toEqual(meta);
+
+      onSpawn = async () => {};
+      for (const role of ["dev", "research"] as const) {
+        result = withReport([], { spawnError: "claude exited 1" });
+        const early = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role, ticketKey: "TARS-1", runDir: runDir(role), maxBudgetUsd: 20 });
+        // The early (spawnError) result: dev serializes an agent_error verdict, research leaves it undefined.
+        if (role === "dev") expect(early.verdictRaw).toContain("agent_error");
+        else expect(early.verdictRaw).toBeUndefined();
+        expect(early.sandbox).toEqual(meta);
+      }
+    });
+
+    it("no sandbox key on the result when the spawn was not sandboxed", async () => {
+      onSpawn = writeVerdict;
+      const r = await makeRunSkill(deps())({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect("sandbox" in r).toBe(false);
     });
 
     it("enforce + empty denied report: normal path, no parked", async () => {
@@ -317,12 +402,23 @@ describe("makeRunSkill", () => {
 });
 
 describe("sandboxInstanceName", () => {
-  it("is dl-<project>-<ticket lowercased>-<role>-<shortId>", () => {
-    expect(sandboxInstanceName("webtarsthree", "TARS-12", "dev", "a1b2c3")).toBe("dl-webtarsthree-tars-12-dev-a1b2c3");
-    expect(sandboxInstanceName("webtarsthree", "TARS-12", "research", "00ff00")).toBe("dl-webtarsthree-tars-12-research-00ff00");
+  it("is dl-<len>-<project>-<ticket lowercased>-<role>-<shortId>", () => {
+    expect(sandboxInstanceName("webtarsthree", "TARS-12", "dev", "a1b2c3")).toBe("dl-12-webtarsthree-tars-12-dev-a1b2c3");
+    expect(sandboxInstanceName("webtarsthree", "TARS-12", "research", "00ff00")).toBe("dl-12-webtarsthree-tars-12-research-00ff00");
   });
   it("turns any char outside [a-z0-9-] into -", () => {
-    expect(sandboxInstanceName("my_proj.x", "AB_C-1", "dev", "a1b2c3")).toBe("dl-my-proj-x-ab-c-1-dev-a1b2c3");
+    expect(sandboxInstanceName("my_proj.x", "AB_C-1", "dev", "a1b2c3")).toBe("dl-9-my-proj-x-ab-c-1-dev-a1b2c3");
+  });
+  it("caps at 63 chars by trimming the ticket-role middle, keeping prefix and shortId", () => {
+    const project = "p".repeat(40);
+    const name = sandboxInstanceName(project, "ABCDEFGHIJ-123456", "research", "a1b2c3");
+    expect(name.length).toBeLessThanOrEqual(63);
+    expect(name.startsWith(sandboxInstancePrefix(project))).toBe(true);
+    expect(name.endsWith("-a1b2c3")).toBe(true);
+    expect(name).toMatch(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/);
+  });
+  it("throws when the prefix leaves no room for the shortId", () => {
+    expect(() => sandboxInstanceName("p".repeat(60), "TARS-1", "dev", "a1b2c3")).toThrow(/sandbox instance prefix ".*" is too long \(max 56 chars\); shorten the project name/);
   });
   it("starts with sandboxInstancePrefix(project), so cleanup scope and names cannot drift", () => {
     for (const project of ["webtarsthree", "my_proj.x"]) {
@@ -331,10 +427,37 @@ describe("sandboxInstanceName", () => {
   });
 });
 
+describe("sandboxPreflightInstanceName", () => {
+  it("is sandboxInstancePrefix(project) + preflight- + shortId", () => {
+    expect(sandboxPreflightInstanceName("webtarsthree", "abc123")).toBe("dl-12-webtarsthree-preflight-abc123");
+  });
+  it("caps at 63 chars by trimming the preflight word, keeping prefix and shortId", () => {
+    const project = "p".repeat(45);
+    const name = sandboxPreflightInstanceName(project, "abc123");
+    expect(name.length).toBeLessThanOrEqual(63);
+    expect(name.startsWith(sandboxInstancePrefix(project))).toBe(true);
+    expect(name.endsWith("-abc123")).toBe(true);
+    expect(name).toMatch(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/);
+  });
+  it("throws when the prefix leaves no room for the shortId", () => {
+    expect(() => sandboxPreflightInstanceName("p".repeat(60), "abc123")).toThrow(/sandbox instance prefix ".*" is too long \(max 56 chars\); shorten the project name/);
+  });
+});
+
 describe("sandboxInstancePrefix", () => {
-  it("is dl-<project>-, sanitized", () => {
-    expect(sandboxInstancePrefix("webtarsthree")).toBe("dl-webtarsthree-");
-    expect(sandboxInstancePrefix("My_Proj")).toBe("dl-my-proj-");
+  it("is dl-<len>-<project>-, sanitized", () => {
+    expect(sandboxInstancePrefix("webtarsthree")).toBe("dl-12-webtarsthree-");
+    expect(sandboxInstancePrefix("My_Proj")).toBe("dl-7-my-proj-");
+  });
+  it("no project's prefix starts another project's prefix or instance names", () => {
+    const projects = ["a", "a-b", "a-b-c", "ab", "webtarsthree", "webtarsthree-eval", "catalog-ui", "catalog-ui-public", "catalog-ui-management"];
+    for (const p of projects) {
+      for (const q of projects) {
+        if (p === q) continue;
+        expect(sandboxInstancePrefix(q).startsWith(sandboxInstancePrefix(p))).toBe(false);
+        expect(sandboxInstanceName(q, "TARS-1", "dev", "a1b2c3").startsWith(sandboxInstancePrefix(p))).toBe(false);
+      }
+    }
   });
 });
 

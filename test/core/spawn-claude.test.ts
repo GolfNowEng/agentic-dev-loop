@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   spawnClaudeRun,
@@ -15,6 +15,8 @@ import {
   _resetStoppingForTests,
   ALLOWED_TERMINAL_REASONS,
   TEARDOWN_GRACE_MS,
+  PREPARE_TIMEOUT_MS,
+  INSPECT_TIMEOUT_MS,
 } from "../../src/core/spawn-claude.ts";
 import type { SpawnClaudeOpts, SpawnFn, SpawnClaudeDeps } from "../../src/core/spawn-claude.ts";
 import { parseVerdict } from "../../src/core/verdict.ts";
@@ -769,6 +771,32 @@ describe("result-error detection", () => {
     expect(result.usage.costUsd).toBe(0.2);
   });
 
+  it("an unknown terminal_reason logs one prominent error line naming ALLOWED_TERMINAL_REASONS; still a spawnError", async () => {
+    const errors: string[] = [];
+    const child = new FakeChild();
+    const spawn: SpawnFn = () => {
+      child.finish(JSON.stringify({ type: "result", is_error: false, terminal_reason: "brand_new", total_cost_usd: 0.1 }), 0);
+      return child as never;
+    };
+    const result = await spawnClaudeRun(makeOpts(), { log: () => {}, logError: (m) => errors.push(m), spawn });
+    expect(result.spawnError).toBe("claude reported a failed result (is_error=false, terminal_reason=brand_new)");
+    const unknown = errors.filter((m) => m.includes('unknown terminal_reason "brand_new"'));
+    expect(unknown).toHaveLength(1);
+    expect(unknown[0]).toContain("ALLOWED_TERMINAL_REASONS (src/core/spawn-claude.ts)");
+  });
+
+  it("is_error alone (a known terminal_reason) logs no unknown terminal_reason line", async () => {
+    const errors: string[] = [];
+    const child = new FakeChild();
+    const spawn: SpawnFn = () => {
+      child.finish(JSON.stringify({ type: "result", is_error: true, terminal_reason: "completed" }), 0);
+      return child as never;
+    };
+    const result = await spawnClaudeRun(makeOpts(), { log: () => {}, logError: (m) => errors.push(m), spawn });
+    expect(result.spawnError).toBeDefined();
+    expect(errors.some((m) => m.includes("unknown terminal_reason"))).toBe(false);
+  });
+
   it("is_error: true is a spawnError", async () => {
     const result = await run(JSON.stringify({ type: "result", is_error: true, terminal_reason: "completed" }));
     expect(result.spawnError).toContain("is_error=true");
@@ -835,6 +863,7 @@ describe("sandbox adapter", () => {
     o: {
       report?: SandboxReport;
       prepareThrows?: boolean;
+      prepareMessage?: string;
       inspectThrows?: boolean;
       teardownGate?: Promise<void>;
       wrap?: (cmd: string, args: string[], opts: WrappedSpawn["opts"]) => WrappedSpawn;
@@ -850,7 +879,7 @@ describe("sandbox adapter", () => {
       prepare: async (spec) => {
         calls.push("prepare");
         o.onPrepare?.();
-        if (o.prepareThrows) throw new Error("daemon not running");
+        if (o.prepareThrows) throw new Error(o.prepareMessage ?? "daemon not running");
         return { adapter: "fake", instanceName: spec.instanceName };
       },
       wrap: (_h, cmd, args, opts) => {
@@ -1076,6 +1105,23 @@ describe("sandbox adapter", () => {
     });
   });
 
+  it("redacts the prepare failure message before it reaches spawnError, approveHint or the log", async () => {
+    const { adapter } = recordingAdapter({ prepareThrows: true, prepareMessage: `no such dir ${homedir()}/x for someone@example.com` });
+    const errors: string[] = [];
+    const result = await spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), {
+      ...quiet,
+      logError: (m) => errors.push(m),
+      spawn: () => {
+        throw new Error("must not spawn");
+      },
+    });
+    for (const text of [result.spawnError ?? "", result.sandbox?.report.approveHint ?? "", ...errors]) {
+      expect(text).not.toContain(homedir());
+      expect(text).not.toContain("someone@example.com");
+    }
+    expect(result.spawnError).toBe("sandbox prepare failed: no such dir ~/x for REDACTED_EMAIL");
+  });
+
   it("inspect throwing becomes an infra denial, not a throw", async () => {
     const { adapter, calls } = recordingAdapter({ inspectThrows: true });
     const result = await spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), {
@@ -1167,6 +1213,139 @@ describe("sandbox adapter", () => {
     expect(killResult).toBe("exited");
     await pending;
     expect(calls.filter((c) => c === "teardown")).toHaveLength(1);
+  });
+
+  it("exports the prepare and inspect timeouts", () => {
+    expect(PREPARE_TIMEOUT_MS).toBe(300_000);
+    expect(INSPECT_TIMEOUT_MS).toBe(60_000);
+  });
+
+  it("a prepare that never resolves: after PREPARE_TIMEOUT_MS, an infra prepare denial, and no spawn", async () => {
+    const timers = makeFakeTimers();
+    const { adapter, calls } = recordingAdapter();
+    adapter.prepare = () => {
+      calls.push("prepare");
+      return new Promise(() => {});
+    };
+    let spawned = 0;
+    let result: Awaited<ReturnType<typeof spawnClaudeRun>> | null = null;
+    const pending = spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), {
+      ...quiet,
+      ...timers,
+      spawn: () => {
+        spawned++;
+        throw new Error("must not spawn");
+      },
+    }).then((r) => (result = r));
+    await flush();
+    timers.advance(PREPARE_TIMEOUT_MS - 1);
+    await flush();
+    expect(result).toBeNull();
+    timers.advance(1);
+    await pending;
+
+    expect(spawned).toBe(0);
+    expect(result!.spawnError).toBe("sandbox prepare failed: timed out after 300s");
+    expect(result!.sandbox).toMatchObject({
+      adapter: "fake",
+      instance: "dev-loop-TARS-1",
+      report: { denied: [{ kind: "infra", target: "prepare" }], approveHint: "sandbox prepare failed: timed out after 300s" },
+    });
+    expect(calls).toEqual(["prepare"]);
+    expect(timers.pendingCount()).toBe(0);
+  });
+
+  it("a prepare that resolves after its timeout fired still gets its handle torn down (no leak); a teardown error is swallowed", async () => {
+    const timers = makeFakeTimers();
+    const { adapter, calls } = recordingAdapter();
+    let resolvePrepare: (h: { adapter: string; instanceName: string }) => void = () => {};
+    adapter.prepare = () => {
+      calls.push("prepare");
+      return new Promise((r) => (resolvePrepare = r));
+    };
+    const tornDown: string[] = [];
+    adapter.teardown = async (h) => {
+      tornDown.push(h.instanceName);
+      throw new Error("late teardown blew up");
+    };
+    const errors: string[] = [];
+    const pending = spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), {
+      ...quiet,
+      ...timers,
+      logError: (m) => errors.push(m),
+      spawn: () => {
+        throw new Error("must not spawn");
+      },
+    });
+    await flush();
+    timers.advance(PREPARE_TIMEOUT_MS);
+    const result = await pending;
+    expect(result.spawnError).toBe("sandbox prepare failed: timed out after 300s");
+    expect(tornDown).toEqual([]);
+
+    resolvePrepare({ adapter: "fake", instanceName: "dev-loop-TARS-1" });
+    for (let i = 0; i < 5; i++) await flush();
+    expect(tornDown).toEqual(["dev-loop-TARS-1"]);
+    expect(errors.some((m) => m.includes("late teardown blew up"))).toBe(true);
+  });
+
+  it("a prepare that rejects after its timeout fired is ignored (no unhandled rejection, no teardown)", async () => {
+    const timers = makeFakeTimers();
+    const { adapter, calls } = recordingAdapter();
+    let rejectPrepare: (e: Error) => void = () => {};
+    adapter.prepare = () => {
+      calls.push("prepare");
+      return new Promise((_r, j) => (rejectPrepare = j));
+    };
+    const pending = spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), { ...quiet, ...timers, spawn: () => { throw new Error("must not spawn"); } });
+    await flush();
+    timers.advance(PREPARE_TIMEOUT_MS);
+    await pending;
+    rejectPrepare(new Error("late"));
+    for (let i = 0; i < 5; i++) await flush();
+    expect(calls).toEqual(["prepare"]);
+  });
+
+  it("a prepare that resolves in time clears its timeout", async () => {
+    const timers = makeFakeTimers();
+    const { adapter, calls } = recordingAdapter();
+    const result = await spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), {
+      ...quiet,
+      ...timers,
+      spawn: finishingSpawn(calls).spawn,
+    });
+    expect(result.spawnError).toBeUndefined();
+    expect(timers.pendingCount()).toBe(0);
+  });
+
+  it("an inspect that never resolves: after INSPECT_TIMEOUT_MS, an infra inspect denial, then teardown", async () => {
+    const timers = makeFakeTimers();
+    const { adapter, calls } = recordingAdapter();
+    adapter.inspect = (_h, exitCode) => {
+      calls.push(`inspect:${exitCode}`);
+      return new Promise(() => {});
+    };
+    const errors: string[] = [];
+    let result: Awaited<ReturnType<typeof spawnClaudeRun>> | null = null;
+    const pending = spawnClaudeRun(makeOpts({ sandbox: { adapter, run } }), {
+      ...quiet,
+      ...timers,
+      logError: (m) => errors.push(m),
+      spawn: finishingSpawn(calls).spawn,
+    }).then((r) => (result = r));
+    for (let i = 0; i < 5; i++) await flush();
+    expect(calls).toEqual(["prepare", "wrap", "spawn", "inspect:0"]);
+    timers.advance(INSPECT_TIMEOUT_MS - 1);
+    await flush();
+    expect(result).toBeNull();
+    expect(calls).not.toContain("teardown");
+    timers.advance(1);
+    await pending;
+
+    expect(result!.sandbox?.report).toEqual({ denied: [{ kind: "infra", target: "inspect" }] });
+    expect(calls.at(-1)).toBe("teardown");
+    expect(errors.some((m) => m.includes("sandbox inspect failed: timed out after 60s"))).toBe(true);
+    expect(timers.pendingCount()).toBe(0);
   });
 
   it("result.sandbox carries adapter, instance, prepare_ms and the report", async () => {

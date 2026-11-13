@@ -47,7 +47,12 @@ import { redactSensitive } from "./redact.ts";
 import type { ExecutorVerdict } from "./types.ts";
 import type { RunSandboxSpec, SandboxAdapter, SandboxHandle, SandboxReport, WrappedSpawn } from "../sandbox/types.ts";
 
-/** `terminal_reason` values of a successful run (every real local run reported "completed"). */
+/**
+ * `terminal_reason` values of a successful run (every real local run reported
+ * "completed"). Any other value is an agent_error, logged as an unknown
+ * terminal_reason. If a new Claude Code CLI adds a success reason, add it
+ * here (and to the "allows only ..." test in test/core/spawn-claude.test.ts).
+ */
 export const ALLOWED_TERMINAL_REASONS: readonly string[] = ["completed"];
 
 /** Grace period between SIGTERM and SIGKILL on a timeout kill. */
@@ -66,6 +71,37 @@ export const POST_KILL_GRACE_MS = 5_000;
  * process; past this, the wait is abandoned with a logged error.
  */
 export const TEARDOWN_GRACE_MS = 30_000;
+
+/** The longest a sandbox prepare may take; past it the run gets an infra `prepare` denial and never spawns. */
+export const PREPARE_TIMEOUT_MS = 300_000;
+
+/** The longest a sandbox inspect may take; past it the report is an infra `inspect` denial and teardown runs. */
+export const INSPECT_TIMEOUT_MS = 60_000;
+
+const TIMED_OUT = Symbol("timed out");
+
+/**
+ * Races `p` against a timer (the injected setTimeout); resolves TIMED_OUT
+ * when the timer wins. The timer is cleared when `p` settles first; a
+ * rejection of `p` propagates.
+ */
+function raceTimeout<T>(p: Promise<T>, ms: number, timers: Pick<Required<SpawnClaudeDeps>, "setTimeout" | "clearTimeout">): Promise<T | typeof TIMED_OUT> {
+  return new Promise<T | typeof TIMED_OUT>((resolve, reject) => {
+    const timer = timers.setTimeout(() => resolve(TIMED_OUT), ms);
+    p.then(
+      (v) => {
+        timers.clearTimeout(timer);
+        resolve(v);
+      },
+      (err: unknown) => {
+        timers.clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+const timedOutMessage = (ms: number): string => `timed out after ${ms / 1000}s`;
 
 export interface SpawnClaudeOpts {
   prompt: string;
@@ -597,9 +633,31 @@ export async function spawnClaudeRun(
     const t0 = deps.now().getTime();
     let handle: SandboxHandle;
     try {
-      handle = await adapter.prepare(run);
+      // Promise.resolve().then: a synchronous throw from a buggy adapter becomes a rejection.
+      const preparing = Promise.resolve().then(() => adapter.prepare(run));
+      const raced = await raceTimeout(preparing, PREPARE_TIMEOUT_MS, deps);
+      if (raced === TIMED_OUT) {
+        // The prepare may still finish: tear its instance down then, or it leaks.
+        // A late rejection has nothing to clean up. A prepare timeout is an
+        // all-infra park, so the worker usually pauses and exits first; the
+        // real backstop is cleanupOrphans on the next start.
+        preparing.then(
+          (late) =>
+            Promise.resolve()
+              .then(() => adapter.teardown(late))
+              .catch((err: unknown) => {
+                const message = err instanceof Error ? err.message : String(err);
+                deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: sandbox teardown of a late prepare failed: ${message}`);
+              }),
+          () => {},
+        );
+        throw new Error(timedOutMessage(PREPARE_TIMEOUT_MS));
+      }
+      handle = raced;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      // Redacted here, not only at print time: spawnError and approveHint
+      // also reach the iteration log and the desktop notification.
+      const message = redactSensitive(err instanceof Error ? err.message : String(err));
       const spawnError = `sandbox prepare failed: ${message}`;
       deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: spawn failed: ${spawnError}`);
       return {
@@ -665,7 +723,13 @@ export async function spawnClaudeRun(
     );
     if (prepared) {
       try {
-        report = await prepared.adapter.inspect(prepared.handle, outcome.exitCode);
+        const inspecting = Promise.resolve().then(() => prepared.adapter.inspect(prepared.handle, outcome.exitCode));
+        const raced = await raceTimeout(inspecting, INSPECT_TIMEOUT_MS, deps);
+        if (raced === TIMED_OUT) {
+          inspecting.catch(() => {});
+          throw new Error(timedOutMessage(INSPECT_TIMEOUT_MS));
+        }
+        report = raced;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         deps.logError(`[${deps.logPrefix}] ${opts.ticketKey}: sandbox inspect failed: ${message}`);
@@ -724,6 +788,11 @@ export async function spawnClaudeRun(
     const isError = parsedResult.is_error === true;
     const reason = typeof parsedResult.terminal_reason === "string" ? parsedResult.terminal_reason : undefined;
     resultError = { is_error: isError, ...(reason !== undefined ? { terminal_reason: reason } : {}) };
+    if (reason !== undefined && !ALLOWED_TERMINAL_REASONS.includes(reason)) {
+      deps.logError(
+        `[${deps.logPrefix}] ${opts.ticketKey}: unknown terminal_reason "${reason.slice(0, 100)}" -- treated as agent_error; if it is a new success reason, add it to ALLOWED_TERMINAL_REASONS (src/core/spawn-claude.ts)`,
+      );
+    }
     if (spawnError === undefined && !outcome.killedTimeout && (isError || (reason !== undefined && !ALLOWED_TERMINAL_REASONS.includes(reason)))) {
       spawnError = `claude reported a failed result (is_error=${isError}, terminal_reason=${reason})`;
     }

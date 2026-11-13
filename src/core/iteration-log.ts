@@ -9,6 +9,17 @@ import { resolveRepoPath, SESSION_ID, TICKET_KEY, v1PreCutoverRunsLog, v1RunsLog
 import type { SandboxDenial } from "../sandbox/types.ts";
 import type { FailureCategory, FollowUp, PhaseReached, Role, RunOutcome, SizeTrajectory } from "./types.ts";
 
+/** Which sandbox a run went through (spec §6). Instance names carry no PII, so they are logged as-is. */
+export interface RunSandboxMeta {
+  adapter: string;
+  instance: string;
+  prepare_ms: number;
+  /** Discover mode only, when the sandbox refused something but the run carried on. Targets redacted. */
+  denied?: SandboxDenial[];
+  /** Discover mode only, with `denied`: the adapter's allow hint (redacted). */
+  approveHint?: string;
+}
+
 export interface PhaseEntry {
   role: Role;
   skill: "ticket-refine" | "ticket-to-pr";
@@ -35,6 +46,8 @@ export interface PhaseEntry {
   /** Research entries with outcome landed only. */
   handoff?: "done" | "skipped-ceiling" | "failed";
   jira_sync_error?: string;
+  /** Set only when the run went through a sandbox adapter. */
+  sandbox?: RunSandboxMeta;
 }
 
 export type IterationOutcome =
@@ -67,6 +80,8 @@ export interface ParkedRun {
   /** Measured cost of the refused run (it is not in `phases`). */
   cost_usd: number;
   run_dir: string;
+  /** Set only when the run went through a sandbox adapter. */
+  sandbox?: RunSandboxMeta;
 }
 
 export interface IterationRecord {
@@ -103,6 +118,15 @@ function redactOpt(s: string | undefined): string | undefined {
   return s === undefined ? undefined : redactSensitive(s);
 }
 
+function redactSandboxMeta(m: RunSandboxMeta): RunSandboxMeta {
+  const { denied, approveHint, ...rest } = m;
+  return {
+    ...rest,
+    ...(denied !== undefined ? { denied: denied.map((d) => ({ ...d, target: redactSensitive(d.target) })) } : {}),
+    ...(approveHint !== undefined ? { approveHint: redactSensitive(approveHint) } : {}),
+  };
+}
+
 /** Append one JSON line (single appendFile call). Validates ticket/session; redacts free text. */
 export async function appendIteration(path: string, rec: IterationRecord): Promise<void> {
   if (typeof rec.ticket !== "string" || !TICKET_KEY.test(rec.ticket)) {
@@ -116,6 +140,7 @@ export async function appendIteration(path: string, rec: IterationRecord): Promi
     phases: rec.phases.map((p) => {
       const q: PhaseEntry = { ...p, detail: redactSensitive(p.detail) };
       if (p.jira_sync_error !== undefined) q.jira_sync_error = redactSensitive(p.jira_sync_error);
+      if (p.sandbox !== undefined) q.sandbox = redactSandboxMeta(p.sandbox);
       return q;
     }),
   };

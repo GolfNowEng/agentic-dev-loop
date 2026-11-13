@@ -18,7 +18,7 @@
  * set and not the root .env itself) -> REPO_DIR checks -> sandbox preflight
  * (selected adapter) -> credentials -> acquireSession (one live worker
  * per project; a second start names the live session and exits 1) ->
- * sandbox cleanupOrphans, scoped to `dl-<project>-` -> record the adopted
+ * sandbox cleanupOrphans, scoped to `dl-<len>-<project>-` -> record the adopted
  * in-flight runs -> loop. REPO_DIR must be absolute and
  * normalized, and may not be the dev-loop root, an ancestor of it, or inside
  * it (except the v2 clone dir). SIGINT/SIGTERM first stop the running
@@ -38,6 +38,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { envFileWarning } from "./core/env-file.ts";
@@ -66,7 +67,7 @@ import { checkAbsPath, checkRepoDirPlacement, repoDirFor, SKILL_NAME } from "./c
 import { killActiveChild, spawnClaudeRun } from "./core/spawn-claude.ts";
 import { notify } from "./core/notify.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
-import { makeRunSkill, sandboxInstancePrefix, sandboxMounts } from "./worker/skill-runner.ts";
+import { makeRunSkill, sandboxInstancePrefix, sandboxMounts, sandboxPreflightInstanceName } from "./worker/skill-runner.ts";
 import { reconcileMergedTickets } from "./roles/dev/reconcile.ts";
 import { loadResearchStance, REFINE_SKILL_MD_PATH } from "./roles/research/startup.ts";
 import pkg from "../package.json" with { type: "json" };
@@ -285,7 +286,16 @@ async function main(): Promise<void> {
   checkAbsPath("repo-dir", repoDirFor(config, slug));
   checkRepoDirPlacement(repoDirFor(config, slug), REPO_ROOT, resolveRepoPath(v2CloneDir(slug)));
   // Once at startup, before the lock: a throw exits 1 through the fatal path.
-  await sandboxSelection.adapter.preflight({ repoRoot: REPO_ROOT, mounts: sandboxMounts(REPO_ROOT, repoDirFor(config, slug)), config: sandboxSelection.config });
+  // Built only for a real sandbox, so a long slug never fails the default (none) path.
+  const preflightInstanceName =
+    sandboxSelection.adapter.name !== DEFAULT_ADAPTER ? sandboxPreflightInstanceName(slug, randomBytes(3).toString("hex")) : "";
+  await sandboxSelection.adapter.preflight({
+    repoRoot: REPO_ROOT,
+    mounts: sandboxMounts(REPO_ROOT, repoDirFor(config, slug)),
+    cwd: REPO_ROOT,
+    instanceName: preflightInstanceName,
+    config: sandboxSelection.config,
+  });
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();
@@ -338,7 +348,8 @@ async function main(): Promise<void> {
   try {
     // After the lock, never before: a refused second start must not remove
     // the live worker's sandboxes. Scoped to this project's name prefix. A
-    // throw releases the session through the finally below, then exits 1.
+    // throw exits 1 through the finally below, which releases the session
+    // only when canRelease() allows it; an adopted flight keeps the lock.
     await sandboxSelection.adapter.cleanupOrphans({ prefix: sandboxInstancePrefix(slug) });
     await runLoop(ctx, tracked, assigneeAccountId);
   } finally {

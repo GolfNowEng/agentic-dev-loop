@@ -28,6 +28,26 @@ const landedRec = (ticket: string): IterationRecord => ({
   ticket, session: "dev-1", loop_version: "2.0.0",
   started: "2026-11-11T01:00:00.000Z", ended: "2026-11-11T01:10:00.000Z", outcome: "landed", phases: [],
 });
+function discoveredRec(ticket: string, extra: Partial<IterationRecord> = {}, hint: string | null = "sbx policy allow network evil.example"): IterationRecord {
+  return {
+    ticket, session: "dev-1", loop_version: "2.0.0",
+    started: "2026-11-11T02:00:00.000Z", ended: "2026-11-11T02:30:00.000Z", outcome: "landed",
+    phases: [
+      {
+        role: "dev", skill: "ticket-to-pr", skill_version: "x", model: "sonnet",
+        started: "2026-11-11T02:00:00.000Z", ended: "2026-11-11T02:20:00.000Z",
+        outcome: "landed", phase_reached: "pr", cost_usd: 1, tokens: { in: 1, out: 1 }, failure_category: null,
+        detail: "ok", pr: null, run_dir: "d",
+        sandbox: {
+          adapter: "fake", instance: "dl-x", prepare_ms: 5,
+          denied: [{ kind: "network", target: "evil.example" }],
+          ...(hint !== null ? { approveHint: hint } : {}),
+        },
+      },
+    ],
+    ...extra,
+  };
+}
 const jsonl = (xs: object[]) => xs.map((x) => JSON.stringify(x)).join("\n") + "\n";
 
 describe("scripts/sandbox-approvals.mjs", () => {
@@ -70,6 +90,39 @@ describe("scripts/sandbox-approvals.mjs", () => {
     const { stdout } = await exec();
     expect(stdout).not.toContain("to allow");
     expect(stdout).toContain("then: npm run sandbox:approvals -- --clear=TARS-1");
+  });
+
+  it("lists discover-mode denials from the latest record's phases, after the no-parked line", async () => {
+    await writeFile(log, jsonl([discoveredRec("TARS-3")]));
+    const { stdout } = await exec();
+    expect(stdout).toBe(
+      [
+        `No parked tickets in ${log}.`,
+        "",
+        "Discovered in discover mode (not parked):",
+        "TARS-3 (dev, 2026-11-11T02:20:00.000Z):",
+        "  refused: network evil.example",
+        "  to allow (run these yourself): sbx policy allow network evil.example",
+        "",
+      ].join("\n"),
+    );
+    expect(stdout).not.toContain("--clear=TARS-3");
+  });
+
+  it("reports both parked and discovered sections; omits the allow line without a hint", async () => {
+    await writeFile(log, jsonl([parkedRec("TARS-1", "dev"), discoveredRec("TARS-3", {}, null)]));
+    const { stdout } = await exec();
+    expect(stdout).toContain("then: npm run sandbox:approvals -- --clear=TARS-1");
+    expect(stdout).not.toContain("No parked tickets");
+    const disc = stdout.slice(stdout.indexOf("Discovered in discover mode (not parked):"));
+    expect(disc).toBe(["Discovered in discover mode (not parked):", "TARS-3 (dev, 2026-11-11T02:20:00.000Z):", "  refused: network evil.example", ""].join("\n"));
+  });
+
+  it("only the ticket's latest record counts for the discovered section", async () => {
+    const later = { ...landedRec("TARS-3"), started: "2026-11-11T03:00:00.000Z", ended: "2026-11-11T03:10:00.000Z" };
+    await writeFile(log, jsonl([discoveredRec("TARS-3"), later]));
+    const { stdout } = await exec();
+    expect(stdout.trim()).toBe(`No parked tickets in ${log}.`);
   });
 
   it("--clear=<KEY> appends an unparked record that resumes the parked role", async () => {
