@@ -15,8 +15,8 @@ History before 2.0.0 lives in two files, one per former repo:
 
 ## [Unreleased — 2.2.0] — planned
 
-Steps 1–2 built (plan 2026-11-12-sandbox-adapter-foundation.md); the sbx
-adapter is pending. Design:
+Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
+sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
 - `[core]` Node 24 is now the minimum (engines >=24.0.0); a sandbox's node
@@ -46,10 +46,27 @@ adapter is pending. Design:
   `parked` before verdict.json is read; discover mode logs it and carries
   on. The adapter's preflight runs once before the session lock; its
   orphan cleanup runs once after the lock, scoped to `dl-<len>-<project>-`.
-- `[core]` Planned (step 3, not built): the first real adapter, `sbx`
-  (Docker Sandboxes with the Keystone kit). Everything sbx-specific will
-  live in `src/sandbox/sbx/`, so it can be removed, or another sandbox
-  added, without touching the loop.
+- `[core]` The `sbx` adapter (Docker Sandboxes with the Keystone kit):
+  each agent run gets its own sandbox with only the repo folders mounted,
+  and a blocked network host is logged and parked with a printed
+  `sbx policy allow` line, never run for you. Preflight refuses a mount
+  path whose case differs from the disk, a kit dir with no yaml, a
+  sandbox without the host's node major, and a missing GitHub login.
+  Config: `sandbox.sbx` `kitDir`, `memory`, `envAllow`. Setup:
+  [docs/sandbox-sbx.md](docs/sandbox-sbx.md). Everything sbx-specific
+  lives in `src/sandbox/sbx/`.
+- `[core]` Sandbox prepare now times out after 300 s and the denial
+  inspection after 60 s; both become infra denials instead of hanging.
+- `[core]` When every refusal in a parked run is infra (daemon down,
+  prepare failed), the worker pauses instead of parking ticket after
+  ticket.
+- `[core]` Run-log phase entries and parked records carry
+  `sandbox: {adapter, instance, prepare_ms}`.
+- `[core]` An unknown `terminal_reason` is logged with the instruction to
+  add it to `ALLOWED_TERMINAL_REASONS` if it is a new success reason.
+- `[core]` Sandbox instance names are capped at 63 characters (sbx's
+  limit); a project name that makes the prefix longer than 56 characters
+  fails at startup. The prepare failure message is redacted.
 
 ## [2.1.0] — 2026-11-12
 

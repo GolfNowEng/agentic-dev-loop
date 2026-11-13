@@ -1,6 +1,6 @@
 # Sandboxed agent spawns: a pluggable sandbox adapter (first adapter: sbx)
 
-Status: Steps 1–2 built (plan 2026-11-12-sandbox-adapter-foundation.md); step 3+ pending the open user questions.
+Status: Steps 1–2 built (plan 2026-11-12-sandbox-adapter-foundation.md); step 3 built (sbx adapter, not yet dogfooded); step 4 (user setup) and later pending.
 Date: 2026-11-12. It builds on the sbx spike (same day) and the 2.0.0 design
 (`2026-11-10-dev-loop-v2-design.md`, §7 claim, §8 batch).
 
@@ -389,12 +389,12 @@ on this Mac at about 3–4 concurrent sandboxed runs.
 
 Requirements found during the foundation build:
 
-- (a) On the timeout and kill paths, teardown starts before inspect. The sbx adapter must make inspect work on a torn-down instance, or have teardown snapshot the denial report first. Consider adding this to the contract suite.
-- (b) A signal during prepare leaves the instance behind, and cleanupOrphans is the backstop.
-- (c) `sandboxInstanceName` is now sanitized to `[a-z0-9-]` and carries `<len>-<project>`, but has no length cap. Confirm sbx's naming rules and cap the length if needed.
-- (d) `TEARDOWN_GRACE_MS` (30s) bounds the teardown wait. An abandoned teardown keeps running, and cleanupOrphans cleans it up.
-- (e) The registry test pins `adapterNames()` to `["none"]`. Update it when sbx registers.
-- (f) An all-infra refusal (daemon down, prepare throws) is not ticket-specific; parking ticket after ticket walks the queue (each claimed + notified). Step 3 must make an all-infra report pause the worker instead (or in addition to parking).
-- (g) prepare / inspect / preflight / cleanupOrphans have no timeout; runTimeoutMin starts only in runChild. Add a prepare timeout that becomes an infra denial.
-- (h) Spec §6 run-log `sandbox: {adapter, instance, prepare_ms}` is built on SpawnClaudeResult but not persisted; carry it onto the PhaseEntry / parked record.
-- (i) ALLOWED_TERMINAL_REASONS is one value; a new success reason from a future CLI would turn every run into agent_error. Log unknown reasons prominently; document how to extend the list.
+- (a) On the timeout and kill paths, teardown starts before inspect. The sbx adapter must make inspect work on a torn-down instance, or have teardown snapshot the denial report first. Consider adding this to the contract suite. Resolved: `inspect` runs `sbx policy log`, which answers for a removed sandbox (`src/sandbox/sbx/adapter.ts`).
+- (b) A signal during prepare leaves the instance behind, and cleanupOrphans is the backstop. Resolved: `cleanupOrphans` is the backstop (`src/sandbox/sbx/adapter.ts`).
+- (c) `sandboxInstanceName` is now sanitized to `[a-z0-9-]` and carries `<len>-<project>`, but has no length cap. Confirm sbx's naming rules and cap the length if needed. Resolved: names capped at 63 chars, with a startup error for a prefix over 56 chars.
+- (d) `TEARDOWN_GRACE_MS` (30s) bounds the teardown wait. An abandoned teardown keeps running, and cleanupOrphans cleans it up. Resolved: `cleanupOrphans` is the backstop.
+- (e) The registry test pins `adapterNames()` to `["none"]`. Update it when sbx registers. Resolved: the registry test now pins `["none","sbx"]`.
+- (f) An all-infra refusal (daemon down, prepare throws) is not ticket-specific; parking ticket after ticket walks the queue (each claimed + notified). Step 3 must make an all-infra report pause the worker instead (or in addition to parking). Resolved: an all-infra park pauses the worker (`src/worker/cycle.ts`).
+- (g) prepare / inspect / preflight / cleanupOrphans have no timeout; runTimeoutMin starts only in runChild. Add a prepare timeout that becomes an infra denial. Resolved: `PREPARE_TIMEOUT_MS` 300 s and `INSPECT_TIMEOUT_MS` 60 s, both infra denials (`src/core/spawn-claude.ts`).
+- (h) Spec §6 run-log `sandbox: {adapter, instance, prepare_ms}` is built on SpawnClaudeResult but not persisted; carry it onto the PhaseEntry / parked record. Resolved: `sandbox` metadata is on `PhaseEntry` and `ParkedRun` (`src/core/types.ts`).
+- (i) ALLOWED_TERMINAL_REASONS is one value; a new success reason from a future CLI would turn every run into agent_error. Log unknown reasons prominently; document how to extend the list. Resolved: an unknown `terminal_reason` is logged with the extend instruction (`src/core/spawn-claude.ts`).

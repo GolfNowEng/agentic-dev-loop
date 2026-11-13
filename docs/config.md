@@ -194,10 +194,20 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
 "sandbox": { "adapter": "none", "mode": "enforce" }
 ```
 
-- `adapter` — a registered adapter name (currently only `none`). Default `none`.
+- `adapter` — a registered adapter name (`none` or `sbx`). Default `none`.
 - `mode` — `"discover"` or `"enforce"`. Default `"enforce"`.
 - An adapter's own sub-block is keyed by its name (`sandbox.<adapter>`) and
   validated by that adapter; errors are prefixed `sandbox.<adapter>: `.
+- `sandbox.sbx` (adapter `sbx`, Docker Sandboxes) takes:
+  - `kitDir` — required, an absolute path to the Keystone kit folder (must
+    hold a kit `.yaml`).
+  - `memory` — optional, e.g. `"4g"` or `"512m"`.
+  - `envAllow` — optional list of bare env var names to pass into the
+    sandbox, added to the defaults (the three `ANTHROPIC_DEFAULT_*_MODEL`
+    names and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`). Secret-shaped names
+    (`TOKEN`, `SECRET`, `KEY`, `PASSWORD`, `AUTH`) are refused.
+
+  Setup steps: [sandbox-sbx.md](sandbox-sbx.md).
 - Any other key is rejected (`sandbox: unknown key "<k>"`).
 - CLI precedence: `--sandbox=<name>` wins over `sandbox.adapter`.
   `--sandbox=none` is the per-run off switch. An unknown name fails at
@@ -389,10 +399,20 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
 "sandbox": { "adapter": "none", "mode": "enforce" }
 ```
 
-- `adapter` — a registered adapter name (currently only `none`). Default `none`.
+- `adapter` — a registered adapter name (`none` or `sbx`). Default `none`.
 - `mode` — `"discover"` or `"enforce"`. Default `"enforce"`.
 - An adapter's own sub-block is keyed by its name (`sandbox.<adapter>`) and
   validated by that adapter; errors are prefixed `sandbox.<adapter>: `.
+- `sandbox.sbx` (adapter `sbx`, Docker Sandboxes) takes:
+  - `kitDir` — required, an absolute path to the Keystone kit folder (must
+    hold a kit `.yaml`).
+  - `memory` — optional, e.g. `"4g"` or `"512m"`.
+  - `envAllow` — optional list of bare env var names to pass into the
+    sandbox, added to the defaults (the three `ANTHROPIC_DEFAULT_*_MODEL`
+    names and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`). Secret-shaped names
+    (`TOKEN`, `SECRET`, `KEY`, `PASSWORD`, `AUTH`) are refused.
+
+  Setup steps: [sandbox-sbx.md](sandbox-sbx.md).
 - Any other key is rejected (`sandbox: unknown key "<k>"`).
 - CLI precedence: `--sandbox=<name>` wins over `sandbox.adapter`.
   `--sandbox=none` is the per-run off switch. An unknown name fails at
