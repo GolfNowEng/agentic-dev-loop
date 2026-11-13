@@ -72,9 +72,18 @@ export function sandboxInstancePrefix(project: string): string {
   return `dl-${part.length}-${part}-`;
 }
 
+/** Docker-style name limit. */
+const MAX_INSTANCE_NAME = 63;
+
 /** `dl-<len>-<project>-<ticket lowercased>-<role>-<shortId>`, sanitized to [a-z0-9-], e.g. dl-12-webtarsthree-tars-1-dev-a1b2c3. */
 export function sandboxInstanceName(project: string, ticketKey: string, role: Role, shortId: string): string {
-  return sandboxNamePart(`${sandboxInstancePrefix(project)}${ticketKey}-${role}-${shortId}`);
+  const prefix = sandboxInstancePrefix(project);
+  const tail = sandboxNamePart(`-${shortId}`);
+  const middle = sandboxNamePart(`${ticketKey}-${role}`);
+  const room = Math.max(0, MAX_INSTANCE_NAME - prefix.length - tail.length);
+  // Over the cap: trim only the ticket-role middle, then drop a dangling "-".
+  const kept = middle.length > room ? middle.slice(0, room).replace(/-+$/, "") : middle;
+  return kept ? `${prefix}${kept}${tail}` : `${prefix}${tail.slice(1)}`;
 }
 
 /**
