@@ -117,6 +117,24 @@ describe("appendIteration / readIterations", () => {
     expect(r.parked).toMatchObject({ role: "dev", failure_category: "sandbox_denied", cost_usd: 0.5, run_dir: "d" });
   });
 
+  it("appendIteration keeps sandbox {adapter, instance, prepare_ms} on phases and parked records verbatim", async () => {
+    const f = join(await tmp(), "log.jsonl");
+    const meta = { adapter: "fake", instance: "dl-12-webtarsthree-tars-1-dev-a1b2c3", prepare_ms: 1234 };
+    await appendIteration(f, rec({ phases: [phase({ sandbox: meta })] }));
+    await appendIteration(
+      f,
+      rec({
+        outcome: "parked",
+        phases: [],
+        resume: "dev",
+        parked: { role: "dev", failure_category: "sandbox_denied", denied: [{ kind: "infra", target: "prepare" }], cost_usd: 0, run_dir: "d", sandbox: meta },
+      }),
+    );
+    const [a, b] = await readIterations(f);
+    expect(a.phases[0].sandbox).toEqual(meta);
+    expect(b.parked!.sandbox).toEqual(meta);
+  });
+
   it("skips blank lines and a truncated final line", async () => {
     const f = join(await tmp(), "log.jsonl");
     await appendIteration(f, rec());

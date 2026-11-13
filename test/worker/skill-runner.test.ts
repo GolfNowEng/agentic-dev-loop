@@ -312,6 +312,47 @@ describe("makeRunSkill", () => {
       }
     });
 
+    it("enforce + all-infra denials: parked with allInfra true", async () => {
+      const infra: SandboxDenial[] = [{ kind: "infra", target: "prepare" }];
+      result = withReport(infra, { spawnError: "sandbox prepare failed: boom" });
+      const r = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(r.parked).toEqual({ denied: infra, approveHint: "approve evil.example", allInfra: true });
+    });
+
+    it("enforce + mixed network and infra denials: parked without allInfra", async () => {
+      const mixed: SandboxDenial[] = [...denied, { kind: "infra", target: "inspect" }];
+      result = withReport(mixed);
+      const r = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(r.parked?.denied).toEqual(mixed);
+      expect(r.parked && "allInfra" in r.parked).toBe(false);
+    });
+
+    it("carries sandbox {adapter, instance, prepare_ms} (no report) on parked, normal and early results", async () => {
+      const meta = { adapter: "fake", instance: "dl-x", prepare_ms: 5 };
+      result = withReport(denied);
+      const parked = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(parked.sandbox).toEqual(meta);
+
+      result = withReport([]);
+      onSpawn = writeVerdict;
+      const normal = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(normal.sandbox).toEqual(meta);
+
+      onSpawn = async () => {};
+      for (const role of ["dev", "research"] as const) {
+        result = withReport([], { spawnError: "claude exited 1" });
+        const early = await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role, ticketKey: "TARS-1", runDir: runDir(role), maxBudgetUsd: 20 });
+        expect(early.verdictRaw).toBeDefined();
+        expect(early.sandbox).toEqual(meta);
+      }
+    });
+
+    it("no sandbox key on the result when the spawn was not sandboxed", async () => {
+      onSpawn = writeVerdict;
+      const r = await makeRunSkill(deps())({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect("sandbox" in r).toBe(false);
+    });
+
     it("enforce + empty denied report: normal path, no parked", async () => {
       result = withReport([]);
       onSpawn = writeVerdict;

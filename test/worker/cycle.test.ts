@@ -1285,6 +1285,27 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
     });
   });
 
+  describe("sandbox metadata on phase entries (spec 6)", () => {
+    it("each PhaseEntry carries sandbox {adapter, instance, prepare_ms} when its run was sandboxed", async () => {
+      const r = { adapter: "fake", instance: "dl-4-repo-tars-1-research-aaaaaa", prepare_ms: 900 };
+      const d = { adapter: "fake", instance: "dl-4-repo-tars-1-dev-bbbbbb", prepare_ms: 1100 };
+      h = await harness({ script: { research: [{ sandbox: r }], dev: [{ sandbox: d }] } });
+      h.jira.research = [ticket("TARS-1")];
+      await runWorkerIteration(h.deps);
+      const [rec0] = await records(h);
+      expect(rec0.phases.map((p) => p.sandbox)).toEqual([r, d]);
+    });
+
+    it("an unsandboxed PhaseEntry has no sandbox key", async () => {
+      h = await harness({ script: { dev: [{}] } });
+      h.jira.dev = [devTicket("TARS-3")];
+      await runWorkerIteration(h.deps);
+      const [rec0] = await records(h);
+      expect(rec0.phases).toHaveLength(1);
+      expect("sandbox" in rec0.phases[0]).toBe(false);
+    });
+  });
+
   describe("parked: an enforcing sandbox refused the run (spec 4.6)", () => {
     const denied = [{ kind: "network" as const, target: "evil.example" }];
     const parkedStep = (o: Record<string, unknown> = {}) => ({
@@ -1424,6 +1445,65 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
       h = await harness({ script: { dev: [parkedStep({ costUsd: 19 })] } });
       h.jira.dev = [devTicket("TARS-3")];
       expect((await runWorkerIteration(h.deps)).kind).toBe("did");
+    });
+
+    it("an all-infra park writes one parked record, notifies, then pauses the worker naming the --clear command", async () => {
+      const notify = vi.fn();
+      const infra = [{ kind: "infra" as const, target: "prepare" }];
+      h = await harness({
+        script: { dev: [parkedStep({ parked: { denied: infra, approveHint: "sandbox prepare failed: daemon down", allInfra: true } })] },
+        deps: { notify },
+      });
+      h.jira.dev = [devTicket("TARS-3"), devTicket("TARS-4")];
+
+      const result = await runWorkerIteration(h.deps);
+
+      const recs = await records(h);
+      expect(recs).toHaveLength(1);
+      expect(recs[0]).toMatchObject({ ticket: "TARS-3", outcome: "parked", resume: "dev", parked: { role: "dev", denied: infra } });
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(result.kind).toBe("paused");
+      if (result.kind === "paused") {
+        expect(result.reason).toMatch(/^sandbox infrastructure failed:/);
+        expect(result.reason).toContain("npm run sandbox:approvals -- --clear=TARS-3");
+        expect(result.record).toEqual(recs[0]);
+      }
+      expect(runSkillCalls(h)).toHaveLength(1);
+    });
+
+    it("an all-infra park with a lost session lock pauses with the lock reason (fatal first)", async () => {
+      const infra = [{ kind: "infra" as const, target: "prepare" }];
+      h = await harness({
+        script: { dev: [parkedStep({ parked: { denied: infra, allInfra: true } })] },
+        session: makeSession("dev-1", null, [], (f, n) => f === null && n === 2),
+      });
+      h.jira.dev = [devTicket("TARS-3")];
+      const result = await runWorkerIteration(h.deps);
+      expect(result.kind).toBe("paused");
+      if (result.kind === "paused") expect(result.reason).toMatch(/session's in-flight record/);
+    });
+
+    it("a mixed network + infra park returns did, as before", async () => {
+      const mixed = [...denied, { kind: "infra" as const, target: "inspect" }];
+      h = await harness({ script: { dev: [parkedStep({ parked: { denied: mixed } })] } });
+      h.jira.dev = [devTicket("TARS-3")];
+      const result = await runWorkerIteration(h.deps);
+      expect(result.kind).toBe("did");
+    });
+
+    it("the parked record carries sandbox {adapter, instance, prepare_ms} when the run was sandboxed", async () => {
+      const meta = { adapter: "fake", instance: "dl-4-repo-tars-3-dev-a1b2c3", prepare_ms: 1200 };
+      h = await harness({ script: { dev: [parkedStep({ sandbox: meta })] } });
+      h.jira.dev = [devTicket("TARS-3")];
+      await runWorkerIteration(h.deps);
+      expect((await records(h))[0].parked!.sandbox).toEqual(meta);
+    });
+
+    it("a parked record without sandbox metadata has no sandbox key", async () => {
+      h = await harness({ script: { dev: [parkedStep()] } });
+      h.jira.dev = [devTicket("TARS-3")];
+      await runWorkerIteration(h.deps);
+      expect("sandbox" in (await records(h))[0].parked!).toBe(false);
     });
 
     it("a parked run makes no Jira transition or comment", async () => {
