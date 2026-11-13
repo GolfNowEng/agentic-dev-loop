@@ -324,6 +324,14 @@ describe("sandboxInstanceName", () => {
   it("turns any char outside [a-z0-9-] into -", () => {
     expect(sandboxInstanceName("my_proj.x", "AB_C-1", "dev", "a1b2c3")).toBe("dl-9-my-proj-x-ab-c-1-dev-a1b2c3");
   });
+  it("caps at 63 chars by trimming the ticket-role middle, keeping prefix and shortId", () => {
+    const project = "p".repeat(40);
+    const name = sandboxInstanceName(project, "ABCDEFGHIJ-123456", "research", "a1b2c3");
+    expect(name.length).toBeLessThanOrEqual(63);
+    expect(name.startsWith(sandboxInstancePrefix(project))).toBe(true);
+    expect(name.endsWith("-a1b2c3")).toBe(true);
+    expect(name).toMatch(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/);
+  });
   it("starts with sandboxInstancePrefix(project), so cleanup scope and names cannot drift", () => {
     for (const project of ["webtarsthree", "my_proj.x"]) {
       expect(sandboxInstanceName(project, "TARS-1", "dev", "a1b2c3").startsWith(sandboxInstancePrefix(project))).toBe(true);
