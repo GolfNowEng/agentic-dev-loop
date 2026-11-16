@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll } from "vitest";
-import { CREATE_TIMEOUT_MS, makeSbxAdapter } from "../../../src/sandbox/sbx/adapter.ts";
+import { CREATE_TIMEOUT_MS, createArgs, makeSbxAdapter } from "../../../src/sandbox/sbx/adapter.ts";
 import type { SbxResult, SbxRunner } from "../../../src/sandbox/sbx/run.ts";
 import type { SandboxHandle } from "../../../src/sandbox/types.ts";
 
@@ -544,5 +544,58 @@ describe("helpers shared with scripts/sbx.mjs", () => {
     expect(allowHintLines(log)).toEqual(["sbx policy allow network a.example", "(not shown: a blocked host with unexpected characters)"]);
     expect(allowHintLines("not json")).toBeUndefined();
     expect(allowHintLines(JSON.stringify({ blocked: [] }))).toEqual([]);
+  });
+});
+
+describe("sbx adapter: static MCP servers (sandbox.sbx.mcp)", () => {
+  it("createArgs passes --static-mcp with the configured names", () => {
+    expect(createArgs("n", { kitDir: "/k", envAllow: [], mcp: ["atlassian", "notion"] }, ["/m"])).toEqual([
+      "create", "--name", "n", "--no-progress", "--no-input", "--static-mcp", "atlassian,notion", "claude", "--kit", "/k", "/m",
+    ]);
+    expect(createArgs("n", { kitDir: "/k", envAllow: [] }, ["/m"])).not.toContain("--static-mcp");
+  });
+
+  const tmp = mkdtempSync(join(tmpdir(), "sbx-mcp-"));
+  writeFileSync(join(tmp, "spec.yaml"), "name: kit\n");
+  afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+  const R = "fandango/webtarsthree";
+  const GOOD_EXEC = ok(`v24.3.0\ngit version 2.47.0\njq-1.7.1\ndl-step:direnv\n2.32.1\ndl-step:git\ndl-step:gh\n${R}\n`);
+  const pf = (mcpLs: SbxResult) => {
+    const f = fakeRunner((args) => (args[0] === "mcp" ? mcpLs : args[0] === "exec" ? GOOD_EXEC : ok()));
+    const p = makeSbxAdapter({ run: f.run, realpath: (p) => p, hostNodeMajor: 24, env: FULL_ENV }).preflight({
+      repoRoot: "/abs/root",
+      mounts: ["/abs/root"],
+      cwd: "/abs/root",
+      instanceName: "dl-12-webtarsthree-preflight-abc123",
+      githubRepo: R,
+      config: { kitDir: tmp, envAllow: [], mcp: ["atlassian"] },
+    });
+    return { p, f };
+  };
+  const ls = (servers: unknown) => ok(JSON.stringify(servers));
+
+  it("passes when every configured server is registered and ready, checked before any sandbox is created", async () => {
+    const { p, f } = pf(ls([{ name: "atlassian", status: "ready" }]));
+    await expect(p).resolves.toBeUndefined();
+    const first = f.calls.findIndex((c) => c.args[0] === "mcp");
+    expect(f.calls[first].args).toEqual(["mcp", "ls", "--json"]);
+    expect(first).toBeLessThan(f.calls.findIndex((c) => c.args[0] === "create"));
+  });
+
+  it("refuses an unregistered server, naming the add and auth commands", async () => {
+    const { p, f } = pf(ls([]));
+    await expect(p).rejects.toThrow(/MCP server "atlassian" is not registered with sbx: run sbx mcp add atlassian --url <url>, then sbx mcp auth atlassian/);
+    expect(f.calls.some((c) => c.args[0] === "create")).toBe(false);
+  });
+
+  it("refuses a registered server that is not ready, naming its status and the auth command", async () => {
+    await expect(pf(ls([{ name: "atlassian", status: "needs auth" }])).p).rejects.toThrow(
+      /MCP server "atlassian" is "needs auth", not ready: run sbx mcp auth atlassian/,
+    );
+  });
+
+  it("fails closed when sbx mcp ls can't be read", async () => {
+    await expect(pf({ code: 1, stdout: "", stderr: "daemon down", timedOut: false }).p).rejects.toThrow(/sbx preflight failed \(sbx mcp ls\): daemon down/);
+    await expect(pf(ok("not json")).p).rejects.toThrow(/sbx preflight failed \(sbx mcp ls\)/);
   });
 });

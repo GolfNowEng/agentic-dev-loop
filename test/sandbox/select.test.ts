@@ -53,3 +53,10 @@ describe("webtarsthree: sbx is opt-in per run", () => {
     expect(pkg.scripts["sbx:preflight"]).toContain("--sandbox=sbx");
   });
 });
+
+describe("webtarsthree: the sandbox gets the Atlassian MCP", () => {
+  it("sandbox.sbx.mcp lists atlassian (the skills read Jira through it)", async () => {
+    const w = await loadConfig(join(import.meta.dirname, "..", "..", "pipeline.webtarsthree.config.json"));
+    expect(selectSandbox(w, "sbx").config).toMatchObject({ mcp: ["atlassian"] });
+  });
+});

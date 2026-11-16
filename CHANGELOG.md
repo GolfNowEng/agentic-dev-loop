@@ -19,6 +19,11 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[core]` sbx: `sandbox.sbx.mcp` (webtarsthree: `["atlassian"]`) passes
+  `--static-mcp`, so the sandboxed agent has Jira tools. The first sandboxed
+  run (TARS-1634) failed at intake with "MCP gateway permission denied":
+  the host's MCP config isn't mounted. Preflight now checks `sbx mcp ls`
+  and refuses a listed server that is unregistered or not ready.
 - `[core]` `--sandbox=sbx` opens the sbx dashboard in a new Terminal window
   after preflight passes (macOS, interactive runs, none already open), so
   one command starts both. `--no-dashboard` skips it; a failure only logs.

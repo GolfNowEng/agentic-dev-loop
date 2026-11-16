@@ -34,7 +34,8 @@
     "sbx": {
       "kitDir": "~/Desktop/Repos/keystone-bedrock-kit",
       "template": "docker.io/library/dev-loop-sbx:v2",
-      "memory": "4g"
+      "memory": "4g",
+        "mcp": ["atlassian"]
     }
   }
 }

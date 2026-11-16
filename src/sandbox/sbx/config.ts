@@ -9,6 +9,8 @@ export interface SbxConfig {
   /** A saved `sbx template save` image; created with `-t <ref> --pull never`. */
   template?: string;
   envAllow: string[];
+  /** MCP servers registered with `sbx mcp add`, passed as `--static-mcp` (the agent's Jira tools come through here). */
+  mcp?: string[];
 }
 
 export const DEFAULT_ENV_ALLOW = [
@@ -18,7 +20,9 @@ export const DEFAULT_ENV_ALLOW = [
   "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS",
 ];
 
-const KNOWN = new Set(["kitDir", "memory", "template", "envAllow"]);
+const KNOWN = new Set(["kitDir", "memory", "template", "envAllow", "mcp"]);
+/** An sbx MCP server name: never a flag, no comma (--static-mcp takes a comma list). */
+const MCP_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /** An OCI-style image reference: no spaces or shell characters, never a flag. */
 const IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._\/:@-]*$/;
 const SECRET_SHAPED = /TOKEN|SECRET|KEY|PASSWORD|AUTH/i;
@@ -57,5 +61,10 @@ export function validateSbxConfig(raw: unknown): SbxConfig {
     if (SECRET_SHAPED.test(n)) throw new Error(`sandbox.sbx: envAllow may not pass "${n}" (secret-shaped)`);
   }
   cfg.envAllow = [...new Set([...DEFAULT_ENV_ALLOW, ...(extra as string[])])];
+  if (o.mcp !== undefined) {
+    if (!Array.isArray(o.mcp) || o.mcp.some((n) => typeof n !== "string")) throw new Error("sandbox.sbx: mcp must be an array of MCP server names");
+    for (const n of o.mcp as string[]) if (!MCP_NAME.test(n)) throw new Error(`sandbox.sbx: mcp entry "${n}" must be a server name`);
+    cfg.mcp = [...new Set(o.mcp as string[])];
+  }
   return cfg;
 }

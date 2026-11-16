@@ -61,6 +61,7 @@ function sbxConfig(raw: unknown): SbxConfig {
     envAllow: Array.isArray(o.envAllow) ? o.envAllow : [],
     ...(o.memory !== undefined ? { memory: o.memory } : {}),
     ...(o.template !== undefined ? { template: o.template } : {}),
+    ...(Array.isArray(o.mcp) ? { mcp: o.mcp } : {}),
   };
 }
 
@@ -68,6 +69,8 @@ export function createArgs(name: string, cfg: SbxConfig, mounts: string[]): stri
   return [
     "create", "--name", name, "--no-progress", "--no-input",
     ...(cfg.memory ? ["--memory", cfg.memory] : []),
+    // Registered with `sbx mcp add` (yours to do); the sandbox can't see the host's MCP config.
+    ...(cfg.mcp && cfg.mcp.length > 0 ? ["--static-mcp", cfg.mcp.join(",")] : []),
     // A saved local template must not be pulled; the kit still supplies network policy and credentials.
     ...(cfg.template ? ["-t", cfg.template, "--pull", "never"] : []),
     "claude", "--kit", cfg.kitDir, ...mounts,
@@ -135,6 +138,25 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
     throw new Error(`sbx rm failed (${why(r)}): ${firstLine(r.stderr)}`);
   }
 
+  /** Every configured MCP server is registered with sbx and ready (signed in). Fails closed. */
+  async function checkMcp(names: string[]): Promise<void> {
+    const r = await run(["mcp", "ls", "--json"]);
+    let list: { name?: unknown; status?: unknown }[];
+    try {
+      if (r.timedOut || r.code !== 0) throw new Error(firstLine(r.stderr) || why(r));
+      const parsed = JSON.parse(r.stdout) as unknown;
+      if (!Array.isArray(parsed)) throw new Error("not a list");
+      list = parsed as { name?: unknown; status?: unknown }[];
+    } catch (err) {
+      throw new Error(`sbx preflight failed (sbx mcp ls): ${err instanceof Error ? err.message : String(err)}`);
+    }
+    for (const n of names) {
+      const s = list.find((e) => e?.name === n);
+      if (!s) throw new Error(`MCP server "${n}" is not registered with sbx: run sbx mcp add ${n} --url <url>, then sbx mcp auth ${n} (see docs/sandbox-sbx.md)`);
+      if (s.status !== "ready") throw new Error(`MCP server "${n}" is ${JSON.stringify(String(s.status))}, not ready: run sbx mcp auth ${n}`);
+    }
+  }
+
   return {
     name: "sbx",
 
@@ -180,6 +202,8 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
       }
       // Missing or unreadable: same refusal as an empty dir.
       if (!listDir(cfg.kitDir).some((e) => e.endsWith(".yaml"))) throw new Error(`sandbox.sbx.kitDir "${cfg.kitDir}" has no kit yaml`);
+
+      if (cfg.mcp && cfg.mcp.length > 0) await checkMcp(cfg.mcp);
 
       const name = ctx.instanceName;
       try {

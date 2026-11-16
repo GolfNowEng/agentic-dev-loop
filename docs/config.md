@@ -206,6 +206,9 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
     `"docker.io/library/dev-loop-sbx:v1"` (node, jq, direnv, the HTTPS rewrite, the target `.envrc` approval).
     Created with `-t <ref> --pull never`; the kit is still applied.
   - `memory` — optional, e.g. `"4g"` or `"512m"`.
+  - `mcp` — optional list of MCP server names registered with
+    `sbx mcp add` (e.g. `["atlassian"]`), passed as `--static-mcp`.
+    Preflight refuses one that is not registered or not ready.
   - `envAllow` — optional list of bare env var names to pass into the
     sandbox, added to the defaults (the three `ANTHROPIC_DEFAULT_*_MODEL`
     names and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`). Secret-shaped names
@@ -419,6 +422,9 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
     `"docker.io/library/dev-loop-sbx:v1"` (node, jq, direnv, the HTTPS rewrite, the target `.envrc` approval).
     Created with `-t <ref> --pull never`; the kit is still applied.
   - `memory` — optional, e.g. `"4g"` or `"512m"`.
+  - `mcp` — optional list of MCP server names registered with
+    `sbx mcp add` (e.g. `["atlassian"]`), passed as `--static-mcp`.
+    Preflight refuses one that is not registered or not ready.
   - `envAllow` — optional list of bare env var names to pass into the
     sandbox, added to the defaults (the three `ANTHROPIC_DEFAULT_*_MODEL`
     names and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`). Secret-shaped names
