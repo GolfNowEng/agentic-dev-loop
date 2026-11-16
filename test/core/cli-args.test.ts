@@ -111,3 +111,10 @@ describe("parseArgs: --sandbox", () => {
     expect(() => parseArgs(["--project=p", "--sandbox", "none"])).toThrow("use --sandbox=none");
   });
 });
+
+describe("parseArgs: --no-dashboard", () => {
+  it("is false by default and true when passed", () => {
+    expect(parseArgs(["--project=p"]).noDashboard).toBe(false);
+    expect(parseArgs(["--project=p", "--sandbox=sbx", "--no-dashboard"]).noDashboard).toBe(true);
+  });
+});
