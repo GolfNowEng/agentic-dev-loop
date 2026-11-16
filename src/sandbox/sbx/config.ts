@@ -1,5 +1,8 @@
 // Config sub-block for the sbx sandbox adapter.
 
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 export interface SbxConfig {
   kitDir: string;
   memory?: string;
@@ -28,8 +31,10 @@ export function validateSbxConfig(raw: unknown): SbxConfig {
   for (const k of Object.keys(o)) if (!KNOWN.has(k)) throw new Error(`sandbox.sbx: unknown key "${k}"`);
   if (o.kitDir === undefined) throw new Error("sandbox.sbx: kitDir is required");
   if (typeof o.kitDir !== "string" || o.kitDir === "") throw new Error("sandbox.sbx: kitDir must be a non-empty string");
-  if (!o.kitDir.startsWith("/")) throw new Error("sandbox.sbx: kitDir must be an absolute path");
-  const cfg: SbxConfig = { kitDir: o.kitDir, envAllow: [] };
+  // "~/" keeps a personal home path out of the committed config.
+  const kitDir = o.kitDir.startsWith("~/") ? join(homedir(), o.kitDir.slice(2)) : o.kitDir;
+  if (!kitDir.startsWith("/")) throw new Error("sandbox.sbx: kitDir must be an absolute path");
+  const cfg: SbxConfig = { kitDir, envAllow: [] };
   if (o.memory !== undefined) {
     if (typeof o.memory !== "string" || !MEMORY.test(o.memory)) throw new Error('sandbox.sbx: memory must look like "4g" or "512m"');
     cfg.memory = o.memory;
