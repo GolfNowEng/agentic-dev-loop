@@ -19,6 +19,18 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[core]` sbx setup, from the first real setup: a `sandbox.sbx.template`
+  key (`sbx create -t <ref> --pull never`, kit still applied); `kitDir`
+  accepts `~/`. Preflight now checks GitHub with `git ls-remote` over the
+  SSH URL and `gh api repos/<owner>/<repo>` instead of `gh auth status`,
+  which reported "not logged in" while the proxy was injecting the token;
+  it names the cause (firewall approval, token access or pending org
+  approval, missing HTTPS rewrite). Preflight refuses an env file
+  (`.env`, `.envrc`, `.env.*`) in dev-loop's folder, which the sandbox can
+  read, and warns about one in the target repo. The model aliases are
+  filled from `~/.claude/settings.json` when the env lacks them.
+  `--preflight-only`, and `npm run sbx:status|dashboard|preflight|cleanup|smoke|template`
+  (none of them grants access).
 - `[core]` Node 24 is now the minimum (engines >=24.0.0); a sandbox's node
   must match the host's major version (spec §4.8).
 - `[core]` A `claude -p` run that exits 0 but reports a failed result
