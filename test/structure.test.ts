@@ -308,7 +308,7 @@ describe("structure: final-review fixes stay wired", () => {
   it("every --env-file script reads DEVLOOP_ENV_FILE, defaulting to .env (I4)", () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
     const withEnvFile = Object.entries(pkg.scripts).filter(([, cmd]) => cmd.includes("--env-file"));
-    expect(withEnvFile.map(([name]) => name).sort()).toEqual(["check-auth", "cutover:relabel", "loop", "reset-project:remote"]);
+    expect(withEnvFile.map(([name]) => name).sort()).toEqual(["check-auth", "cutover:relabel", "loop", "reset-project:remote", "sbx:preflight"]);
     for (const [, cmd] of withEnvFile) {
       expect(cmd).toContain('--env-file="${DEVLOOP_ENV_FILE:-.env}"');
       expect(cmd).not.toContain("--env-file=.env");
@@ -364,12 +364,27 @@ describe("structure: sandbox names stay inside their adapter folder", () => {
     expect(lines).toEqual(['import { sbxAdapter } from "./sbx/index.ts";', "sbx: sbxAdapter,"]);
   });
 
+  it("main.ts --preflight-only exits after the sandbox preflight, before any session or Jira client", () => {
+    const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
+    const stop = main.indexOf("if (preflightOnly)");
+    expect(stop).toBeGreaterThan(main.indexOf("adapter.preflight({"));
+    expect(stop).toBeLessThan(main.indexOf("credentialsFromEnv()"));
+  });
+
+  it("main.ts fills the model alias names from Claude settings before the sandbox preflight", () => {
+    const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
+    const fill = main.indexOf("fillModelEnvFromClaudeSettings(process.env)");
+    expect(fill).toBeGreaterThan(-1);
+    expect(fill).toBeLessThan(main.indexOf("adapter.preflight({"));
+  });
+
   it("main.ts gives preflight a project-scoped throwaway instance name and the repo root as cwd", () => {
     const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
     // Built only for a real sandbox, so a long slug never fails the default (none) path.
     expect(main).toMatch(/sandboxSelection\.adapter\.name !== DEFAULT_ADAPTER \? sandboxPreflightInstanceName\(slug, randomBytes\(3\)\.toString\("hex"\)\) : ""/);
     const call = main.slice(main.indexOf("adapter.preflight({"), main.indexOf("});", main.indexOf("adapter.preflight({")));
     expect(call).toMatch(/instanceName: preflightInstanceName/);
+    expect(call).toMatch(/githubRepo: config\.github\.repo/);
     expect(call).toMatch(/cwd: REPO_ROOT/);
   });
 

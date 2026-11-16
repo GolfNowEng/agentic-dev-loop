@@ -1,6 +1,6 @@
 /**
  * CLI entrypoint:
- *   `node --env-file="${DEVLOOP_ENV_FILE:-.env}" src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--sandbox=<name>] [--once] [--stream]`
+ *   `node --env-file="${DEVLOOP_ENV_FILE:-.env}" src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--sandbox=<name>] [--once] [--stream] [--preflight-only]`
  * `--config <path>` also works as a fallback for an arbitrary path outside
  * the naming convention; passing both --project and --config is an error
  * (src/core/cli-args.ts parses and tests all of it).
@@ -62,6 +62,7 @@ import { findLandedPrUrlAcross, hasLandedV1 } from "./core/iteration-log.ts";
 import { DEFAULT_ADAPTER } from "./sandbox/index.ts";
 import { selectSandbox, type SandboxSelection } from "./sandbox/select.ts";
 import { parseArgs, preflight, type Phase } from "./core/cli-args.ts";
+import { fillModelEnvFromClaudeSettings } from "./core/claude-settings-env.ts";
 import { FlagError } from "./core/flags.ts";
 import { checkAbsPath, checkRepoDirPlacement, repoDirFor, SKILL_NAME } from "./core/build-prompt.ts";
 import { killActiveChild, spawnClaudeRun } from "./core/spawn-claude.ts";
@@ -260,7 +261,7 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
 let activePhase: Phase | null = null;
 
 async function main(): Promise<void> {
-  const { phase, project, configPath, session: requestedSession, sandbox: sandboxName, once, stream } = parseArgs(process.argv.slice(2));
+  const { phase, project, configPath, session: requestedSession, sandbox: sandboxName, once, stream, preflightOnly } = parseArgs(process.argv.slice(2));
   activePhase = phase;
   const prefix = prefixOf(phase);
   const roles = rolesOf(phase);
@@ -271,6 +272,9 @@ async function main(): Promise<void> {
   for (const warning of preflight(config, phase, LOOP_VERSION).warnings) logError(`[${prefix}] WARNING: ${warning}`);
   // Fail on a bad --sandbox / config adapter before any session is acquired.
   const sandboxSelection = selectSandbox(config, sandboxName);
+  // settings.json is the source of truth for the model aliases; an env/.env value still wins. Names only in the log.
+  const filledModels = fillModelEnvFromClaudeSettings(process.env);
+  if (filledModels.length > 0) logError(`[${prefix}] model aliases from ~/.claude/settings.json: ${filledModels.join(", ")}`);
   // Only existence is checked: the root .env is never read here.
   const rootEnvPath = resolve(REPO_ROOT, ".env");
   const envWarning = envFileWarning({ envFileVar: process.env.DEVLOOP_ENV_FILE, cwd: process.cwd(), rootEnvPath, rootEnvExists: existsSync(rootEnvPath) });
@@ -294,8 +298,13 @@ async function main(): Promise<void> {
     mounts: sandboxMounts(REPO_ROOT, repoDirFor(config, slug)),
     cwd: REPO_ROOT,
     instanceName: preflightInstanceName,
+    githubRepo: config.github.repo,
     config: sandboxSelection.config,
   });
+  if (preflightOnly) {
+    logError(`[${prefix}] preflight passed (sandbox: ${sandboxSelection.adapter.name}); --preflight-only, exiting.`);
+    return;
+  }
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();

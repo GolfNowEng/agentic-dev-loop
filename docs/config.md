@@ -199,8 +199,11 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
 - An adapter's own sub-block is keyed by its name (`sandbox.<adapter>`) and
   validated by that adapter; errors are prefixed `sandbox.<adapter>: `.
 - `sandbox.sbx` (adapter `sbx`, Docker Sandboxes) takes:
-  - `kitDir` — required, an absolute path to the Keystone kit folder (must
-    hold a kit `.yaml`).
+  - `kitDir` — required, an absolute path (or `~/...`) to the Keystone kit
+    folder (must hold a kit `.yaml`).
+  - `template` — optional, a saved `sbx template save` image such as
+    `"docker.io/library/dev-loop-sbx:v1"` (node, jq, direnv, the HTTPS rewrite, the target `.envrc` approval).
+    Created with `-t <ref> --pull never`; the kit is still applied.
   - `memory` — optional, e.g. `"4g"` or `"512m"`.
   - `envAllow` — optional list of bare env var names to pass into the
     sandbox, added to the defaults (the three `ANTHROPIC_DEFAULT_*_MODEL`
@@ -404,8 +407,11 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
 - An adapter's own sub-block is keyed by its name (`sandbox.<adapter>`) and
   validated by that adapter; errors are prefixed `sandbox.<adapter>: `.
 - `sandbox.sbx` (adapter `sbx`, Docker Sandboxes) takes:
-  - `kitDir` — required, an absolute path to the Keystone kit folder (must
-    hold a kit `.yaml`).
+  - `kitDir` — required, an absolute path (or `~/...`) to the Keystone kit
+    folder (must hold a kit `.yaml`).
+  - `template` — optional, a saved `sbx template save` image such as
+    `"docker.io/library/dev-loop-sbx:v1"` (node, jq, direnv, the HTTPS rewrite, the target `.envrc` approval).
+    Created with `-t <ref> --pull never`; the kit is still applied.
   - `memory` — optional, e.g. `"4g"` or `"512m"`.
   - `envAllow` — optional list of bare env var names to pass into the
     sandbox, added to the defaults (the three `ANTHROPIC_DEFAULT_*_MODEL`

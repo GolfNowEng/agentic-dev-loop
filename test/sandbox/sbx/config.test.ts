@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { DEFAULT_ENV_ALLOW, validateSbxConfig } from "../../../src/sandbox/sbx/config.ts";
 
 describe("validateSbxConfig", () => {
@@ -28,5 +30,18 @@ describe("validateSbxConfig", () => {
     for (const bad of ["FOO=bar", "", "1A", "A B"]) {
       expect(() => validateSbxConfig({ kitDir: "/k", envAllow: [bad] })).toThrow(`sandbox.sbx: envAllow entry "${bad}" must be a bare env var name`);
     }
+  });
+  it("accepts an optional template image reference", () => {
+    expect(validateSbxConfig({ kitDir: "/k" }).template).toBeUndefined();
+    expect(validateSbxConfig({ kitDir: "/k", template: "docker.io/library/dev-loop-sbx:v1" }).template).toBe("docker.io/library/dev-loop-sbx:v1");
+  });
+  it("rejects a template that is not a plain image reference", () => {
+    for (const bad of ["", "has space:v1", "-t", "x;rm", 3]) {
+      expect(() => validateSbxConfig({ kitDir: "/k", template: bad })).toThrow("sandbox.sbx: template must be an image reference");
+    }
+  });
+  it("expands a leading ~/ in kitDir to the home folder", () => {
+    expect(validateSbxConfig({ kitDir: "~/kits/k" }).kitDir).toBe(join(homedir(), "kits/k"));
+    expect(() => validateSbxConfig({ kitDir: "~other/k" })).toThrow("sandbox.sbx: kitDir must be an absolute path");
   });
 });

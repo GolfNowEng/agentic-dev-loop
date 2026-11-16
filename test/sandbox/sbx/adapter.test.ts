@@ -54,6 +54,14 @@ describe("sbx adapter: prepare", () => {
     expect(f.calls[0].args).toEqual(["create", "--name", N, "--no-progress", "--no-input", "--memory", "4g", "claude", "--kit", "/kit", "/abs/root"]);
   });
 
+  it("with a template, creates from it with --pull never, keeping the kit", async () => {
+    const f = fakeRunner();
+    await makeSbxAdapter({ run: f.run }).prepare({ instanceName: N, mounts: ["/abs/root"], config: { ...CFG, template: "docker.io/library/dev-loop-sbx:v1" } });
+    expect(f.calls[0].args).toEqual([
+      "create", "--name", N, "--no-progress", "--no-input", "-t", "docker.io/library/dev-loop-sbx:v1", "--pull", "never", "claude", "--kit", "/kit", "/abs/root",
+    ]);
+  });
+
   it("a non-zero exit throws with the code and the first stderr line", async () => {
     const f = fakeRunner(() => fail(2, "boom: no daemon\nsecond line"));
     await expect(makeSbxAdapter({ run: f.run }).prepare({ instanceName: N, mounts: [], config: CFG })).rejects.toThrow(
@@ -256,16 +264,24 @@ describe("sbx adapter: preflight", () => {
   afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
   const P = "dl-12-webtarsthree-preflight-abc123";
-  const CHECK = ["exec", P, "sh", "-c", "node --version && git --version && jq --version && gh auth status"];
+  const R = "fandango/webtarsthree";
+  const CHECK = [
+    "exec", P, "sh", "-c",
+    `node --version && git --version && jq --version && echo dl-step:direnv && direnv version && echo dl-step:git && git ls-remote git@github.com:${R}.git HEAD >/dev/null && echo dl-step:gh && gh api repos/${R} --jq .full_name`,
+  ];
+  const NO_REPO_CHECK = ["exec", P, "sh", "-c", "node --version && git --version && jq --version && echo dl-step:direnv && direnv version"];
   const identity = (p: string) => p;
-  const ctx = (over: Partial<{ kitDir: string; mounts: string[]; cwd: string }> = {}) => ({
-    repoRoot: "/abs/root",
+  const ctx = (over: Partial<{ kitDir: string; mounts: string[]; cwd: string; repoRoot: string; githubRepo: string | undefined }> = {}) => ({
+    repoRoot: over.repoRoot ?? "/abs/root",
     mounts: over.mounts ?? ["/abs/root", "/abs/repo"],
     cwd: over.cwd ?? "/abs/root",
     instanceName: P,
+    githubRepo: "githubRepo" in over ? over.githubRepo : R,
     config: { kitDir: over.kitDir ?? kit, envAllow: [] },
   });
-  const GOOD = ok("v24.3.0\ngit version 2.47.0\njq-1.7.1\n", "Logged in to github.com\n");
+  const BASE = "v24.3.0\ngit version 2.47.0\njq-1.7.1\n";
+  const DIRENV = `${BASE}dl-step:direnv\n2.32.1\n`;
+  const GOOD = ok(`${DIRENV}dl-step:git\ndl-step:gh\n${R}\n`);
   const answer = (exec: SbxResult) => (args: string[]) => (args[0] === "exec" ? exec : ok());
 
   it("creates, runs the check, and removes the instance", async () => {
@@ -317,7 +333,7 @@ describe("sbx adapter: preflight", () => {
   it("refuses a node major different from the host's, and still removes the instance", async () => {
     const f = fakeRunner(answer(ok("v22.1.0\ngit version 2.47.0\n")));
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
-      "sandbox image has no node 24: add node to the kit (see docs/sandbox-sbx.md)",
+      "sandbox image has no node 24: add node to the template (see docs/sandbox-sbx.md)",
     );
     expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
@@ -325,23 +341,136 @@ describe("sbx adapter: preflight", () => {
   it("refuses a missing node", async () => {
     const f = fakeRunner(answer(fail(127, "sh: 1: node: not found")));
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
-      "sandbox image has no node 24: add node to the kit (see docs/sandbox-sbx.md)",
+      "sandbox image has no node 24: add node to the template (see docs/sandbox-sbx.md)",
     );
     expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
 
-  it("refuses when gh is not logged in, and still removes the instance", async () => {
-    const f = fakeRunner(answer(fail(1, "You are not logged into any GitHub hosts.", "v24.3.0\ngit version 2.47.0\njq-1.7.1\n")));
-    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
-      "gh is not logged in inside the sandbox: run sbx secret set github (see docs/sandbox-sbx.md)",
+  const pf = (exec: SbxResult, over = {}) =>
+    makeSbxAdapter({ run: fakeRunner(answer(exec)).run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx(over));
+
+  it("a missing direnv names the template fix", async () => {
+    await expect(pf(fail(127, "sh: 1: direnv: not found", `${BASE}dl-step:direnv\n`))).rejects.toThrow(
+      "sandbox image has no direnv: add it to the template (npm run sbx:template:build; see docs/sandbox-sbx.md)",
     );
-    expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
+  });
+
+  it("checks the target repo's .envrc is allowed when the mounts include one", async () => {
+    const root = join(tmp, "dr-root");
+    const repo = join(tmp, "dr-repo");
+    mkdirSync(root, { recursive: true });
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(repo, ".envrc"), "export X=1\n");
+    const f = fakeRunner(answer(ok(`${DIRENV}dl-step:envrc\ndl-step:git\ndl-step:gh\n${R}\n`)));
+    await makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV, warn: () => {} }).preflight(
+      ctx({ repoRoot: root, mounts: [root, repo], cwd: root }),
+    );
+    expect(f.calls[1].args[4]).toContain(`echo dl-step:envrc && direnv exec '${repo}' true && echo dl-step:git`);
+  });
+
+  it("a blocked .envrc names the template rebuild, never direnv allow by the loop", async () => {
+    const r = fail(1, "direnv: error /x/.envrc is blocked. Run `direnv allow` to approve its content", `${DIRENV}dl-step:envrc\n`);
+    await expect(pf(r)).rejects.toThrow(
+      "the target repo's .envrc is not allowed inside the sandbox (it changed, or the template predates it): rebuild the template with npm run sbx:template:build (see docs/sandbox-sbx.md)",
+    );
+  });
+
+  it("git blocked by the sandbox firewall names the host and the approval command", async () => {
+    const r = fail(128, "remote: Approval required for github.com:443.\nremote:\nfatal: unable to access", `${DIRENV}dl-step:git\n`);
+    await expect(pf(r)).rejects.toThrow(
+      "sandbox network blocked github.com (git): approve it yourself with sbx policy approval ls, or sbx policy allow network github.com (see docs/sandbox-sbx.md)",
+    );
+  });
+
+  it("gh api blocked by the sandbox firewall names api.github.com", async () => {
+    const r = fail(1, 'non-200 OK status code: 403 Forbidden body: "Approval required for api.github.com:443.', `${DIRENV}dl-step:git\ndl-step:gh\n`);
+    await expect(pf(r)).rejects.toThrow("sandbox network blocked api.github.com (gh api)");
+  });
+
+  it("a 404 from gh api means the sandbox's GitHub token cannot see the repo", async () => {
+    const r = fail(1, '{"message":"Not Found","status":"404"}gh: Not Found (HTTP 404)', `${DIRENV}dl-step:git\ndl-step:gh\n`);
+    await expect(pf(r)).rejects.toThrow(
+      `the sandbox's GitHub token cannot see ${R} (gh api): check its repo access and any pending org approval, then sbx secret set github (see docs/sandbox-sbx.md)`,
+    );
+  });
+
+  it("repository not found from git is the same token message", async () => {
+    const r = fail(128, "remote: Repository not found.\nfatal: repository not found", `${DIRENV}dl-step:git\n`);
+    await expect(pf(r)).rejects.toThrow(`the sandbox's GitHub token cannot see ${R} (git)`);
+  });
+
+  it("an SSH failure from git means the template lacks the HTTPS rewrite", async () => {
+    const r = fail(128, "git@github.com: Permission denied (publickey).", `${DIRENV}dl-step:git\n`);
+    await expect(pf(r)).rejects.toThrow(
+      'git uses SSH inside the sandbox: add git config --global url."https://github.com/".insteadOf git@github.com: to the template (see docs/sandbox-sbx.md)',
+    );
+  });
+
+  it("any other GitHub failure names the step and the first stderr line", async () => {
+    const r = fail(1, "boom\nmore", `${DIRENV}dl-step:git\ndl-step:gh\n`);
+    await expect(pf(r)).rejects.toThrow("sbx preflight failed (gh api): boom");
+  });
+
+  it("without a githubRepo, skips the GitHub checks", async () => {
+    const f = fakeRunner(answer(ok(DIRENV)));
+    await makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx({ githubRepo: undefined }));
+    expect(f.calls[1].args).toEqual(NO_REPO_CHECK);
+  });
+
+  it("refuses a githubRepo that is not a plain owner/repo before any sbx call", async () => {
+    const f = fakeRunner();
+    await expect(
+      makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx({ githubRepo: "a/b; rm -rf /" })),
+    ).rejects.toThrow('github.repo "a/b; rm -rf /" is not a plain owner/repo');
+    expect(f.calls).toEqual([]);
+  });
+
+  describe("env files in shared folders", () => {
+    const root = join(tmp, "root");
+    const repo = join(tmp, "repo");
+    mkdirSync(root);
+    mkdirSync(repo);
+    writeFileSync(join(root, ".env.example"), "X=\n");
+    writeFileSync(join(repo, ".envrc.example"), "X=\n");
+
+    it("ignores .example files", async () => {
+      await expect(pf(GOOD, { repoRoot: root, mounts: [root, repo], cwd: root })).resolves.toBeUndefined();
+    });
+
+    for (const name of [".env", ".envrc", ".env.local"]) {
+      it(`refuses a ${name} in the dev-loop folder before any sbx call`, async () => {
+        writeFileSync(join(root, name), "SECRET=x\n");
+        try {
+          const f = fakeRunner();
+          await expect(
+            makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx({ repoRoot: root, mounts: [root, repo], cwd: root })),
+          ).rejects.toThrow(`${name} is in ${root}, which the sandbox can read: move it out of the repo and point DEVLOOP_ENV_FILE at it (see docs/sandbox-sbx.md)`);
+          expect(f.calls).toEqual([]);
+        } finally {
+          rmSync(join(root, name));
+        }
+      });
+    }
+
+    it("only warns, naming the files, for env files in another mounted folder", async () => {
+      writeFileSync(join(repo, ".envrc"), "SECRET=x\n");
+      try {
+        const warnings: string[] = [];
+        const f = fakeRunner(answer(GOOD));
+        await makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV, warn: (m) => void warnings.push(m) }).preflight(
+          ctx({ repoRoot: root, mounts: [root, repo], cwd: root }),
+        );
+        expect(warnings).toEqual([`note: the sandbox agent can read .envrc in ${repo} (expected for local dev/INT settings; keep real secrets out of it).`]);
+      } finally {
+        rmSync(join(repo, ".envrc"));
+      }
+    });
   });
 
   it("refuses a missing jq (git ran, jq did not), and still removes the instance", async () => {
     const f = fakeRunner(answer(fail(127, "sh: 1: jq: not found", "v24.3.0\ngit version 2.47.0\n")));
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
-      "sandbox image has no jq: add jq to the kit (see docs/sandbox-sbx.md)",
+      "sandbox image has no jq: add jq to the template (see docs/sandbox-sbx.md)",
     );
     expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
@@ -391,7 +520,29 @@ describe("sbx adapter: preflight", () => {
 
   it("defaults hostNodeMajor to the running node's major", async () => {
     const major = process.versions.node.split(".")[0];
-    const f = fakeRunner(answer(ok(`v${major}.0.0\ngit version 2.47.0\njq-1.7.1\n`)));
+    const f = fakeRunner(answer(ok(`v${major}.0.0\ngit version 2.47.0\njq-1.7.1\ndl-step:direnv\n2.32.1\ndl-step:git\ndl-step:gh\n`)));
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, env: FULL_ENV }).preflight(ctx())).resolves.toBeUndefined();
+  });
+});
+
+describe("helpers shared with scripts/sbx.mjs", () => {
+  it("rootEnvFiles lists env files at a folder's top, skipping *.example", async () => {
+    const { rootEnvFiles } = await import("../../../src/sandbox/sbx/adapter.ts");
+    const d = mkdtempSync(join(tmpdir(), "sbx-envfiles-"));
+    try {
+      for (const f of [".env", ".envrc", ".env.local", ".env.example", "README.md"]) writeFileSync(join(d, f), "");
+      expect(rootEnvFiles(d)).toEqual([".env", ".env.local", ".envrc"]);
+      expect(rootEnvFiles(join(d, "missing"))).toEqual([]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("allowHintLines checks hosts like inspect does: strips ports, drops unsafe hosts", async () => {
+    const { allowHintLines } = await import("../../../src/sandbox/sbx/adapter.ts");
+    const log = JSON.stringify({ blocked: [{ host: "a.example:443" }, { host: "a.example" }, { host: "x;curl evil" }] });
+    expect(allowHintLines(log)).toEqual(["sbx policy allow network a.example", "(not shown: a blocked host with unexpected characters)"]);
+    expect(allowHintLines("not json")).toBeUndefined();
+    expect(allowHintLines(JSON.stringify({ blocked: [] }))).toEqual([]);
   });
 });

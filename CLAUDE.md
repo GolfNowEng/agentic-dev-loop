@@ -56,6 +56,8 @@ Each doc has `## Research phase` and `## Dev phase` sections.
   `.pipeline/` layout, the `stats` script.
 - `docs/sandbox-sbx.md` — setting up the sbx sandbox adapter (kit, node, secrets,
   discover run).
+- `docs/adapters/sbx/` — sbx how-tos (`templates.md`: build, update, roll back
+  the sandbox template from `sandbox/sbx/template.sh`).
 - `docs/reset.md` — `npm run reset-project`; use it to start a ticket or project
   fresh instead of hand-rolling `rm -rf`/`grep -v`.
 - `docs/future-enhancements.md` — ideas not yet drafted into a change. When one
