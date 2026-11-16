@@ -19,6 +19,10 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[core]` `--sandbox=sbx` opens the sbx dashboard in a new Terminal window
+  after preflight passes (macOS, interactive runs, none already open), so
+  one command starts both. `--no-dashboard` skips it; a failure only logs.
+  Wired through a new optional adapter hook, `onRunStart`.
 - `[core]` sbx is opt-in per run: `pipeline.webtarsthree.config.json`
   keeps its `sandbox` settings (mode, `sbx` block) but no `adapter` line,
   so a plain run uses no sandbox and `--sandbox=sbx` turns it on. Every

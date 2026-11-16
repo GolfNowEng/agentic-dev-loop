@@ -16,6 +16,7 @@ describe("parseArgs", () => {
       once: false,
       stream: false,
       preflightOnly: false,
+      noDashboard: false,
     });
   });
 
@@ -32,6 +33,7 @@ describe("parseArgs", () => {
       once: true,
       stream: true,
       preflightOnly: false,
+      noDashboard: false,
     });
     expect(parseArgs(["--config=/tmp/x.json", "--phase=research"]).configPath).toBe("/tmp/x.json");
     expect(parseArgs(["--project=p", "--phase=worker"]).phase).toBe("worker");
@@ -109,5 +111,12 @@ describe("parseArgs: --sandbox", () => {
 
   it("refuses the space form with the replacement", () => {
     expect(() => parseArgs(["--project=p", "--sandbox", "none"])).toThrow("use --sandbox=none");
+  });
+});
+
+describe("parseArgs: --no-dashboard", () => {
+  it("is false by default and true when passed", () => {
+    expect(parseArgs(["--project=p"]).noDashboard).toBe(false);
+    expect(parseArgs(["--project=p", "--sandbox=sbx", "--no-dashboard"]).noDashboard).toBe(true);
   });
 });

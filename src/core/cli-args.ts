@@ -3,7 +3,7 @@
 //
 //   --project=<p> | --config=<path>   exactly one
 //   [--phase=worker|research|dev]     default worker (both roles)
-//   [--session=<name>] [--sandbox=<name>] [--once] [--stream]
+//   [--session=<name>] [--sandbox=<name>] [--once] [--stream] [--no-dashboard]
 //
 // Value flags are --name=value only (src/core/flags.ts); the old
 // `--name value` form is refused with the replacement. Anything else is an
@@ -26,10 +26,12 @@ export interface CliArgs {
   stream: boolean;
   /** Run the startup checks (config, sandbox preflight) and exit 0, touching no ticket. */
   preflightOnly: boolean;
+  /** Don't let the sandbox adapter open its dashboard window. */
+  noDashboard: boolean;
 }
 
 const PHASES: readonly string[] = ["worker", "research", "dev"];
-const SPEC = { values: ["--project", "--config", "--phase", "--session", "--sandbox"], bools: ["--once", "--stream", "--preflight-only"] } as const;
+const SPEC = { values: ["--project", "--config", "--phase", "--session", "--sandbox"], bools: ["--once", "--stream", "--preflight-only", "--no-dashboard"] } as const;
 
 export function parseArgs(argv: string[]): CliArgs {
   const { values, bools } = parseFlags(argv, SPEC, "main.ts");
@@ -57,6 +59,7 @@ export function parseArgs(argv: string[]): CliArgs {
     once: bools.has("--once"),
     stream: bools.has("--stream"),
     preflightOnly: bools.has("--preflight-only"),
+    noDashboard: bools.has("--no-dashboard"),
   };
 }
 

@@ -7,6 +7,7 @@ import { readdirSync, realpathSync } from "node:fs";
 import type { SandboxAdapter, SandboxDenial, SandboxHandle } from "../types.ts";
 import { DEFAULT_ENV_ALLOW, validateSbxConfig, type SbxConfig } from "./config.ts";
 import type { SbxResult, SbxRunner } from "./run.ts";
+import { openSbxDashboard, realDashboardDeps, type DashboardDeps } from "./dashboard.ts";
 
 /** `sbx create` pulls an image on a cold cache; ~5 s when cached. */
 export const CREATE_TIMEOUT_MS = 180_000;
@@ -42,6 +43,8 @@ export interface SbxAdapterDeps {
   env?: NodeJS.ProcessEnv;
   /** Non-fatal preflight warnings (default console.error). */
   warn?: (m: string) => void;
+  /** The dashboard opener's dependencies (default: the real Terminal/osascript ones). */
+  dashboardDeps?: (log: (m: string) => void) => DashboardDeps;
 }
 
 const firstLine = (s: string): string => s.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
@@ -136,6 +139,11 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
     name: "sbx",
 
     validateConfig: (raw) => validateSbxConfig(raw),
+
+    onRunStart(ctx) {
+      if (!ctx.dashboard) return;
+      openSbxDashboard(ctx.repoRoot, (deps.dashboardDeps ?? realDashboardDeps)(ctx.log));
+    },
 
     async preflight(ctx) {
       // sbx canonicalizes a mount's case but the container is case-sensitive.

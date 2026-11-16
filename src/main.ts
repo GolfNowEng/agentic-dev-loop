@@ -1,6 +1,6 @@
 /**
  * CLI entrypoint:
- *   `node --env-file="${DEVLOOP_ENV_FILE:-.env}" src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--sandbox=<name>] [--once] [--stream] [--preflight-only]`
+ *   `node --env-file="${DEVLOOP_ENV_FILE:-.env}" src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--sandbox=<name>] [--once] [--stream] [--preflight-only] [--no-dashboard]`
  * `--config <path>` also works as a fallback for an arbitrary path outside
  * the naming convention; passing both --project and --config is an error
  * (src/core/cli-args.ts parses and tests all of it).
@@ -261,7 +261,7 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
 let activePhase: Phase | null = null;
 
 async function main(): Promise<void> {
-  const { phase, project, configPath, session: requestedSession, sandbox: sandboxName, once, stream, preflightOnly } = parseArgs(process.argv.slice(2));
+  const { phase, project, configPath, session: requestedSession, sandbox: sandboxName, once, stream, preflightOnly, noDashboard } = parseArgs(process.argv.slice(2));
   activePhase = phase;
   const prefix = prefixOf(phase);
   const roles = rolesOf(phase);
@@ -305,6 +305,8 @@ async function main(): Promise<void> {
     logError(`[${prefix}] preflight passed (sandbox: ${sandboxSelection.adapter.name}); --preflight-only, exiting.`);
     return;
   }
+  // After preflight, so a failed check never leaves a dashboard window behind.
+  sandboxSelection.adapter.onRunStart?.({ repoRoot: REPO_ROOT, dashboard: !noDashboard, log: (m) => logError(m) });
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();

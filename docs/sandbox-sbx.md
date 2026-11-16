@@ -16,6 +16,12 @@ them. It prints the command; you decide and type it.
 npm run loop -- --project=webtarsthree --sandbox=sbx --once --stream
 ```
 
+On macOS, with you at the terminal, that also opens the live dashboard
+(`npm run sbx:dashboard`) in a new Terminal window once preflight passes,
+unless one is already open. `--no-dashboard` skips it. The first time,
+macOS asks whether Terminal may control Terminal: allow it. If the window
+can't open, the loop prints why and carries on.
+
 Config keys: [config.md](config.md). First set up on 2026-11-16 against
 sbx v0.54.0.
 
@@ -35,8 +41,7 @@ sbx v0.54.0.
 `webtarsthree`); `sbx:preflight` is fixed to webtarsthree and passes
 `--sandbox=sbx`. The loop runs
 `claude -p` headless, so there is no Claude screen to attach to: watch
-`npm run sbx:dashboard` in one terminal and run the loop with
-`--sandbox=sbx --stream` in another.
+the dashboard (opened for you) and run the loop with `--stream`.
 
 ## 1. Template: node, jq, direnv, the HTTPS rewrite
 
