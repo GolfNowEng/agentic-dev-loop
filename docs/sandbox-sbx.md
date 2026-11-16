@@ -9,6 +9,13 @@ to each request. The agent never holds a token.
 `sbx secret set` or `sbx policy approval respond`, and no npm script wraps
 them. It prints the command; you decide and type it.
 
+**Opt-in per run.** The project config holds the sbx settings but no
+`adapter` line, so a plain run uses no sandbox. Add `--sandbox=sbx`:
+
+```
+npm run loop -- --project=webtarsthree --sandbox=sbx --once --stream
+```
+
 Config keys: [config.md](config.md). First set up on 2026-11-16 against
 sbx v0.54.0.
 
@@ -25,10 +32,11 @@ sbx v0.54.0.
 | `npm run sandbox:approvals` | what a discover run was refused, with the allow lines to review |
 
 `cleanup`, `smoke` and `template:build` take `-- --project=<name>` (default
-`webtarsthree`); `sbx:preflight` is fixed to webtarsthree. The loop runs
+`webtarsthree`); `sbx:preflight` is fixed to webtarsthree and passes
+`--sandbox=sbx`. The loop runs
 `claude -p` headless, so there is no Claude screen to attach to: watch
-`npm run sbx:dashboard` in one terminal and run the loop with `--stream` in
-another.
+`npm run sbx:dashboard` in one terminal and run the loop with
+`--sandbox=sbx --stream` in another.
 
 ## 1. Template: node, jq, direnv, the HTTPS rewrite
 

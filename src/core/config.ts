@@ -199,12 +199,18 @@ function validateSandbox(v: unknown): void {
   if (sb.mode !== undefined && sb.mode !== "discover" && sb.mode !== "enforce") {
     throw new ConfigError(`sandbox.mode must be "discover" or "enforce" (got ${JSON.stringify(sb.mode)})`);
   }
-  try {
-    adapter.validateConfig(sb[adapter.name]);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const prefix = `sandbox.${adapter.name}: `;
-    throw new ConfigError(msg.startsWith(prefix) ? msg : `${prefix}${msg}`);
+  // The selected adapter, plus every adapter whose settings are present: a
+  // block kept for an opt-in run (--sandbox=<name>, no adapter line) is
+  // checked at load, not first at that run.
+  const names = new Set([adapter.name, ...adapterNames().filter((n) => sb[n] !== undefined)]);
+  for (const name of names) {
+    try {
+      getAdapter(name).validateConfig(sb[name]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const prefix = `sandbox.${name}: `;
+      throw new ConfigError(msg.startsWith(prefix) ? msg : `${prefix}${msg}`);
+    }
   }
 }
 

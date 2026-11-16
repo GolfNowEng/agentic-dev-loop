@@ -216,6 +216,11 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
 - CLI precedence: `--sandbox=<name>` wins over `sandbox.adapter`.
   `--sandbox=none` is the per-run off switch. An unknown name fails at
   startup with `--sandbox: unknown sandbox adapter ...`.
+- **Opt-in per run:** leave out `adapter` and keep only `mode` and the
+  adapter's sub-block. A plain run uses `none`; `--sandbox=<name>` uses the
+  settings. Every sub-block present is validated at load, selected or not.
+  `webtarsthree` is set up this way for `sbx` while sbx is being vetted:
+  `npm run loop -- --project=webtarsthree --sandbox=sbx ...`.
 
 ### Ticket status never reverts
 
@@ -424,6 +429,11 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
 - CLI precedence: `--sandbox=<name>` wins over `sandbox.adapter`.
   `--sandbox=none` is the per-run off switch. An unknown name fails at
   startup with `--sandbox: unknown sandbox adapter ...`.
+- **Opt-in per run:** leave out `adapter` and keep only `mode` and the
+  adapter's sub-block. A plain run uses `none`; `--sandbox=<name>` uses the
+  settings. Every sub-block present is validated at load, selected or not.
+  `webtarsthree` is set up this way for `sbx` while sbx is being vetted:
+  `npm run loop -- --project=webtarsthree --sandbox=sbx ...`.
 
 ### Ticket status never reverts
 

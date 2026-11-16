@@ -15,7 +15,7 @@
     "sandbox:approvals": "node scripts/sandbox-approvals.mjs",
     "sbx:status": "node scripts/sbx.mjs status",
     "sbx:dashboard": "node scripts/sbx.mjs dashboard",
-    "sbx:preflight": "node --env-file=\"${DEVLOOP_ENV_FILE:-.env}\" src/main.ts --project=webtarsthree --preflight-only",
+    "sbx:preflight": "node --env-file=\"${DEVLOOP_ENV_FILE:-.env}\" src/main.ts --project=webtarsthree --sandbox=sbx --preflight-only",
     "sbx:cleanup": "node scripts/sbx.mjs cleanup",
     "sbx:smoke": "node scripts/sbx.mjs smoke",
     "sbx:template": "node scripts/sbx.mjs template",

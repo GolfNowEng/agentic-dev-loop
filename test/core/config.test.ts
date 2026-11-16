@@ -664,6 +664,14 @@ describe("validateConfig: optional sandbox block", () => {
   it("rejects a non-object sandbox", () => {
     expect(() => validateConfig(withSandbox("none"))).toThrow("sandbox must be an object");
   });
+
+  it("accepts adapter settings with no adapter line (opt-in per run with --sandbox=<name>)", () => {
+    expect(() => validateConfig(withSandbox({ mode: "discover", sbx: { kitDir: "/x" } }))).not.toThrow();
+  });
+
+  it("validates an adapter's settings even when no adapter line selects it", () => {
+    expect(() => validateConfig(withSandbox({ mode: "discover", sbx: {} }))).toThrow(/^sandbox\.sbx: kitDir is required$/);
+  });
 });
 
 describe("shipped configs use the major-only label", () => {

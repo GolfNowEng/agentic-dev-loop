@@ -19,6 +19,11 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[core]` sbx is opt-in per run: `pipeline.webtarsthree.config.json`
+  keeps its `sandbox` settings (mode, `sbx` block) but no `adapter` line,
+  so a plain run uses no sandbox and `--sandbox=sbx` turns it on. Every
+  adapter sub-block present is validated at load, selected or not.
+  `npm run sbx:preflight` passes `--sandbox=sbx`.
 - `[core]` Pipeline labels carry the major version only: `pipeline:v2` and
   `pipeline:v2:dev` (were `pipeline:v2.0.0` / `pipeline:v2.0.0:dev`). The
   version guard only ever refused a major mismatch, so the minor/patch part
