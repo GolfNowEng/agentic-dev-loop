@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { makeSbxAdapter } from "../../../src/sandbox/sbx/adapter.ts";
 import { dashboardCommand, openSbxDashboard, type DashboardDeps } from "../../../src/sandbox/sbx/dashboard.ts";
 
 function deps(over: Partial<DashboardDeps> = {}): DashboardDeps & { calls: { cmd: string; args: string[] }[]; logs: string[] } {
@@ -68,5 +69,22 @@ describe("openSbxDashboard", () => {
     });
     expect(openSbxDashboard("/r", d)).toBe("failed");
     expect(d.logs.join("\n")).toMatch(/not authorized[\s\S]*npm run sbx:dashboard/);
+  });
+});
+
+describe("sbx adapter onRunStart", () => {
+  const adapter = (d: DashboardDeps) =>
+    makeSbxAdapter({ run: async () => ({ code: 0, stdout: "", stderr: "", timedOut: false }), dashboardDeps: () => d });
+
+  it("opens the dashboard", () => {
+    const d = deps();
+    adapter(d).onRunStart?.({ repoRoot: "/r", dashboard: true, log: () => {} });
+    expect(d.calls.map((c) => c.cmd)).toEqual(["osascript"]);
+  });
+
+  it("does nothing with --no-dashboard", () => {
+    const d = deps();
+    adapter(d).onRunStart?.({ repoRoot: "/r", dashboard: false, log: () => {} });
+    expect(d.calls).toHaveLength(0);
   });
 });

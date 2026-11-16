@@ -16,6 +16,7 @@ describe("parseArgs", () => {
       once: false,
       stream: false,
       preflightOnly: false,
+      noDashboard: false,
     });
   });
 
@@ -32,6 +33,7 @@ describe("parseArgs", () => {
       once: true,
       stream: true,
       preflightOnly: false,
+      noDashboard: false,
     });
     expect(parseArgs(["--config=/tmp/x.json", "--phase=research"]).configPath).toBe("/tmp/x.json");
     expect(parseArgs(["--project=p", "--phase=worker"]).phase).toBe("worker");

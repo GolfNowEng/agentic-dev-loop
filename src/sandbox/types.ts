@@ -59,11 +59,24 @@ export interface SandboxReport {
   approveHint?: string;
 }
 
+export interface RunStartCtx {
+  repoRoot: string;
+  /** False when the run passed --no-dashboard. */
+  dashboard: boolean;
+  log: (msg: string) => void;
+}
+
 export interface SandboxAdapter {
   readonly name: string;
   /** Validate and normalize this adapter's own config sub-block (undefined when absent). Throws Error with a fix-naming message. */
   validateConfig(raw: unknown): unknown;
   preflight(ctx: PreflightCtx): Promise<void>;
+  /**
+   * Optional. Called once after preflight passes on a real run (not
+   * --preflight-only), e.g. to open the adapter's live dashboard. Best effort:
+   * must not throw.
+   */
+  onRunStart?(ctx: RunStartCtx): void;
   /**
    * Remove leftover instances from an earlier crashed run. Removes only
    * instances whose name starts with `scope.prefix` (this project's
