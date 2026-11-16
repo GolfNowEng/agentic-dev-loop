@@ -472,8 +472,8 @@ describe("labelMajor", () => {
   it("returns null for an unversioned or full-version label", () => {
     expect(labelMajor("pipeline:research")).toBeNull();
     expect(labelMajor("pipeline:dev")).toBeNull();
-    expect(labelMajor("pipeline:v2")).toBeNull();
-    expect(labelMajor("pipeline:v2:dev")).toBeNull();
+    expect(labelMajor("pipeline:v2.0.0")).toBeNull();
+    expect(labelMajor("pipeline:v2.0.0:dev")).toBeNull();
     expect(labelMajor("pipeline:v2x")).toBeNull();
     expect(labelMajor("xpipeline:v2")).toBeNull();
   });
@@ -502,7 +502,7 @@ describe("checkLabelVersion", () => {
   });
 
   it("old full-version label: not ok, and names the new label", () => {
-    const result = checkLabelVersion(withLabel("pipeline:v2"), "2.1.0");
+    const result = checkLabelVersion(withLabel("pipeline:v2.0.0"), "2.1.0");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain('"pipeline:v2"');
   });

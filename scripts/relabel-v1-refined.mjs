@@ -1,6 +1,6 @@
 // Cutover step: find tickets research-loop refined but never promoted, and
 // (with --write) add the project's dev trigger label (roles.dev.triggerLabel,
-// e.g. pipeline:v2.0.0:dev), which only the 2.0.0 dev poll matches. Dry run
+// e.g. pipeline:v2:dev), which only the v2 dev poll matches. Dry run
 // by default; never removes labels.
 //   npm run cutover:relabel -- --project=<p> [--write --confirm=<sha256>]
 // (= node --env-file="${DEVLOOP_ENV_FILE:-.env}" scripts/relabel-v1-refined.mjs ...;

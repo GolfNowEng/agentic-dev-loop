@@ -19,6 +19,12 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[core]` Pipeline labels carry the major version only: `pipeline:v2` and
+  `pipeline:v2:dev` (were `pipeline:v2.0.0` / `pipeline:v2.0.0:dev`). The
+  version guard only ever refused a major mismatch, so the minor/patch part
+  only produced a warning on every 2.x release. `labelVersion` is now
+  `labelMajor`; the guard refuses the old full-version form and names the
+  label to use. Tickets carrying the old labels were relabeled in Jira.
 - `[core]` sbx setup, from the first real setup: a `sandbox.sbx.template`
   key (`sbx create -t <ref> --pull never`, kit still applied); `kitDir`
   accepts `~/`. Preflight now checks GitHub with `git ls-remote` over the

@@ -63,14 +63,14 @@ export function parseArgs(argv: string[]): CliArgs {
 /**
  * Startup checks on a loaded config, in order: every "___" the phase needs
  * is filled (requiredPlaceholderFree), then, in worker mode only, the label
- * version guard (checkLabelVersion): ok:false throws a ConfigError, a
- * minor/patch difference comes back as a warning. This is what keeps the
- * worker off the catalog-ui-* projects (v1 labels) until cutover.
+ * version guard (checkLabelVersion): ok:false throws a ConfigError. This is
+ * what keeps the worker off the catalog-ui-* projects (v1 labels) until
+ * cutover. `warnings` stays for future non-fatal checks; none today.
  */
 export function preflight(config: Config, phase: Phase, pkgVersion: string): { warnings: string[] } {
   requiredPlaceholderFree(config, phase);
   if (phase !== "worker") return { warnings: [] };
   const guard = checkLabelVersion(config, pkgVersion);
   if (!guard.ok) throw new ConfigError(`--phase=worker: ${guard.error}`);
-  return { warnings: guard.warning ? [guard.warning] : [] };
+  return { warnings: [] };
 }

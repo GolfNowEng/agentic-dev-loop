@@ -23,7 +23,7 @@ export const EVAL_PREFIX = "[dev-loop-eval]";
 export const PROJECT_KEY = "TARS";
 /** Labels every eval ticket carries. The trigger label is added only to tickets the loop should pick up. */
 export const BASE_LABELS = ["repo:webtarsthree", EVAL_LABEL];
-export const TRIGGER_LABEL = "pipeline:v2.0.0";
+export const TRIGGER_LABEL = "pipeline:v2";
 /**
  * TARS's Story Points field. The To Do -> In Progress claim is refused
  * without it ("Field Story Points is required.", seen on TARS-1631), so every
