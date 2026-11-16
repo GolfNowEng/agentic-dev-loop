@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { DEFAULT_ENV_ALLOW, validateSbxConfig } from "../../../src/sandbox/sbx/config.ts";
 
 describe("validateSbxConfig", () => {
@@ -37,5 +39,9 @@ describe("validateSbxConfig", () => {
     for (const bad of ["", "has space:v1", "-t", "x;rm", 3]) {
       expect(() => validateSbxConfig({ kitDir: "/k", template: bad })).toThrow("sandbox.sbx: template must be an image reference");
     }
+  });
+  it("expands a leading ~/ in kitDir to the home folder", () => {
+    expect(validateSbxConfig({ kitDir: "~/kits/k" }).kitDir).toBe(join(homedir(), "kits/k"));
+    expect(() => validateSbxConfig({ kitDir: "~other/k" })).toThrow("sandbox.sbx: kitDir must be an absolute path");
   });
 });
