@@ -364,6 +364,13 @@ describe("structure: sandbox names stay inside their adapter folder", () => {
     expect(lines).toEqual(['import { sbxAdapter } from "./sbx/index.ts";', "sbx: sbxAdapter,"]);
   });
 
+  it("main.ts --preflight-only exits after the sandbox preflight, before any session or Jira client", () => {
+    const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
+    const stop = main.indexOf("if (preflightOnly)");
+    expect(stop).toBeGreaterThan(main.indexOf("adapter.preflight({"));
+    expect(stop).toBeLessThan(main.indexOf("credentialsFromEnv()"));
+  });
+
   it("main.ts fills the model alias names from Claude settings before the sandbox preflight", () => {
     const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
     const fill = main.indexOf("fillModelEnvFromClaudeSettings(process.env)");

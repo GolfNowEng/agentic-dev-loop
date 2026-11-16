@@ -15,7 +15,12 @@ describe("parseArgs", () => {
       session: undefined,
       once: false,
       stream: false,
+      preflightOnly: false,
     });
+  });
+
+  it("--preflight-only is a bare boolean", () => {
+    expect(parseArgs(["--project=p", "--preflight-only"]).preflightOnly).toBe(true);
   });
 
   it("reads every flag in --name=value form", () => {
@@ -26,6 +31,7 @@ describe("parseArgs", () => {
       session: "dev-2",
       once: true,
       stream: true,
+      preflightOnly: false,
     });
     expect(parseArgs(["--config=/tmp/x.json", "--phase=research"]).configPath).toBe("/tmp/x.json");
     expect(parseArgs(["--project=p", "--phase=worker"]).phase).toBe("worker");
