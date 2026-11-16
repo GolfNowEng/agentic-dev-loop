@@ -267,9 +267,9 @@ describe("sbx adapter: preflight", () => {
   const R = "fandango/webtarsthree";
   const CHECK = [
     "exec", P, "sh", "-c",
-    `node --version && git --version && jq --version && echo dl-step:git && git ls-remote git@github.com:${R}.git HEAD >/dev/null && echo dl-step:gh && gh api repos/${R} --jq .full_name`,
+    `node --version && git --version && jq --version && echo dl-step:direnv && direnv version && echo dl-step:git && git ls-remote git@github.com:${R}.git HEAD >/dev/null && echo dl-step:gh && gh api repos/${R} --jq .full_name`,
   ];
-  const NO_REPO_CHECK = ["exec", P, "sh", "-c", "node --version && git --version && jq --version"];
+  const NO_REPO_CHECK = ["exec", P, "sh", "-c", "node --version && git --version && jq --version && echo dl-step:direnv && direnv version"];
   const identity = (p: string) => p;
   const ctx = (over: Partial<{ kitDir: string; mounts: string[]; cwd: string; repoRoot: string; githubRepo: string | undefined }> = {}) => ({
     repoRoot: over.repoRoot ?? "/abs/root",
@@ -280,7 +280,8 @@ describe("sbx adapter: preflight", () => {
     config: { kitDir: over.kitDir ?? kit, envAllow: [] },
   });
   const BASE = "v24.3.0\ngit version 2.47.0\njq-1.7.1\n";
-  const GOOD = ok(`${BASE}dl-step:git\ndl-step:gh\n${R}\n`);
+  const DIRENV = `${BASE}dl-step:direnv\n2.32.1\n`;
+  const GOOD = ok(`${DIRENV}dl-step:git\ndl-step:gh\n${R}\n`);
   const answer = (exec: SbxResult) => (args: string[]) => (args[0] === "exec" ? exec : ok());
 
   it("creates, runs the check, and removes the instance", async () => {
@@ -348,44 +349,70 @@ describe("sbx adapter: preflight", () => {
   const pf = (exec: SbxResult, over = {}) =>
     makeSbxAdapter({ run: fakeRunner(answer(exec)).run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx(over));
 
+  it("a missing direnv names the template fix", async () => {
+    await expect(pf(fail(127, "sh: 1: direnv: not found", `${BASE}dl-step:direnv\n`))).rejects.toThrow(
+      "sandbox image has no direnv: add it to the template (npm run sbx:template; see docs/sandbox-sbx.md)",
+    );
+  });
+
+  it("checks the target repo's .envrc is allowed when the mounts include one", async () => {
+    const root = join(tmp, "dr-root");
+    const repo = join(tmp, "dr-repo");
+    mkdirSync(root, { recursive: true });
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(repo, ".envrc"), "export X=1\n");
+    const f = fakeRunner(answer(ok(`${DIRENV}dl-step:envrc\ndl-step:git\ndl-step:gh\n${R}\n`)));
+    await makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV, warn: () => {} }).preflight(
+      ctx({ repoRoot: root, mounts: [root, repo], cwd: root }),
+    );
+    expect(f.calls[1].args[4]).toContain(`echo dl-step:envrc && direnv exec '${repo}' true && echo dl-step:git`);
+  });
+
+  it("a blocked .envrc names the template rebuild, never direnv allow by the loop", async () => {
+    const r = fail(1, "direnv: error /x/.envrc is blocked. Run `direnv allow` to approve its content", `${DIRENV}dl-step:envrc\n`);
+    await expect(pf(r)).rejects.toThrow(
+      "the target repo's .envrc is not allowed inside the sandbox (it changed, or the template predates it): rebuild the template with npm run sbx:template (see docs/sandbox-sbx.md)",
+    );
+  });
+
   it("git blocked by the sandbox firewall names the host and the approval command", async () => {
-    const r = fail(128, "remote: Approval required for github.com:443.\nremote:\nfatal: unable to access", `${BASE}dl-step:git\n`);
+    const r = fail(128, "remote: Approval required for github.com:443.\nremote:\nfatal: unable to access", `${DIRENV}dl-step:git\n`);
     await expect(pf(r)).rejects.toThrow(
       "sandbox network blocked github.com (git): approve it yourself with sbx policy approval ls, or sbx policy allow network github.com (see docs/sandbox-sbx.md)",
     );
   });
 
   it("gh api blocked by the sandbox firewall names api.github.com", async () => {
-    const r = fail(1, 'non-200 OK status code: 403 Forbidden body: "Approval required for api.github.com:443.', `${BASE}dl-step:git\ndl-step:gh\n`);
+    const r = fail(1, 'non-200 OK status code: 403 Forbidden body: "Approval required for api.github.com:443.', `${DIRENV}dl-step:git\ndl-step:gh\n`);
     await expect(pf(r)).rejects.toThrow("sandbox network blocked api.github.com (gh api)");
   });
 
   it("a 404 from gh api means the sandbox's GitHub token cannot see the repo", async () => {
-    const r = fail(1, '{"message":"Not Found","status":"404"}gh: Not Found (HTTP 404)', `${BASE}dl-step:git\ndl-step:gh\n`);
+    const r = fail(1, '{"message":"Not Found","status":"404"}gh: Not Found (HTTP 404)', `${DIRENV}dl-step:git\ndl-step:gh\n`);
     await expect(pf(r)).rejects.toThrow(
       `the sandbox's GitHub token cannot see ${R} (gh api): check its repo access and any pending org approval, then sbx secret set github (see docs/sandbox-sbx.md)`,
     );
   });
 
   it("repository not found from git is the same token message", async () => {
-    const r = fail(128, "remote: Repository not found.\nfatal: repository not found", `${BASE}dl-step:git\n`);
+    const r = fail(128, "remote: Repository not found.\nfatal: repository not found", `${DIRENV}dl-step:git\n`);
     await expect(pf(r)).rejects.toThrow(`the sandbox's GitHub token cannot see ${R} (git)`);
   });
 
   it("an SSH failure from git means the template lacks the HTTPS rewrite", async () => {
-    const r = fail(128, "git@github.com: Permission denied (publickey).", `${BASE}dl-step:git\n`);
+    const r = fail(128, "git@github.com: Permission denied (publickey).", `${DIRENV}dl-step:git\n`);
     await expect(pf(r)).rejects.toThrow(
       'git uses SSH inside the sandbox: add git config --global url."https://github.com/".insteadOf git@github.com: to the template (see docs/sandbox-sbx.md)',
     );
   });
 
   it("any other GitHub failure names the step and the first stderr line", async () => {
-    const r = fail(1, "boom\nmore", `${BASE}dl-step:git\ndl-step:gh\n`);
+    const r = fail(1, "boom\nmore", `${DIRENV}dl-step:git\ndl-step:gh\n`);
     await expect(pf(r)).rejects.toThrow("sbx preflight failed (gh api): boom");
   });
 
   it("without a githubRepo, skips the GitHub checks", async () => {
-    const f = fakeRunner(answer(ok(BASE)));
+    const f = fakeRunner(answer(ok(DIRENV)));
     await makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx({ githubRepo: undefined }));
     expect(f.calls[1].args).toEqual(NO_REPO_CHECK);
   });
@@ -433,7 +460,7 @@ describe("sbx adapter: preflight", () => {
         await makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV, warn: (m) => void warnings.push(m) }).preflight(
           ctx({ repoRoot: root, mounts: [root, repo], cwd: root }),
         );
-        expect(warnings).toEqual([`WARNING: the sandbox agent can read .envrc in ${repo}; move it out during sandboxed runs if it holds secrets.`]);
+        expect(warnings).toEqual([`note: the sandbox agent can read .envrc in ${repo} (expected for local dev/INT settings; keep real secrets out of it).`]);
       } finally {
         rmSync(join(repo, ".envrc"));
       }
@@ -493,7 +520,7 @@ describe("sbx adapter: preflight", () => {
 
   it("defaults hostNodeMajor to the running node's major", async () => {
     const major = process.versions.node.split(".")[0];
-    const f = fakeRunner(answer(ok(`v${major}.0.0\ngit version 2.47.0\njq-1.7.1\ndl-step:git\ndl-step:gh\n`)));
+    const f = fakeRunner(answer(ok(`v${major}.0.0\ngit version 2.47.0\njq-1.7.1\ndl-step:direnv\n2.32.1\ndl-step:git\ndl-step:gh\n`)));
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, env: FULL_ENV }).preflight(ctx())).resolves.toBeUndefined();
   });
 });
