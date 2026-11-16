@@ -54,6 +54,14 @@ describe("sbx adapter: prepare", () => {
     expect(f.calls[0].args).toEqual(["create", "--name", N, "--no-progress", "--no-input", "--memory", "4g", "claude", "--kit", "/kit", "/abs/root"]);
   });
 
+  it("with a template, creates from it with --pull never, keeping the kit", async () => {
+    const f = fakeRunner();
+    await makeSbxAdapter({ run: f.run }).prepare({ instanceName: N, mounts: ["/abs/root"], config: { ...CFG, template: "docker.io/library/dev-loop-sbx:v1" } });
+    expect(f.calls[0].args).toEqual([
+      "create", "--name", N, "--no-progress", "--no-input", "-t", "docker.io/library/dev-loop-sbx:v1", "--pull", "never", "claude", "--kit", "/kit", "/abs/root",
+    ]);
+  });
+
   it("a non-zero exit throws with the code and the first stderr line", async () => {
     const f = fakeRunner(() => fail(2, "boom: no daemon\nsecond line"));
     await expect(makeSbxAdapter({ run: f.run }).prepare({ instanceName: N, mounts: [], config: CFG })).rejects.toThrow(
