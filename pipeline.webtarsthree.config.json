@@ -30,7 +30,6 @@
   },
   "ceilings": { "maxRunsPerDay": 100, "maxAttemptsPerTicket": 2, "maxCostPerTicketUsd": 50 },
   "sandbox": {
-    "adapter": "sbx",
     "mode": "discover",
     "sbx": {
       "kitDir": "~/Desktop/Repos/keystone-bedrock-kit",
