@@ -19,12 +19,13 @@ sbx v0.54.0.
 | `npm run sbx:status` | sandboxes, secrets (names only), policies, pending approvals, templates |
 | `npm run sbx:dashboard` | sbx's live dashboard (`sbx tui`); loop sandboxes appear and disappear here |
 | `npm run sbx:preflight` | the loop's startup checks, then exit; touches no ticket |
-| `npm run sbx:smoke` | one sandbox built exactly as the loop builds it, one tiny `claude -p` (haiku), then removed; a few cents |
+| `npm run sbx:smoke` | one sandbox built from the loop's create args (dev-loop folder only), one tiny `claude -p` (haiku), then removed; a few cents |
 | `npm run sbx:cleanup` | removes this project's leftover `dl-*` sandboxes |
 | `npm run sbx:template:build -- --tag=v3` | rebuilds the template from `sandbox/sbx/template.sh` ([templates.md](adapters/sbx/templates.md)) |
 | `npm run sandbox:approvals` | what a discover run was refused, with the allow lines to review |
 
-All take `-- --project=<name>` (default `webtarsthree`). The loop runs
+`cleanup`, `smoke` and `template:build` take `-- --project=<name>` (default
+`webtarsthree`); `sbx:preflight` is fixed to webtarsthree. The loop runs
 `claude -p` headless, so there is no Claude screen to attach to: watch
 `npm run sbx:dashboard` in one terminal and run the loop with `--stream` in
 another.

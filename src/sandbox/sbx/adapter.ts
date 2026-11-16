@@ -93,6 +93,24 @@ const stripPort = (host: string): string => host.replace(/:\d+$/, "");
 const HINTABLE_HOST = [/^[A-Za-z0-9.-]+$/, /^\[[0-9a-fA-F:]+\]$/];
 const isHintable = (host: string): boolean => HINTABLE_HOST.some((re) => re.test(host));
 
+/** The env files at the top of `dir` (sorted), the same rule preflight applies to each mount. */
+export function rootEnvFiles(dir: string): string[] {
+  return listDir(dir).filter(isEnvFile).sort();
+}
+
+/**
+ * `sbx policy log --json` stdout -> the allow lines a human may run, with the same host
+ * checks as inspect(). Undefined when the log isn't the expected shape.
+ */
+export function allowHintLines(stdout: string): string[] | undefined {
+  const hosts = blockedHosts(stdout);
+  if (hosts === undefined) return undefined;
+  const bare = [...new Set(hosts.map(stripPort))];
+  const lines = bare.filter(isHintable).map((x) => `sbx policy allow network ${x}`);
+  if (bare.some((x) => !isHintable(x))) lines.push("(not shown: a blocked host with unexpected characters)");
+  return lines;
+}
+
 export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
   const { run } = deps;
   const realpath = deps.realpath ?? realpathSync.native;
@@ -172,10 +190,10 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
         }
         // The && chain stops at the first failure; the last line printed names the step after it.
         const last = [...r.stdout.matchAll(/^dl-step:(\w+)$/gm)].at(-1)?.[1];
-        if (last === "direnv") throw new Error("sandbox image has no direnv: add it to the template (npm run sbx:template; see docs/sandbox-sbx.md)");
+        if (last === "direnv") throw new Error("sandbox image has no direnv: add it to the template (npm run sbx:template:build; see docs/sandbox-sbx.md)");
         if (last === "envrc") {
           throw new Error(
-            "the target repo's .envrc is not allowed inside the sandbox (it changed, or the template predates it): rebuild the template with npm run sbx:template (see docs/sandbox-sbx.md)",
+            "the target repo's .envrc is not allowed inside the sandbox (it changed, or the template predates it): rebuild the template with npm run sbx:template:build (see docs/sandbox-sbx.md)",
           );
         }
         const step = last === "gh" ? "gh api" : last === "git" ? "git" : undefined;

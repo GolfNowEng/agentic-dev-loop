@@ -4,7 +4,7 @@
 //   npm run sbx:status                       sandboxes, secrets, policies, pending approvals, templates
 //   npm run sbx:dashboard                    sbx's live TUI (watch the loop's sandboxes come and go)
 //   npm run sbx:cleanup [-- --project=webtarsthree]   remove this project's leftover dl-* sandboxes
-//   npm run sbx:smoke   [-- --project=webtarsthree]   one sandbox built exactly as the loop builds it,
+//   npm run sbx:smoke   [-- --project=webtarsthree]   one sandbox built from the loop's create args,
 //                                            one tiny `claude -p` inside it, then removed (a few cents)
 //   npm run sbx:template -- --tag=v3         explain the template rebuild
 //   npm run sbx:template:build -- --tag=v3 [--node=26]   rebuild it: build sandbox, sandbox/sbx/template.sh,
@@ -21,7 +21,7 @@ import { createInterface } from "node:readline/promises";
 import { FlagError, parseFlags } from "../src/core/flags.ts";
 import { fillModelEnvFromClaudeSettings } from "../src/core/claude-settings-env.ts";
 import { repoSlugFromUrl } from "../src/core/config.ts";
-import { createArgs } from "../src/sandbox/sbx/adapter.ts";
+import { allowHintLines, createArgs, rootEnvFiles } from "../src/sandbox/sbx/adapter.ts";
 import { validateSbxConfig } from "../src/sandbox/sbx/config.ts";
 import { sandboxInstancePrefix } from "../src/worker/skill-runner.ts";
 
@@ -67,16 +67,50 @@ function projectConfig() {
   return { slug, cfg: validateSbxConfig(raw.sandbox.sbx), repoPath: raw.targetRepo.path };
 }
 
-/** Asks the person at the terminal to type "allow". No terminal (an agent, a pipe): never allowed. */
+/**
+ * Asks the person at the terminal to type "allow". No terminal (an agent, a pipe): never allowed.
+ * Ctrl-D or Ctrl-C at the prompt counts as "no", so the caller's cleanup still runs.
+ */
 async function confirmAllow(dir) {
   if (!process.stdin.isTTY) {
     console.log(`\n${dir}/.envrc: not allowing it (no terminal to ask). Rerun from your own terminal to approve it.`);
     return false;
   }
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await rl.question(`\nAllow ${dir}/.envrc inside the template? Review it first. Type "allow" to approve: `);
-  rl.close();
-  return answer.trim() === "allow";
+  try {
+    const answer = await new Promise((done) => {
+      rl.on("close", () => done(""));
+      rl.on("SIGINT", () => rl.close());
+      rl.question(`\nAllow ${dir}/.envrc inside the template? Review it first. Type "allow" to approve: `).then(done, () => done(""));
+    });
+    return answer.trim() === "allow";
+  } finally {
+    rl.close();
+  }
+}
+
+/** The same rule preflight applies: no env file at the top of dev-loop's folder, which every sandbox mounts. */
+function refuseRootEnvFiles() {
+  const found = rootEnvFiles(ROOT);
+  if (found.length > 0) {
+    console.error(`${found[0]} is in ${ROOT}, which the sandbox can read: move it out of the repo and point DEVLOOP_ENV_FILE at it (see docs/sandbox-sbx.md)`);
+    process.exit(1);
+  }
+}
+
+/** True when dev-loop-sbx:<tag> exists. Exits (fails closed) when sbx's answer can't be read. */
+function templateTagExists(tag) {
+  const r = captured(["template", "ls", "--json"]);
+  let list;
+  try {
+    if (r.error || r.status !== 0) throw new Error(r.error?.message ?? (r.stderr || "").trim());
+    list = JSON.parse(r.stdout);
+    if (!Array.isArray(list)) throw new Error("not a list");
+  } catch (err) {
+    console.error(`Could not read sbx template ls --json (${err.message}); not building, so no existing tag is overwritten.`);
+    process.exit(1);
+  }
+  return list.some((t) => typeof t?.repository === "string" && /(^|\/)dev-loop-sbx$/.test(t.repository) && t.tag === tag);
 }
 
 function templateTag() {
@@ -124,6 +158,7 @@ switch (cmd) {
 
   case "smoke": {
     const { slug, cfg } = projectConfig();
+    refuseRootEnvFiles();
     fillModelEnvFromClaudeSettings(process.env);
     const name = `${sandboxInstancePrefix(slug)}smoke-${randomBytes(3).toString("hex")}`;
     // The same argv the loop's prepare uses, so the smoke test proves the real path.
@@ -139,13 +174,9 @@ switch (cmd) {
       console.error(String(err.message ?? err));
     } finally {
       sbx(["rm", "-f", name]);
-      const blocked = captured(["policy", "log", name, "--json"]);
-      try {
-        const hosts = [...new Set((JSON.parse(blocked.stdout).blocked ?? []).map((b) => b.host))];
-        if (hosts.length > 0) console.log(`\nBlocked during the smoke test (review, then allow yourself if you approve):\n${hosts.map((h) => `  sbx policy allow network ${h.replace(/:\d+$/, "")}`).join("\n")}`);
-      } catch {
-        /* no log: nothing to report */
-      }
+      const lines = allowHintLines(captured(["policy", "log", name, "--json"]).stdout ?? "");
+      if (lines === undefined) console.log(`\nCould not read the policy log; check: sbx policy log ${name}`);
+      else if (lines.length > 0) console.log(`\nBlocked during the smoke test (review, then allow yourself if you approve):\n${lines.map((l) => `  ${l}`).join("\n")}`);
     }
     process.exit(code);
   }
@@ -175,7 +206,8 @@ Then set "template": "docker.io/library/dev-loop-sbx:${tag}" and run npm run sbx
       process.exit(1);
     }
     const ref = `dev-loop-sbx:${tag}`;
-    if (captured(["template", "ls"]).stdout.split("\n").some((l) => /dev-loop-sbx\s/.test(l) && l.split(/\s+/)[1] === tag)) {
+    refuseRootEnvFiles();
+    if (templateTagExists(tag)) {
       console.error(`${ref} already exists. Pick a new --tag (keep the old one for rollback).`);
       process.exit(1);
     }

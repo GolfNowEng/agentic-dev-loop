@@ -351,7 +351,7 @@ describe("sbx adapter: preflight", () => {
 
   it("a missing direnv names the template fix", async () => {
     await expect(pf(fail(127, "sh: 1: direnv: not found", `${BASE}dl-step:direnv\n`))).rejects.toThrow(
-      "sandbox image has no direnv: add it to the template (npm run sbx:template; see docs/sandbox-sbx.md)",
+      "sandbox image has no direnv: add it to the template (npm run sbx:template:build; see docs/sandbox-sbx.md)",
     );
   });
 
@@ -371,7 +371,7 @@ describe("sbx adapter: preflight", () => {
   it("a blocked .envrc names the template rebuild, never direnv allow by the loop", async () => {
     const r = fail(1, "direnv: error /x/.envrc is blocked. Run `direnv allow` to approve its content", `${DIRENV}dl-step:envrc\n`);
     await expect(pf(r)).rejects.toThrow(
-      "the target repo's .envrc is not allowed inside the sandbox (it changed, or the template predates it): rebuild the template with npm run sbx:template (see docs/sandbox-sbx.md)",
+      "the target repo's .envrc is not allowed inside the sandbox (it changed, or the template predates it): rebuild the template with npm run sbx:template:build (see docs/sandbox-sbx.md)",
     );
   });
 
@@ -522,5 +522,27 @@ describe("sbx adapter: preflight", () => {
     const major = process.versions.node.split(".")[0];
     const f = fakeRunner(answer(ok(`v${major}.0.0\ngit version 2.47.0\njq-1.7.1\ndl-step:direnv\n2.32.1\ndl-step:git\ndl-step:gh\n`)));
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, env: FULL_ENV }).preflight(ctx())).resolves.toBeUndefined();
+  });
+});
+
+describe("helpers shared with scripts/sbx.mjs", () => {
+  it("rootEnvFiles lists env files at a folder's top, skipping *.example", async () => {
+    const { rootEnvFiles } = await import("../../../src/sandbox/sbx/adapter.ts");
+    const d = mkdtempSync(join(tmpdir(), "sbx-envfiles-"));
+    try {
+      for (const f of [".env", ".envrc", ".env.local", ".env.example", "README.md"]) writeFileSync(join(d, f), "");
+      expect(rootEnvFiles(d)).toEqual([".env", ".env.local", ".envrc"]);
+      expect(rootEnvFiles(join(d, "missing"))).toEqual([]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("allowHintLines checks hosts like inspect does: strips ports, drops unsafe hosts", async () => {
+    const { allowHintLines } = await import("../../../src/sandbox/sbx/adapter.ts");
+    const log = JSON.stringify({ blocked: [{ host: "a.example:443" }, { host: "a.example" }, { host: "x;curl evil" }] });
+    expect(allowHintLines(log)).toEqual(["sbx policy allow network a.example", "(not shown: a blocked host with unexpected characters)"]);
+    expect(allowHintLines("not json")).toBeUndefined();
+    expect(allowHintLines(JSON.stringify({ blocked: [] }))).toEqual([]);
   });
 });

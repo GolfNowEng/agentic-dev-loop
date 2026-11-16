@@ -202,7 +202,7 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
   - `kitDir` — required, an absolute path (or `~/...`) to the Keystone kit
     folder (must hold a kit `.yaml`).
   - `template` — optional, a saved `sbx template save` image such as
-    `"docker.io/library/dev-loop-sbx:v1"` (node, jq, the HTTPS rewrite).
+    `"docker.io/library/dev-loop-sbx:v1"` (node, jq, direnv, the HTTPS rewrite, the target `.envrc` approval).
     Created with `-t <ref> --pull never`; the kit is still applied.
   - `memory` — optional, e.g. `"4g"` or `"512m"`.
   - `envAllow` — optional list of bare env var names to pass into the
@@ -410,7 +410,7 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
   - `kitDir` — required, an absolute path (or `~/...`) to the Keystone kit
     folder (must hold a kit `.yaml`).
   - `template` — optional, a saved `sbx template save` image such as
-    `"docker.io/library/dev-loop-sbx:v1"` (node, jq, the HTTPS rewrite).
+    `"docker.io/library/dev-loop-sbx:v1"` (node, jq, direnv, the HTTPS rewrite, the target `.envrc` approval).
     Created with `-t <ref> --pull never`; the kit is still applied.
   - `memory` — optional, e.g. `"4g"` or `"512m"`.
   - `envAllow` — optional list of bare env var names to pass into the
