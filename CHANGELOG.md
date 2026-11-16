@@ -31,6 +31,11 @@ sbx adapter, not yet dogfooded). Design:
   filled from `~/.claude/settings.json` when the env lacks them.
   `--preflight-only`, and `npm run sbx:status|dashboard|preflight|cleanup|smoke|template`
   (none of them grants access).
+- `[core]` sbx template as code: `sandbox/sbx/template.sh` is the recipe and
+  `npm run sbx:template:build -- --tag=<t>` rebuilds it (direnv approval is
+  typed by you at a prompt, never given without a terminal). Preflight
+  checks `direnv` and that the target repo's `.envrc` is allowed inside the
+  sandbox, since the dev skill runs every command through `direnv exec`.
 - `[core]` Node 24 is now the minimum (engines >=24.0.0); a sandbox's node
   must match the host's major version (spec §4.8).
 - `[core]` A `claude -p` run that exits 0 but reports a failed result

@@ -13,7 +13,11 @@ export const CREATE_TIMEOUT_MS = 180_000;
 
 const APPROVE_HEADING = "Review, then run yourself if you approve:";
 /** Ordered so a failure is attributed by which version lines appeared before it. */
-const TOOLS_CHECK = "node --version && git --version && jq --version";
+const TOOLS_CHECK = "node --version && git --version && jq --version && echo dl-step:direnv && direnv version";
+/** Single-quoted for sh; mounts are real absolute paths but may hold spaces or @. */
+const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
+/** The skills run target-repo commands through `direnv exec`, which refuses an unallowed .envrc. */
+const envrcCheck = (dir: string): string => `echo dl-step:envrc && direnv exec ${shq(dir)} true`;
 /** A plain GitHub owner/repo; it is interpolated into a shell command. */
 const OWNER_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 /**
@@ -129,13 +133,16 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
       }
       // Every mount is readable inside the sandbox. dev-loop's own folder never needs an env
       // file (DEVLOOP_ENV_FILE points outside it), so one there is refused; elsewhere, warned.
+      const envrcDirs: string[] = [];
       for (const dir of new Set(ctx.mounts)) {
-        const found = listDir(dir).filter(isEnvFile).sort();
+        const entries = listDir(dir);
+        const found = entries.filter(isEnvFile).sort();
         if (found.length === 0) continue;
         if (dir === ctx.repoRoot) {
           throw new Error(`${found[0]} is in ${dir}, which the sandbox can read: move it out of the repo and point DEVLOOP_ENV_FILE at it (see docs/sandbox-sbx.md)`);
         }
-        warn(`WARNING: the sandbox agent can read ${found.join(", ")} in ${dir}; move it out during sandboxed runs if it holds secrets.`);
+        if (entries.includes(".envrc")) envrcDirs.push(dir);
+        warn(`note: the sandbox agent can read ${found.join(", ")} in ${dir} (expected for local dev/INT settings; keep real secrets out of it).`);
       }
       const cfg = sbxConfig(ctx.config);
       // Names only, never values.
@@ -156,7 +163,7 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
           throw new Error(`sbx preflight failed: ${err instanceof Error ? err.message : String(err)}`);
         }
         const repo = ctx.githubRepo;
-        const check = repo === undefined ? TOOLS_CHECK : `${TOOLS_CHECK} && ${githubCheck(repo)}`;
+        const check = [TOOLS_CHECK, ...envrcDirs.map(envrcCheck), ...(repo === undefined ? [] : [githubCheck(repo)])].join(" && ");
         const r = await run(["exec", name, "sh", "-c", check]);
         if (r.code === 0 && !r.timedOut && nodeMajor(r.stdout) === hostNodeMajor) return;
         if (r.timedOut || r.code === EXEC_INFRA_EXIT) throw new Error(`sbx preflight failed: ${firstLine(r.stderr)}`);
@@ -164,7 +171,14 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
           throw new Error(`sandbox image has no node ${hostNodeMajor}: add node to the template (see docs/sandbox-sbx.md)`);
         }
         // The && chain stops at the first failure; the last line printed names the step after it.
-        const step = /^dl-step:gh$/m.test(r.stdout) ? "gh api" : /^dl-step:git$/m.test(r.stdout) ? "git" : undefined;
+        const last = [...r.stdout.matchAll(/^dl-step:(\w+)$/gm)].at(-1)?.[1];
+        if (last === "direnv") throw new Error("sandbox image has no direnv: add it to the template (npm run sbx:template; see docs/sandbox-sbx.md)");
+        if (last === "envrc") {
+          throw new Error(
+            "the target repo's .envrc is not allowed inside the sandbox (it changed, or the template predates it): rebuild the template with npm run sbx:template (see docs/sandbox-sbx.md)",
+          );
+        }
+        const step = last === "gh" ? "gh api" : last === "git" ? "git" : undefined;
         if (step !== undefined && repo !== undefined) throw new Error(githubFailure(step, repo, r.stderr));
         if (/^git version /m.test(r.stdout)) {
           throw new Error("sandbox image has no jq: add jq to the template (see docs/sandbox-sbx.md)");

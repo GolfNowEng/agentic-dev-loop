@@ -21,7 +21,7 @@ sbx v0.54.0.
 | `npm run sbx:preflight` | the loop's startup checks, then exit; touches no ticket |
 | `npm run sbx:smoke` | one sandbox built exactly as the loop builds it, one tiny `claude -p` (haiku), then removed; a few cents |
 | `npm run sbx:cleanup` | removes this project's leftover `dl-*` sandboxes |
-| `npm run sbx:template -- --tag=v2` | prints the template rebuild steps |
+| `npm run sbx:template:build -- --tag=v3` | rebuilds the template from `sandbox/sbx/template.sh` ([templates.md](adapters/sbx/templates.md)) |
 | `npm run sandbox:approvals` | what a discover run was refused, with the allow lines to review |
 
 All take `-- --project=<name>` (default `webtarsthree`). The loop runs
@@ -29,53 +29,21 @@ All take `-- --project=<name>` (default `webtarsthree`). The loop runs
 `npm run sbx:dashboard` in one terminal and run the loop with `--stream` in
 another.
 
-## 1. Template: node, jq, the HTTPS rewrite
+## 1. Template: node, jq, direnv, the HTTPS rewrite
 
-The kit is a `FROM scratch` mixin, so it cannot supply node or jq. A saved
-template does. `npm run sbx:template` prints these steps:
+The kit is a `FROM scratch` mixin, so it can't supply tools. A saved
+template does. Build one:
 
 ```
-sbx create --name dl-template-build claude --kit ~/Desktop/Repos/keystone-bedrock-kit ~/Desktop/Repos/dev-loop
-sbx exec -it dl-template-build bash
-  curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
-  sudo apt-get install -y nodejs jq
-  git config --global url."https://github.com/".insteadOf git@github.com:
-  git config --global core.pager cat
-  node --version && jq --version && git --version && gh --version
-  exit
-sbx template save dl-template-build dev-loop-sbx:v1
-sbx rm dl-template-build
+sbx policy allow network deb.nodesource.com     # once, yourself
+npm run sbx:template:build -- --tag=v1
 ```
 
-Notes from the first build:
-
-- The user is `agent` and `sudo` works. The image is Debian 13 and already
-  has `git` and `gh`.
-- The nodesource script is blocked until you allow it:
-  `sbx policy allow network deb.nodesource.com`.
-- Don't use Debian's own `nodejs` package: it is node 20, and preflight
-  needs the host's major version.
-- `git ... --get-regexp` fails with "unable to execute pager": the image
-  has no pager. `core.pager cat` fixes it; `git --no-pager ...` works too.
-- The HTTPS rewrite matters because the target repos use `git@github.com:`
-  remotes and `~/.ssh` is not mounted. Over HTTPS the proxy adds the token.
-
-Then set `"template": "docker.io/library/dev-loop-sbx:v1"` in the project's
-`sandbox.sbx` block.
-
-### Upgrading node (e.g. the project moves to node 26)
-
-1. On the host: `nvm install 26 && nvm use 26` in the shell you start the
-   loop from. Preflight compares the sandbox with the node that starts the
-   loop.
-2. Rebuild under a new tag with `setup_26.x`:
-   `npm run sbx:template -- --tag=v2` prints the steps.
-3. Point the config at `dev-loop-sbx:v2` and run `npm run sbx:preflight`.
-4. Keep `v1` until `v2` has done a real run; rolling back is the one config
-   line.
-
-You don't need nvm inside the sandbox: each run gets a fresh sandbox, and
-`sbx exec` doesn't load `.bashrc`, so nvm's node would not be on the PATH.
+Type `allow` when it asks about the target repo's `.envrc`. Then set
+`"template": "docker.io/library/dev-loop-sbx:v1"` in the project's
+`sandbox.sbx` block. Packages live in `sandbox/sbx/template.sh`. Updating,
+upgrading node and rolling back:
+[adapters/sbx/templates.md](adapters/sbx/templates.md).
 
 ## 2. GitHub token
 
@@ -153,8 +121,10 @@ your Desktop. Anything inside the two mounts is readable by the agent, so:
   `DEVLOOP_ENV_FILE=$HOME/.config/dev-loop/.env`, exported in `~/.zshrc`.
   Preflight **refuses** a `.env`, `.envrc` or `.env.*` (except `*.example`)
   at the top of dev-loop's folder.
-- In the target repo, preflight only **warns** (e.g. webtarsthree's
-  `.envrc`). Move it out during sandboxed runs if it holds secrets.
+- In the target repo, preflight only notes it. webtarsthree's `.envrc` is
+  needed: the dev skill runs every command through `direnv exec`. Keep it
+  to local dev/INT settings. Preflight also checks that it is allowed
+  inside the sandbox (a template rebuild approves it).
 - The check covers only the top of each mount. A secret deeper in, such as
   `config/secrets.json`, is not caught.
 
