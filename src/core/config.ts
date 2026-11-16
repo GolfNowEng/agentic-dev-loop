@@ -253,39 +253,37 @@ export function roleView(config: Config, role: Role): ResearchView | DevView {
 // Label-version guard (worker mode, enforced from Task 15)
 // ---------------------------------------------------------------------------
 
-/** "pipeline:v2.0.0" (or "pipeline:v2.0.0:dev") -> "2.0.0"; an unversioned label -> null. */
-export function labelVersion(label: string): string | null {
-  return /^pipeline:v(\d+\.\d+\.\d+)(?::|$)/.exec(label)?.[1] ?? null;
+/** "pipeline:v2" (or "pipeline:v2:dev") -> "2"; an unversioned or full-version label -> null. */
+export function labelMajor(label: string): string | null {
+  return /^pipeline:v(\d+)(?::|$)/.exec(label)?.[1] ?? null;
 }
 
 const major = (version: string): string => version.split(".")[0];
 
 /**
- * Worker mode only runs a config whose research trigger label is versioned
- * with this package's major version, so v1 and v2 never take each other's
- * tickets. A minor/patch difference is allowed with a warning (2.x shares
- * the v2 labels).
+ * Worker mode only runs a config whose research trigger label carries this
+ * package's major version (pipeline:v<major>), so v1 and v2 never take each
+ * other's tickets. Minor and patch releases share the label, so it holds no
+ * minor/patch part to fall out of date.
  */
 export function checkLabelVersion(
   config: Config,
   pkgVersion: string,
-): { ok: true; warning?: string } | { ok: false; error: string } {
+): { ok: true } | { ok: false; error: string } {
   const label = config.roles.research.triggerLabel;
-  const version = labelVersion(label);
-  if (version === null) {
+  const expected = `pipeline:v${major(pkgVersion)}`;
+  const labelMaj = labelMajor(label);
+  if (labelMaj === null) {
     return {
       ok: false,
-      error: `worker mode needs a versioned trigger label (pipeline:v<major>.<minor>.<patch>); roles.research.triggerLabel is "${label}"`,
+      error: `worker mode needs a versioned trigger label (pipeline:v<major>); roles.research.triggerLabel is "${label}" (dev-loop ${pkgVersion} expects "${expected}")`,
     };
   }
-  if (major(version) !== major(pkgVersion)) {
+  if (labelMaj !== major(pkgVersion)) {
     return {
       ok: false,
-      error: `trigger label "${label}" is for ${version}, but this is dev-loop ${pkgVersion} (major version mismatch)`,
+      error: `trigger label "${label}" is for major version ${labelMaj}, but this is dev-loop ${pkgVersion} (major version mismatch)`,
     };
-  }
-  if (version !== pkgVersion) {
-    return { ok: true, warning: `trigger label "${label}" is for ${version}; running dev-loop ${pkgVersion}` };
   }
   return { ok: true };
 }

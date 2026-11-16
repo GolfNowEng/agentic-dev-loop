@@ -5,7 +5,7 @@ import {
   validateConfig,
   requiredPlaceholderFree,
   roleView,
-  labelVersion,
+  labelMajor,
   checkLabelVersion,
   ConfigError,
   repoSlugFromUrl,
@@ -140,7 +140,7 @@ describe("loadConfig", () => {
     const filePath = path.join(dir, "pipeline.webtarsthree.config.json");
     await fs.writeFile(filePath, JSON.stringify(makeV2Config()), "utf8");
     const config = await loadConfig(filePath);
-    expect(config.roles.dev.triggerLabel).toBe("pipeline:v2.0.0:dev");
+    expect(config.roles.dev.triggerLabel).toBe("pipeline:v2:dev");
   });
 
   it("throws a ConfigError naming the file when the content fails validation", async () => {
@@ -235,9 +235,9 @@ describe("validateConfig", () => {
   });
 
   it.each([
-    ['"', 'pipeline:v2.0.0" OR project = X'],
-    ["\\", "pipeline:v2.0.0\\"],
-    ["newline", "pipeline:v2.0.0\nOR"],
+    ['"', 'pipeline:v2" OR project = X'],
+    ["\\", "pipeline:v2\\"],
+    ["newline", "pipeline:v2\nOR"],
   ])("rejects a label or status value containing %s (they are interpolated into JQL)", (_name, bad) => {
     const setters: Array<[string, (c: Config) => void]> = [
       ["roles.research.triggerLabel", (c) => (c.roles.research.triggerLabel = bad)],
@@ -285,9 +285,9 @@ describe("the three project config files", () => {
 
   it("webtarsthree uses the v2 labels and excludes eval tickets from both polls", async () => {
     const c = await loadConfig(path.join(REPO_ROOT, "pipeline.webtarsthree.config.json"));
-    expect(c.roles.research.triggerLabel).toBe("pipeline:v2.0.0");
-    expect(c.roles.research.handoffLabel).toBe("pipeline:v2.0.0:dev");
-    expect(c.roles.dev.triggerLabel).toBe("pipeline:v2.0.0:dev");
+    expect(c.roles.research.triggerLabel).toBe("pipeline:v2");
+    expect(c.roles.research.handoffLabel).toBe("pipeline:v2:dev");
+    expect(c.roles.dev.triggerLabel).toBe("pipeline:v2:dev");
     expect(c.roles.research.pollJql).toContain('AND labels != "dev-loop-eval"');
     expect(c.roles.dev.pollJql).toContain('AND labels != "dev-loop-eval"');
     expect(c.roles.dev.pollJql).not.toContain("assignee");
@@ -398,8 +398,8 @@ describe("roleView", () => {
   it("research: its own labels/JQL/ceilings plus the shared jira values and maxRunsPerDay; no codeReviewFields", () => {
     const view = roleView(makeV2Config(), "research");
     expect(view).toEqual({
-      triggerLabel: "pipeline:v2.0.0",
-      handoffLabel: "pipeline:v2.0.0:dev",
+      triggerLabel: "pipeline:v2",
+      handoffLabel: "pipeline:v2:dev",
       pollJql: makeV2Config().roles.research.pollJql,
       repoLabel: "repo:org-repo",
       claimStatus: { from: "To Do", to: "In Progress" },
@@ -462,18 +462,20 @@ describe("requiredPlaceholderFree", () => {
   });
 });
 
-describe("labelVersion", () => {
-  it("extracts the version from a versioned pipeline label", () => {
-    expect(labelVersion("pipeline:v2.0.0")).toBe("2.0.0");
-    expect(labelVersion("pipeline:v2.0.0:dev")).toBe("2.0.0");
-    expect(labelVersion("pipeline:v12.3.45")).toBe("12.3.45");
+describe("labelMajor", () => {
+  it("extracts the major version from a pipeline label", () => {
+    expect(labelMajor("pipeline:v2")).toBe("2");
+    expect(labelMajor("pipeline:v2:dev")).toBe("2");
+    expect(labelMajor("pipeline:v12")).toBe("12");
   });
 
-  it("returns null for an unversioned label", () => {
-    expect(labelVersion("pipeline:research")).toBeNull();
-    expect(labelVersion("pipeline:dev")).toBeNull();
-    expect(labelVersion("pipeline:v2.0")).toBeNull();
-    expect(labelVersion("xpipeline:v2.0.0")).toBeNull();
+  it("returns null for an unversioned or full-version label", () => {
+    expect(labelMajor("pipeline:research")).toBeNull();
+    expect(labelMajor("pipeline:dev")).toBeNull();
+    expect(labelMajor("pipeline:v2.0.0")).toBeNull();
+    expect(labelMajor("pipeline:v2.0.0:dev")).toBeNull();
+    expect(labelMajor("pipeline:v2x")).toBeNull();
+    expect(labelMajor("xpipeline:v2")).toBeNull();
   });
 });
 
@@ -487,30 +489,29 @@ describe("checkLabelVersion", () => {
     });
   }
 
-  it("same version: ok, no warning", () => {
-    expect(checkLabelVersion(withLabel("pipeline:v2.0.0"), "2.0.0")).toEqual({ ok: true });
-  });
-
-  it("same major, different minor/patch: ok with a warning naming both versions", () => {
-    const result = checkLabelVersion(withLabel("pipeline:v2.0.0"), "2.1.0");
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.warning).toContain("2.0.0");
-      expect(result.warning).toContain("2.1.0");
-    }
+  it("same major: ok, no warning, whatever the minor/patch", () => {
+    expect(checkLabelVersion(withLabel("pipeline:v2"), "2.0.0")).toEqual({ ok: true });
+    expect(checkLabelVersion(withLabel("pipeline:v2"), "2.1.0")).toEqual({ ok: true });
+    expect(checkLabelVersion(withLabel("pipeline:v2"), "2.7.3")).toEqual({ ok: true });
   });
 
   it("unversioned trigger label: not ok", () => {
     const result = checkLabelVersion(withLabel("pipeline:research"), "2.0.0");
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("worker mode needs a versioned trigger label");
+    if (!result.ok) expect(result.error).toContain("worker mode needs a versioned trigger label (pipeline:v<major>)");
+  });
+
+  it("old full-version label: not ok, and names the new label", () => {
+    const result = checkLabelVersion(withLabel("pipeline:v2.0.0"), "2.1.0");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('"pipeline:v2"');
   });
 
   it("major mismatch: not ok", () => {
-    const result = checkLabelVersion(withLabel("pipeline:v1.0.0"), "2.0.0");
+    const result = checkLabelVersion(withLabel("pipeline:v1"), "2.0.0");
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("1.0.0");
+      expect(result.error).toContain("pipeline:v1");
       expect(result.error).toContain("2.0.0");
     }
   });
@@ -662,5 +663,16 @@ describe("validateConfig: optional sandbox block", () => {
 
   it("rejects a non-object sandbox", () => {
     expect(() => validateConfig(withSandbox("none"))).toThrow("sandbox must be an object");
+  });
+});
+
+describe("shipped configs use the major-only label", () => {
+  it("webtarsthree and eval: pipeline:v2 / pipeline:v2:dev", async () => {
+    for (const project of ["webtarsthree", "eval"]) {
+      const c = await loadConfig(path.join(REPO_ROOT, `pipeline.${project}.config.json`));
+      expect(c.roles.research.triggerLabel).toBe("pipeline:v2");
+      expect(c.roles.research.handoffLabel).toBe("pipeline:v2:dev");
+      expect(c.roles.dev.triggerLabel).toBe("pipeline:v2:dev");
+    }
   });
 });

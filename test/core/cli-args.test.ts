@@ -83,9 +83,9 @@ describe("preflight", () => {
     expect(preflight(w, "worker", "2.0.0")).toEqual({ warnings: [] });
   });
 
-  it("worker mode: a minor/patch label difference is a warning, a major one refuses", () => {
+  it("worker mode: a minor/patch difference passes silently, a major one refuses", () => {
     const c = makeV2Config();
-    expect(preflight(c, "worker", "2.1.0").warnings).toEqual([expect.stringContaining("2.1.0")]);
+    expect(preflight(c, "worker", "2.1.0")).toEqual({ warnings: [] });
     expect(() => preflight(c, "worker", "3.0.0")).toThrow(/major version mismatch/);
   });
 

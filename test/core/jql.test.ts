@@ -15,19 +15,19 @@ describe("buildPollJql", () => {
       "dev",
     );
     expect(buildPollJql(view, { assigneeAccountId: ASSIGNEE })).toBe(
-      `labels = "pipeline:v2.0.0:dev" AND labels = "repo:org-repo" AND assignee = "${ASSIGNEE}" AND status != "Blocked" AND status != "Code Review" ORDER BY created ASC`,
+      `labels = "pipeline:v2:dev" AND labels = "repo:org-repo" AND assignee = "${ASSIGNEE}" AND status != "Blocked" AND status != "Code Review" ORDER BY created ASC`,
     );
   });
 
   it("fills the research role's {label} with its own trigger label", () => {
     const jql = buildPollJql(roleView(makeV2Config(), "research"), { assigneeAccountId: ASSIGNEE });
-    expect(jql).toBe('labels = "pipeline:v2.0.0" AND labels = "repo:org-repo" AND status = "To Do" ORDER BY created ASC');
+    expect(jql).toBe('labels = "pipeline:v2" AND labels = "repo:org-repo" AND status = "To Do" ORDER BY created ASC');
   });
 
   it("fills a placeholder that appears more than once", () => {
     const view = roleView(makeV2Config((c) => (c.roles.research.pollJql = 'labels = "{label}" OR labels = "{label}"')), "research");
     expect(buildPollJql(view, { assigneeAccountId: ASSIGNEE })).toBe(
-      'labels = "pipeline:v2.0.0" OR labels = "pipeline:v2.0.0"',
+      'labels = "pipeline:v2" OR labels = "pipeline:v2"',
     );
   });
 
@@ -51,7 +51,7 @@ describe("buildPollJql", () => {
     const view = roleView(makeV2Config(), "research");
     expect(view.pollJql).not.toContain("{assignee}");
     expect(buildPollJql(view, { assigneeAccountId: "" })).toBe(
-      'labels = "pipeline:v2.0.0" AND labels = "repo:org-repo" AND status = "To Do" ORDER BY created ASC',
+      'labels = "pipeline:v2" AND labels = "repo:org-repo" AND status = "To Do" ORDER BY created ASC',
     );
   });
 

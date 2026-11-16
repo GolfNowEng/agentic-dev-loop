@@ -13,13 +13,13 @@ const BASE: Config = {
   },
   roles: {
     research: {
-      triggerLabel: "pipeline:v2.0.0",
-      handoffLabel: "pipeline:v2.0.0:dev",
+      triggerLabel: "pipeline:v2",
+      handoffLabel: "pipeline:v2:dev",
       pollJql: 'labels = "{label}" AND labels = "{repoLabel}" AND status = "To Do" ORDER BY created ASC',
       ceilings: { maxCostPerRunUsd: 50, runTimeoutMin: 120 },
     },
     dev: {
-      triggerLabel: "pipeline:v2.0.0:dev",
+      triggerLabel: "pipeline:v2:dev",
       pollJql:
         'labels = "{label}" AND labels = "{repoLabel}" AND status != "{bouncedStatus}" AND status != "{prOpenStatus}" ORDER BY created ASC',
       codeReviewFields: {

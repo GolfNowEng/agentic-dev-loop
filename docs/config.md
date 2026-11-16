@@ -67,16 +67,17 @@ below names a v1 key, the mapping is: `jira.triggerLabel` (research) →
   and `src/worker/recover.ts`, the per-ticket cap as each spawn's
   `--max-budget-usd` in `src/worker/cycle-steps.ts`.
 - **Labels and the version guard.** `webtarsthree` uses the v2 labels:
-  research polls `pipeline:v2.0.0` and hands off to `pipeline:v2.0.0:dev`,
+  research polls `pipeline:v2` and hands off to `pipeline:v2:dev`,
   which dev polls. Its dev poll has no assignee clause (the v2-only label
   already scopes it), and both polls exclude `dev-loop-eval` tickets. The
   `catalog-ui-*` configs keep the v1 labels (`pipeline:research` /
-  `pipeline:dev`) until cutover. `checkLabelVersion(config, pkgVersion)`
-  refuses an unversioned or other-major trigger label, and warns on a
-  minor/patch difference. Worker mode (`--phase=worker`, the default) enforces
-  it at startup, after the placeholder check: ok:false exits 1 (so the
-  `catalog-ui-*` configs are refused until cutover), a warning is logged.
-  `--phase=research|dev` do not.
+  `pipeline:dev`) until cutover. The label carries the major version only
+  (`pipeline:v<major>`), so minor and patch releases share it.
+  `checkLabelVersion(config, pkgVersion)` refuses an unversioned label, the
+  old full-version form (`pipeline:v2.0.0`), and another major's label. Worker
+  mode (`--phase=worker`, the default) enforces it at startup, after the
+  placeholder check: ok:false exits 1 (so the `catalog-ui-*` configs are
+  refused until cutover). `--phase=research|dev` do not.
 - `pipeline.loop.config.json` (poll interval, post-run delay) is unchanged and
   is read from the repo root by both phases.
 
