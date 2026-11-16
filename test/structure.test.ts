@@ -364,6 +364,13 @@ describe("structure: sandbox names stay inside their adapter folder", () => {
     expect(lines).toEqual(['import { sbxAdapter } from "./sbx/index.ts";', "sbx: sbxAdapter,"]);
   });
 
+  it("main.ts fills the model alias names from Claude settings before the sandbox preflight", () => {
+    const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
+    const fill = main.indexOf("fillModelEnvFromClaudeSettings(process.env)");
+    expect(fill).toBeGreaterThan(-1);
+    expect(fill).toBeLessThan(main.indexOf("adapter.preflight({"));
+  });
+
   it("main.ts gives preflight a project-scoped throwaway instance name and the repo root as cwd", () => {
     const main = readFileSync(join(ROOT, "src/main.ts"), "utf8");
     // Built only for a real sandbox, so a long slug never fails the default (none) path.
