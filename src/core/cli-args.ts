@@ -24,10 +24,12 @@ export interface CliArgs {
   sandbox?: string;
   once: boolean;
   stream: boolean;
+  /** Run the startup checks (config, sandbox preflight) and exit 0, touching no ticket. */
+  preflightOnly: boolean;
 }
 
 const PHASES: readonly string[] = ["worker", "research", "dev"];
-const SPEC = { values: ["--project", "--config", "--phase", "--session", "--sandbox"], bools: ["--once", "--stream"] } as const;
+const SPEC = { values: ["--project", "--config", "--phase", "--session", "--sandbox"], bools: ["--once", "--stream", "--preflight-only"] } as const;
 
 export function parseArgs(argv: string[]): CliArgs {
   const { values, bools } = parseFlags(argv, SPEC, "main.ts");
@@ -54,6 +56,7 @@ export function parseArgs(argv: string[]): CliArgs {
     sandbox: values["--sandbox"],
     once: bools.has("--once"),
     stream: bools.has("--stream"),
+    preflightOnly: bools.has("--preflight-only"),
   };
 }
 

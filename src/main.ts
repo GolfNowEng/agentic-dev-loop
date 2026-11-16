@@ -1,6 +1,6 @@
 /**
  * CLI entrypoint:
- *   `node --env-file="${DEVLOOP_ENV_FILE:-.env}" src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--sandbox=<name>] [--once] [--stream]`
+ *   `node --env-file="${DEVLOOP_ENV_FILE:-.env}" src/main.ts --project <name> [--phase worker|research|dev] [--session <name>] [--sandbox=<name>] [--once] [--stream] [--preflight-only]`
  * `--config <path>` also works as a fallback for an arbitrary path outside
  * the naming convention; passing both --project and --config is an error
  * (src/core/cli-args.ts parses and tests all of it).
@@ -261,7 +261,7 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
 let activePhase: Phase | null = null;
 
 async function main(): Promise<void> {
-  const { phase, project, configPath, session: requestedSession, sandbox: sandboxName, once, stream } = parseArgs(process.argv.slice(2));
+  const { phase, project, configPath, session: requestedSession, sandbox: sandboxName, once, stream, preflightOnly } = parseArgs(process.argv.slice(2));
   activePhase = phase;
   const prefix = prefixOf(phase);
   const roles = rolesOf(phase);
@@ -301,6 +301,10 @@ async function main(): Promise<void> {
     githubRepo: config.github.repo,
     config: sandboxSelection.config,
   });
+  if (preflightOnly) {
+    logError(`[${prefix}] preflight passed (sandbox: ${sandboxSelection.adapter.name}); --preflight-only, exiting.`);
+    return;
+  }
 
   const credentials = credentialsFromEnv();
   const assigneeAccountId = assigneeAccountIdFromEnv();
