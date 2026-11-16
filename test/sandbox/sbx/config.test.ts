@@ -45,3 +45,16 @@ describe("validateSbxConfig", () => {
     expect(() => validateSbxConfig({ kitDir: "~other/k" })).toThrow("sandbox.sbx: kitDir must be an absolute path");
   });
 });
+
+describe("validateSbxConfig: mcp", () => {
+  it("is absent by default and accepts a list of server names", () => {
+    expect(validateSbxConfig({ kitDir: "/k" }).mcp).toBeUndefined();
+    expect(validateSbxConfig({ kitDir: "/k", mcp: ["atlassian"] }).mcp).toEqual(["atlassian"]);
+  });
+  it("rejects a non-array, a non-name entry, or a flag-shaped entry", () => {
+    expect(() => validateSbxConfig({ kitDir: "/k", mcp: "atlassian" })).toThrow("sandbox.sbx: mcp must be an array of MCP server names");
+    expect(() => validateSbxConfig({ kitDir: "/k", mcp: [5] })).toThrow("sandbox.sbx: mcp must be an array of MCP server names");
+    expect(() => validateSbxConfig({ kitDir: "/k", mcp: ["--all"] })).toThrow('sandbox.sbx: mcp entry "--all" must be a server name');
+    expect(() => validateSbxConfig({ kitDir: "/k", mcp: ["a,b"] })).toThrow('sandbox.sbx: mcp entry "a,b" must be a server name');
+  });
+});
