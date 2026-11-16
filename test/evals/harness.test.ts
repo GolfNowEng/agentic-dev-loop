@@ -474,7 +474,7 @@ describe("evals/jira.mjs create request body", () => {
     expect(body.fields.customfield_10002).toBe(1);
     expect(body.fields.project).toEqual({ key: "TARS" });
     expect(body.fields.summary).toBe("[dev-loop-eval] x");
-    expect(body.fields.labels).toEqual(["repo:webtarsthree", "dev-loop-eval", "pipeline:v2.0.0"]);
+    expect(body.fields.labels).toEqual(["repo:webtarsthree", "dev-loop-eval", "pipeline:v2"]);
     expect(body.fields.description.content).toHaveLength(2);
     expect(body).not.toHaveProperty("transition");
     expect(body.fields).not.toHaveProperty("parent");

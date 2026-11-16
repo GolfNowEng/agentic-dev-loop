@@ -90,7 +90,7 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
 
     const swap = idx(h, (e) => e[0] === "swapLabel");
     const devRun = idx(h, (e) => e[0] === "runSkill" && e[1] === "dev");
-    expect(h.events[swap]).toEqual(["swapLabel", "TARS-1", "pipeline:v2.0.0", "pipeline:v2.0.0:dev"]);
+    expect(h.events[swap]).toEqual(["swapLabel", "TARS-1", "pipeline:v2", "pipeline:v2:dev"]);
     expect(swap).toBeGreaterThan(-1);
     expect(devRun).toBeGreaterThan(swap);
     expect(h.events[devRun][2]).toBe("TARS-1");

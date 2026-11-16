@@ -15,8 +15,8 @@ import type { RunSkillFn, RunSkillResult } from "../../src/core/run-skill.ts";
 import type { WorkerDeps } from "../../src/worker/cycle.ts";
 import { makeV2Config } from "../fixtures/config.ts";
 
-export const RESEARCH_LABEL = "pipeline:v2.0.0";
-export const DEV_LABEL = "pipeline:v2.0.0:dev";
+export const RESEARCH_LABEL = "pipeline:v2";
+export const DEV_LABEL = "pipeline:v2:dev";
 export const T0 = Date.parse("2026-11-11T12:00:00.000Z");
 
 export type Event = unknown[];

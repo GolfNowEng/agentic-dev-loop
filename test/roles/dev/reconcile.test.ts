@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/** research trigger "pipeline:v2.0.0", handoff = dev trigger "pipeline:dev". */
+/** research trigger "pipeline:v2", handoff = dev trigger "pipeline:dev". */
 function makeConfig(): Config {
   return makeV2Config((c) => {
     c.roles.research.handoffLabel = "pipeline:dev";
@@ -337,7 +337,7 @@ describe("reconcileMergedTickets -- v1/v2 logs and labels", () => {
       const jiraClient = makeJira();
       await reconcileMergedTickets({ jiraClient, githubClient: makeGh(), config: makeConfig(), ...at(root), execGhPrView: vi.fn(async () => merged()), now: NOW });
       const labels = (jiraClient.removeLabel as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]).sort();
-      expect(labels).toEqual(["pipeline:dev", "pipeline:research", "pipeline:v2.0.0"]);
+      expect(labels).toEqual(["pipeline:dev", "pipeline:research", "pipeline:v2"]);
       for (const c of (jiraClient.removeLabel as ReturnType<typeof vi.fn>).mock.calls) expect(c[0]).toBe("PROJ-1");
     });
   });
@@ -345,7 +345,7 @@ describe("reconcileMergedTickets -- v1/v2 logs and labels", () => {
   it("one failing label removal does not stop the others", async () => {
     await withRunsLog([makeRunLogLine()], async (root) => {
       const removeLabel = vi.fn(async (_k: string, l: string) => {
-        if (l === "pipeline:v2.0.0") throw new Error("jira 500");
+        if (l === "pipeline:v2") throw new Error("jira 500");
       });
       const result = await reconcileMergedTickets({ jiraClient: makeJira({ removeLabel }), githubClient: makeGh(), config: makeConfig(), ...at(root), execGhPrView: vi.fn(async () => merged()), now: NOW });
       expect(removeLabel).toHaveBeenCalledTimes(3);
