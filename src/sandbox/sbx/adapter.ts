@@ -57,7 +57,7 @@ function sbxConfig(raw: unknown): SbxConfig {
   };
 }
 
-function createArgs(name: string, cfg: SbxConfig, mounts: string[]): string[] {
+export function createArgs(name: string, cfg: SbxConfig, mounts: string[]): string[] {
   return [
     "create", "--name", name, "--no-progress", "--no-input",
     ...(cfg.memory ? ["--memory", cfg.memory] : []),
