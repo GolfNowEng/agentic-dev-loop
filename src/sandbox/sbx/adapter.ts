@@ -36,11 +36,22 @@ function sbxConfig(raw: unknown): SbxConfig {
   if (typeof o !== "object" || o === null || typeof o.kitDir !== "string") {
     throw new Error("sandbox.sbx: no kitDir in the adapter config (was it validated?)");
   }
-  return { kitDir: o.kitDir, envAllow: Array.isArray(o.envAllow) ? o.envAllow : [], ...(o.memory !== undefined ? { memory: o.memory } : {}) };
+  return {
+    kitDir: o.kitDir,
+    envAllow: Array.isArray(o.envAllow) ? o.envAllow : [],
+    ...(o.memory !== undefined ? { memory: o.memory } : {}),
+    ...(o.template !== undefined ? { template: o.template } : {}),
+  };
 }
 
 function createArgs(name: string, cfg: SbxConfig, mounts: string[]): string[] {
-  return ["create", "--name", name, "--no-progress", "--no-input", ...(cfg.memory ? ["--memory", cfg.memory] : []), "claude", "--kit", cfg.kitDir, ...mounts];
+  return [
+    "create", "--name", name, "--no-progress", "--no-input",
+    ...(cfg.memory ? ["--memory", cfg.memory] : []),
+    // A saved local template must not be pulled; the kit still supplies network policy and credentials.
+    ...(cfg.template ? ["-t", cfg.template, "--pull", "never"] : []),
+    "claude", "--kit", cfg.kitDir, ...mounts,
+  ];
 }
 
 /** Each blocked[].host, or undefined when the log isn't the expected shape. */

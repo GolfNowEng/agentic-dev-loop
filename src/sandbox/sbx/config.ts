@@ -3,6 +3,8 @@
 export interface SbxConfig {
   kitDir: string;
   memory?: string;
+  /** A saved `sbx template save` image; created with `-t <ref> --pull never`. */
+  template?: string;
   envAllow: string[];
 }
 
@@ -13,7 +15,9 @@ export const DEFAULT_ENV_ALLOW = [
   "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS",
 ];
 
-const KNOWN = new Set(["kitDir", "memory", "envAllow"]);
+const KNOWN = new Set(["kitDir", "memory", "template", "envAllow"]);
+/** An OCI-style image reference: no spaces or shell characters, never a flag. */
+const IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._\/:@-]*$/;
 const SECRET_SHAPED = /TOKEN|SECRET|KEY|PASSWORD|AUTH/i;
 const MEMORY = /^[1-9][0-9]*[kmg]b?$/i;
 
@@ -29,6 +33,12 @@ export function validateSbxConfig(raw: unknown): SbxConfig {
   if (o.memory !== undefined) {
     if (typeof o.memory !== "string" || !MEMORY.test(o.memory)) throw new Error('sandbox.sbx: memory must look like "4g" or "512m"');
     cfg.memory = o.memory;
+  }
+  if (o.template !== undefined) {
+    if (typeof o.template !== "string" || !IMAGE_REF.test(o.template)) {
+      throw new Error('sandbox.sbx: template must be an image reference like "docker.io/library/dev-loop-sbx:v1"');
+    }
+    cfg.template = o.template;
   }
   let extra: unknown[] = [];
   if (o.envAllow !== undefined) {
