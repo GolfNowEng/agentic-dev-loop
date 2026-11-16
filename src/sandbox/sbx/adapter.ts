@@ -13,7 +13,20 @@ export const CREATE_TIMEOUT_MS = 180_000;
 
 const APPROVE_HEADING = "Review, then run yourself if you approve:";
 /** Ordered so a failure is attributed by which version lines appeared before it. */
-const PREFLIGHT_CHECK = "node --version && git --version && jq --version && gh auth status";
+const TOOLS_CHECK = "node --version && git --version && jq --version";
+/** A plain GitHub owner/repo; it is interpolated into a shell command. */
+const OWNER_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+/**
+ * Real reachability, not `gh auth status` (which reports "not logged in"
+ * when the proxy injects the token per request). git goes through the SSH
+ * URL on purpose, so a template without the HTTPS rewrite fails here.
+ * Each `dl-step:` marker names the step that runs after it.
+ */
+const githubCheck = (repo: string): string =>
+  `echo dl-step:git && git ls-remote git@github.com:${repo}.git HEAD >/dev/null && echo dl-step:gh && gh api repos/${repo} --jq .full_name`;
+/** Root-level env files a sandboxed agent could read; `*.example` templates are fine. */
+const ENV_FILE = /^\.env(rc)?(\..+)?$/;
+const isEnvFile = (n: string): boolean => ENV_FILE.test(n) && !n.endsWith(".example");
 /** sbx exec's own failure (e.g. a missing sandbox); the inner command's code passes through otherwise. */
 const EXEC_INFRA_EXIT = 125;
 
@@ -111,6 +124,19 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
           throw new Error(`sandbox paths must match the disk's real case: "${p}" is "${real}" on disk; cd into the real path and restart${fromConfig}`);
         }
       }
+      if (ctx.githubRepo !== undefined && !OWNER_REPO.test(ctx.githubRepo)) {
+        throw new Error(`github.repo ${JSON.stringify(ctx.githubRepo)} is not a plain owner/repo`);
+      }
+      // Every mount is readable inside the sandbox. dev-loop's own folder never needs an env
+      // file (DEVLOOP_ENV_FILE points outside it), so one there is refused; elsewhere, warned.
+      for (const dir of new Set(ctx.mounts)) {
+        const found = listDir(dir).filter(isEnvFile).sort();
+        if (found.length === 0) continue;
+        if (dir === ctx.repoRoot) {
+          throw new Error(`${found[0]} is in ${dir}, which the sandbox can read: move it out of the repo and point DEVLOOP_ENV_FILE at it (see docs/sandbox-sbx.md)`);
+        }
+        warn(`WARNING: the sandbox agent can read ${found.join(", ")} in ${dir}; move it out during sandboxed runs if it holds secrets.`);
+      }
       const cfg = sbxConfig(ctx.config);
       // Names only, never values.
       const unsetModels = DEFAULT_ENV_ALLOW.filter((n) => /_MODEL$/.test(n) && !env[n]);
@@ -119,13 +145,8 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
           `WARNING: ${unsetModels.join(", ")} not set; inside the sandbox the sonnet/opus/haiku aliases fall back to stock model ids. Set them in your DEVLOOP_ENV_FILE.`,
         );
       }
-      let entries: string[] = [];
-      try {
-        entries = readdirSync(cfg.kitDir);
-      } catch {
-        // Missing or unreadable: same refusal as an empty dir.
-      }
-      if (!entries.some((e) => e.endsWith(".yaml"))) throw new Error(`sandbox.sbx.kitDir "${cfg.kitDir}" has no kit yaml`);
+      // Missing or unreadable: same refusal as an empty dir.
+      if (!listDir(cfg.kitDir).some((e) => e.endsWith(".yaml"))) throw new Error(`sandbox.sbx.kitDir "${cfg.kitDir}" has no kit yaml`);
 
       const name = ctx.instanceName;
       try {
@@ -134,18 +155,19 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
         } catch (err) {
           throw new Error(`sbx preflight failed: ${err instanceof Error ? err.message : String(err)}`);
         }
-        const r = await run(["exec", name, "sh", "-c", PREFLIGHT_CHECK]);
+        const repo = ctx.githubRepo;
+        const check = repo === undefined ? TOOLS_CHECK : `${TOOLS_CHECK} && ${githubCheck(repo)}`;
+        const r = await run(["exec", name, "sh", "-c", check]);
         if (r.code === 0 && !r.timedOut && nodeMajor(r.stdout) === hostNodeMajor) return;
         if (r.timedOut || r.code === EXEC_INFRA_EXIT) throw new Error(`sbx preflight failed: ${firstLine(r.stderr)}`);
         if (nodeMajor(r.stdout) !== hostNodeMajor) {
-          throw new Error(`sandbox image has no node ${hostNodeMajor}: add node to the kit (see docs/sandbox-sbx.md)`);
+          throw new Error(`sandbox image has no node ${hostNodeMajor}: add node to the template (see docs/sandbox-sbx.md)`);
         }
-        // The && chain stops at the first failure; the last version line printed names the step after it.
-        if (/^jq-/m.test(r.stdout)) {
-          throw new Error("gh is not logged in inside the sandbox: run sbx secret set github (see docs/sandbox-sbx.md)");
-        }
+        // The && chain stops at the first failure; the last line printed names the step after it.
+        const step = /^dl-step:gh$/m.test(r.stdout) ? "gh api" : /^dl-step:git$/m.test(r.stdout) ? "git" : undefined;
+        if (step !== undefined && repo !== undefined) throw new Error(githubFailure(step, repo, r.stderr));
         if (/^git version /m.test(r.stdout)) {
-          throw new Error("sandbox image has no jq: add jq to the kit (see docs/sandbox-sbx.md)");
+          throw new Error("sandbox image has no jq: add jq to the template (see docs/sandbox-sbx.md)");
         }
         throw new Error(`sbx preflight failed: ${firstLine(r.stderr)}`);
       } finally {
@@ -205,6 +227,30 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
 
     teardown: (h) => remove(h.instanceName),
   };
+}
+
+function listDir(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+/** Turns a failed GitHub step into the fix: firewall, token access, or the SSH rewrite. */
+function githubFailure(step: "git" | "gh api", repo: string, stderr: string): string {
+  const blocked = /Approval required for ([A-Za-z0-9.-]+)/.exec(stderr);
+  if (blocked) {
+    const host = blocked[1];
+    return `sandbox network blocked ${host} (${step}): approve it yourself with sbx policy approval ls, or sbx policy allow network ${host} (see docs/sandbox-sbx.md)`;
+  }
+  if (/Not Found|HTTP 404|repository not found/i.test(stderr)) {
+    return `the sandbox's GitHub token cannot see ${repo} (${step}): check its repo access and any pending org approval, then sbx secret set github (see docs/sandbox-sbx.md)`;
+  }
+  if (/Permission denied \(publickey\)|Host key verification failed|ssh:/i.test(stderr)) {
+    return 'git uses SSH inside the sandbox: add git config --global url."https://github.com/".insteadOf git@github.com: to the template (see docs/sandbox-sbx.md)';
+  }
+  return `sbx preflight failed (${step}): ${firstLine(stderr)}`;
 }
 
 function nodeMajor(stdout: string): number | undefined {

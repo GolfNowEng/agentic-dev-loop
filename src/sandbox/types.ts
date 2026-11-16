@@ -27,6 +27,8 @@ export interface PreflightCtx {
   cwd: string;
   /** A throwaway, project-scoped name for an adapter that needs a test instance. */
   instanceName: string;
+  /** The project's "owner/repo" (config github.repo), for an adapter that checks GitHub reachability. */
+  githubRepo?: string;
   config: unknown;
 }
 

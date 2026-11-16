@@ -332,7 +332,7 @@ describe("sbx adapter: preflight", () => {
   it("refuses a node major different from the host's, and still removes the instance", async () => {
     const f = fakeRunner(answer(ok("v22.1.0\ngit version 2.47.0\n")));
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
-      "sandbox image has no node 24: add node to the kit (see docs/sandbox-sbx.md)",
+      "sandbox image has no node 24: add node to the template (see docs/sandbox-sbx.md)",
     );
     expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
@@ -340,7 +340,7 @@ describe("sbx adapter: preflight", () => {
   it("refuses a missing node", async () => {
     const f = fakeRunner(answer(fail(127, "sh: 1: node: not found")));
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
-      "sandbox image has no node 24: add node to the kit (see docs/sandbox-sbx.md)",
+      "sandbox image has no node 24: add node to the template (see docs/sandbox-sbx.md)",
     );
     expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
@@ -443,7 +443,7 @@ describe("sbx adapter: preflight", () => {
   it("refuses a missing jq (git ran, jq did not), and still removes the instance", async () => {
     const f = fakeRunner(answer(fail(127, "sh: 1: jq: not found", "v24.3.0\ngit version 2.47.0\n")));
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
-      "sandbox image has no jq: add jq to the kit (see docs/sandbox-sbx.md)",
+      "sandbox image has no jq: add jq to the template (see docs/sandbox-sbx.md)",
     );
     expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });

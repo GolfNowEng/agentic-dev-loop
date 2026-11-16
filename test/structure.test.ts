@@ -370,6 +370,7 @@ describe("structure: sandbox names stay inside their adapter folder", () => {
     expect(main).toMatch(/sandboxSelection\.adapter\.name !== DEFAULT_ADAPTER \? sandboxPreflightInstanceName\(slug, randomBytes\(3\)\.toString\("hex"\)\) : ""/);
     const call = main.slice(main.indexOf("adapter.preflight({"), main.indexOf("});", main.indexOf("adapter.preflight({")));
     expect(call).toMatch(/instanceName: preflightInstanceName/);
+    expect(call).toMatch(/githubRepo: config\.github\.repo/);
     expect(call).toMatch(/cwd: REPO_ROOT/);
   });
 

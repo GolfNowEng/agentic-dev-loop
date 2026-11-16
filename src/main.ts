@@ -294,6 +294,7 @@ async function main(): Promise<void> {
     mounts: sandboxMounts(REPO_ROOT, repoDirFor(config, slug)),
     cwd: REPO_ROOT,
     instanceName: preflightInstanceName,
+    githubRepo: config.github.repo,
     config: sandboxSelection.config,
   });
 
