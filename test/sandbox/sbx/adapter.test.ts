@@ -264,16 +264,23 @@ describe("sbx adapter: preflight", () => {
   afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
   const P = "dl-12-webtarsthree-preflight-abc123";
-  const CHECK = ["exec", P, "sh", "-c", "node --version && git --version && jq --version && gh auth status"];
+  const R = "fandango/webtarsthree";
+  const CHECK = [
+    "exec", P, "sh", "-c",
+    `node --version && git --version && jq --version && echo dl-step:git && git ls-remote git@github.com:${R}.git HEAD >/dev/null && echo dl-step:gh && gh api repos/${R} --jq .full_name`,
+  ];
+  const NO_REPO_CHECK = ["exec", P, "sh", "-c", "node --version && git --version && jq --version"];
   const identity = (p: string) => p;
-  const ctx = (over: Partial<{ kitDir: string; mounts: string[]; cwd: string }> = {}) => ({
-    repoRoot: "/abs/root",
+  const ctx = (over: Partial<{ kitDir: string; mounts: string[]; cwd: string; repoRoot: string; githubRepo: string | undefined }> = {}) => ({
+    repoRoot: over.repoRoot ?? "/abs/root",
     mounts: over.mounts ?? ["/abs/root", "/abs/repo"],
     cwd: over.cwd ?? "/abs/root",
     instanceName: P,
+    githubRepo: "githubRepo" in over ? over.githubRepo : R,
     config: { kitDir: over.kitDir ?? kit, envAllow: [] },
   });
-  const GOOD = ok("v24.3.0\ngit version 2.47.0\njq-1.7.1\n", "Logged in to github.com\n");
+  const BASE = "v24.3.0\ngit version 2.47.0\njq-1.7.1\n";
+  const GOOD = ok(`${BASE}dl-step:git\ndl-step:gh\n${R}\n`);
   const answer = (exec: SbxResult) => (args: string[]) => (args[0] === "exec" ? exec : ok());
 
   it("creates, runs the check, and removes the instance", async () => {
@@ -338,12 +345,99 @@ describe("sbx adapter: preflight", () => {
     expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
   });
 
-  it("refuses when gh is not logged in, and still removes the instance", async () => {
-    const f = fakeRunner(answer(fail(1, "You are not logged into any GitHub hosts.", "v24.3.0\ngit version 2.47.0\njq-1.7.1\n")));
-    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx())).rejects.toThrow(
-      "gh is not logged in inside the sandbox: run sbx secret set github (see docs/sandbox-sbx.md)",
+  const pf = (exec: SbxResult, over = {}) =>
+    makeSbxAdapter({ run: fakeRunner(answer(exec)).run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx(over));
+
+  it("git blocked by the sandbox firewall names the host and the approval command", async () => {
+    const r = fail(128, "remote: Approval required for github.com:443.\nremote:\nfatal: unable to access", `${BASE}dl-step:git\n`);
+    await expect(pf(r)).rejects.toThrow(
+      "sandbox network blocked github.com (git): approve it yourself with sbx policy approval ls, or sbx policy allow network github.com (see docs/sandbox-sbx.md)",
     );
-    expect(f.calls.at(-1)?.args).toEqual(["rm", "-f", P]);
+  });
+
+  it("gh api blocked by the sandbox firewall names api.github.com", async () => {
+    const r = fail(1, 'non-200 OK status code: 403 Forbidden body: "Approval required for api.github.com:443.', `${BASE}dl-step:git\ndl-step:gh\n`);
+    await expect(pf(r)).rejects.toThrow("sandbox network blocked api.github.com (gh api)");
+  });
+
+  it("a 404 from gh api means the sandbox's GitHub token cannot see the repo", async () => {
+    const r = fail(1, '{"message":"Not Found","status":"404"}gh: Not Found (HTTP 404)', `${BASE}dl-step:git\ndl-step:gh\n`);
+    await expect(pf(r)).rejects.toThrow(
+      `the sandbox's GitHub token cannot see ${R} (gh api): check its repo access and any pending org approval, then sbx secret set github (see docs/sandbox-sbx.md)`,
+    );
+  });
+
+  it("repository not found from git is the same token message", async () => {
+    const r = fail(128, "remote: Repository not found.\nfatal: repository not found", `${BASE}dl-step:git\n`);
+    await expect(pf(r)).rejects.toThrow(`the sandbox's GitHub token cannot see ${R} (git)`);
+  });
+
+  it("an SSH failure from git means the template lacks the HTTPS rewrite", async () => {
+    const r = fail(128, "git@github.com: Permission denied (publickey).", `${BASE}dl-step:git\n`);
+    await expect(pf(r)).rejects.toThrow(
+      'git uses SSH inside the sandbox: add git config --global url."https://github.com/".insteadOf git@github.com: to the template (see docs/sandbox-sbx.md)',
+    );
+  });
+
+  it("any other GitHub failure names the step and the first stderr line", async () => {
+    const r = fail(1, "boom\nmore", `${BASE}dl-step:git\ndl-step:gh\n`);
+    await expect(pf(r)).rejects.toThrow("sbx preflight failed (gh api): boom");
+  });
+
+  it("without a githubRepo, skips the GitHub checks", async () => {
+    const f = fakeRunner(answer(ok(BASE)));
+    await makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx({ githubRepo: undefined }));
+    expect(f.calls[1].args).toEqual(NO_REPO_CHECK);
+  });
+
+  it("refuses a githubRepo that is not a plain owner/repo before any sbx call", async () => {
+    const f = fakeRunner();
+    await expect(
+      makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx({ githubRepo: "a/b; rm -rf /" })),
+    ).rejects.toThrow('github.repo "a/b; rm -rf /" is not a plain owner/repo');
+    expect(f.calls).toEqual([]);
+  });
+
+  describe("env files in shared folders", () => {
+    const root = join(tmp, "root");
+    const repo = join(tmp, "repo");
+    mkdirSync(root);
+    mkdirSync(repo);
+    writeFileSync(join(root, ".env.example"), "X=\n");
+    writeFileSync(join(repo, ".envrc.example"), "X=\n");
+
+    it("ignores .example files", async () => {
+      await expect(pf(GOOD, { repoRoot: root, mounts: [root, repo], cwd: root })).resolves.toBeUndefined();
+    });
+
+    for (const name of [".env", ".envrc", ".env.local"]) {
+      it(`refuses a ${name} in the dev-loop folder before any sbx call`, async () => {
+        writeFileSync(join(root, name), "SECRET=x\n");
+        try {
+          const f = fakeRunner();
+          await expect(
+            makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx({ repoRoot: root, mounts: [root, repo], cwd: root })),
+          ).rejects.toThrow(`${name} is in ${root}, which the sandbox can read: move it out of the repo and point DEVLOOP_ENV_FILE at it (see docs/sandbox-sbx.md)`);
+          expect(f.calls).toEqual([]);
+        } finally {
+          rmSync(join(root, name));
+        }
+      });
+    }
+
+    it("only warns, naming the files, for env files in another mounted folder", async () => {
+      writeFileSync(join(repo, ".envrc"), "SECRET=x\n");
+      try {
+        const warnings: string[] = [];
+        const f = fakeRunner(answer(GOOD));
+        await makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV, warn: (m) => void warnings.push(m) }).preflight(
+          ctx({ repoRoot: root, mounts: [root, repo], cwd: root }),
+        );
+        expect(warnings).toEqual([`WARNING: the sandbox agent can read .envrc in ${repo}; move it out during sandboxed runs if it holds secrets.`]);
+      } finally {
+        rmSync(join(repo, ".envrc"));
+      }
+    });
   });
 
   it("refuses a missing jq (git ran, jq did not), and still removes the instance", async () => {
@@ -399,7 +493,7 @@ describe("sbx adapter: preflight", () => {
 
   it("defaults hostNodeMajor to the running node's major", async () => {
     const major = process.versions.node.split(".")[0];
-    const f = fakeRunner(answer(ok(`v${major}.0.0\ngit version 2.47.0\njq-1.7.1\n`)));
+    const f = fakeRunner(answer(ok(`v${major}.0.0\ngit version 2.47.0\njq-1.7.1\ndl-step:git\ndl-step:gh\n`)));
     await expect(makeSbxAdapter({ run: f.run, realpath: identity, env: FULL_ENV }).preflight(ctx())).resolves.toBeUndefined();
   });
 });
