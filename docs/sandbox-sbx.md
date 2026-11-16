@@ -170,9 +170,21 @@ case differs from the disk (`.../repos/...` when the disk says `Repos`).
 If it comes from `targetRepo.path`, fix the config; if it is the cwd, `cd`
 into the real path.
 
-## 9. Atlassian MCP (unverified)
+## 9. Atlassian MCP (Jira for the agent)
 
-The Atlassian MCP lives in your home Claude config, which is not mounted,
-so the agent most likely has no Atlassian tools inside the sandbox.
-`sbx create --static-mcp atlassian` (with `sbx mcp add`) may be the fix;
-untested. The discover run will show it.
+The skills read and write Jira through the Atlassian MCP. Your home Claude
+config isn't mounted, so the sandbox gets it from sbx's MCP gateway
+instead. Register it and sign in once, yourself:
+
+```
+sbx mcp add atlassian --url https://mcp.atlassian.com/v2/mcp
+sbx mcp auth atlassian        # browser sign-in; sbx mcp ls shows "ready"
+```
+
+`"mcp": ["atlassian"]` in `sandbox.sbx` makes each sandbox start with it
+(`sbx create --static-mcp atlassian`). Preflight checks `sbx mcp ls` before
+creating anything and stops with the command to run when a listed server
+is missing or not ready. Without it, research fails at intake with "Jira
+access unavailable (MCP gateway permission denied)" (seen on the first
+run, 2026-11-16). Verified: a haiku `claude -p` in a sandbox read
+TARS-1634 through it.
