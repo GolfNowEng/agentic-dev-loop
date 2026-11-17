@@ -90,6 +90,21 @@ describe("local reset steps", () => {
     expect(s[0].found).toContain("1 refused");
   });
 
+  it("archives safe records and lists refused ones when both exist", async () => {
+    await put(root, `runs/v2/${P}.jsonl`, [rec("TARS-1", [phase("research")]), rec("TARS-1", [phase("research"), phase("dev", "landed", "http://pr/1")])].join("\n") + "\n");
+    const c = ctx({ role: "research" });
+    const { s } = await surveyAll(c);
+    expect(s[0].action).toBe("archive 1");
+    expect(s[0].run).toBeDefined();
+    expect(s[0].needsYou).toBeUndefined();
+    expect(s[0].details?.join("\n")).toMatch(/kept: TARS-1 record \(other role landed: dev http:\/\/pr\/1\)/);
+    await s[0].run!();
+    const after = (await surveyAll(c)).s[0];
+    expect(after.found).toBe("none, 1 refused");
+    expect(after.action).toBeNull();
+    expect(after.needsYou).toBe("other role landed; --include-cross-role");
+  });
+
   it("recent-window hold reads held before and none after archive", async () => {
     const ended = new Date(NOW.getTime() - 45_500).toISOString();
     await put(root, `runs/v2/${P}.jsonl`, rec("TARS-1", [phase("dev")], { ended, jira_status_changed: true }) + "\n");
