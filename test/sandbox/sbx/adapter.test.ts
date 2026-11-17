@@ -670,3 +670,52 @@ describe("sbx adapter: atlassianMcp (gateway tool names)", () => {
     expect(a.atlassianMcp?.(a.validateConfig({ kitDir: "/kit", mcp: ["other"] }))).toBeUndefined();
   });
 });
+
+describe("sbx adapter: host skills (sandbox.sbx.hostSkills)", () => {
+  const SKILLS = mkdtempSync(join(tmpdir(), "host-skills-"));
+  mkdirSync(join(SKILLS, "push-branch"));
+  writeFileSync(join(SKILLS, "push-branch", "SKILL.md"), "---\nname: push-branch\n---\n");
+  afterAll(() => rmSync(SKILLS, { recursive: true, force: true }));
+  const cfg = { ...CFG, hostSkills: ["push-branch"] };
+  const adapter = (run = fakeRunner().run) => makeSbxAdapter({ run, hostSkillsDir: SKILLS, realpath: (p: string) => p });
+
+  it("hostSkillPaths maps each skill to its read-only spot inside the sandbox; none when unset", () => {
+    expect(adapter().hostSkillPaths?.(cfg)).toEqual({ "push-branch": "/home/agent/.dev-loop/skills/push-branch/SKILL.md" });
+    expect(adapter().hostSkillPaths?.(CFG)).toEqual({});
+  });
+
+  it("prepare mounts each host skill folder read-only at that spot", async () => {
+    const f = fakeRunner();
+    await adapter(f.run).prepare({ instanceName: N, mounts: ["/abs/root"], config: cfg });
+    expect(f.calls[0].args.slice(-2)).toEqual(["/abs/root", `${join(SKILLS, "push-branch")}:/home/agent/.dev-loop/skills/push-branch:ro`]);
+  });
+
+  it("without hostSkills, prepare mounts nothing extra", async () => {
+    const f = fakeRunner();
+    await adapter(f.run).prepare({ instanceName: N, mounts: ["/abs/root"], config: CFG });
+    expect(f.calls[0].args.at(-1)).toBe("/abs/root");
+  });
+
+  it("preflight refuses a listed skill with no SKILL.md on the host, naming the path", async () => {
+    const a = makeSbxAdapter({ run: fakeRunner().run, hostSkillsDir: SKILLS, realpath: (p: string) => p, env: FULL_ENV, hostNodeMajor: 24 });
+    const kit = mkdtempSync(join(tmpdir(), "kit-"));
+    writeFileSync(join(kit, "kit.yaml"), "x");
+    await expect(
+      a.preflight({ repoRoot: "/abs/root", mounts: [], cwd: "/abs/root", instanceName: N, config: { ...CFG, kitDir: kit, hostSkills: ["missing-skill"] } }),
+    ).rejects.toThrow(`sandbox.sbx.hostSkills: "missing-skill" has no SKILL.md at ${join(SKILLS, "missing-skill", "SKILL.md")}`);
+    rmSync(kit, { recursive: true, force: true });
+  });
+
+  it("preflight checks each host skill is readable inside the test sandbox", async () => {
+    const f = fakeRunner((args) => (args[0] === "exec" ? ok("dl-step:tools\nv24.1.0\n") : ok()));
+    const a = makeSbxAdapter({ run: f.run, hostSkillsDir: SKILLS, realpath: (p: string) => p, env: FULL_ENV, hostNodeMajor: 24 });
+    const kit = mkdtempSync(join(tmpdir(), "kit-"));
+    writeFileSync(join(kit, "kit.yaml"), "x");
+    await a.preflight({ repoRoot: "/abs/root", mounts: [], cwd: "/abs/root", instanceName: N, config: { ...CFG, kitDir: kit, hostSkills: ["push-branch"] } }).catch(() => {});
+    const exec = f.calls.find((c) => c.args[0] === "exec");
+    expect(exec?.args.at(-1)).toContain("test -r '/home/agent/.dev-loop/skills/push-branch/SKILL.md'");
+    const create = f.calls.find((c) => c.args[0] === "create");
+    expect(create?.args.at(-1)).toBe(`${join(SKILLS, "push-branch")}:/home/agent/.dev-loop/skills/push-branch:ro`);
+    rmSync(kit, { recursive: true, force: true });
+  });
+});

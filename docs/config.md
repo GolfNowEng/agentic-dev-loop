@@ -209,6 +209,16 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
   - `mcp` — optional list of MCP server names registered with
     `sbx mcp add` (e.g. `["atlassian"]`), passed as `--static-mcp`.
     Preflight refuses one that is not registered or not ready.
+  - `hostSkills` — optional list of your own skill folder names under
+    `~/.claude/skills` that a pipeline skill reads by path (today only
+    `push-branch`, read by ticket-to-pr Phase 5). The sandbox can't see
+    `~/.claude`, so each is mounted read-only at
+    `/home/agent/.dev-loop/skills/<name>` (sbx reserves
+    `/home/agent/.claude/skills`), and dev is passed
+    `<name>=<that SKILL.md>`. Preflight refuses one with no `SKILL.md` on
+    the host, or one not readable in the sandbox. A run on the host is
+    unchanged. `test/sandbox/sbx/host-skills-drift.test.ts` fails when a
+    pipeline skill starts reading one that isn't listed.
   - `envAllow` — optional list of bare env var names to pass into the
     sandbox, added to the defaults (the three `ANTHROPIC_DEFAULT_*_MODEL`
     names and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`). Secret-shaped names
@@ -425,6 +435,16 @@ spawns. Absent means the `none` adapter: spawns are exactly as before.
   - `mcp` — optional list of MCP server names registered with
     `sbx mcp add` (e.g. `["atlassian"]`), passed as `--static-mcp`.
     Preflight refuses one that is not registered or not ready.
+  - `hostSkills` — optional list of your own skill folder names under
+    `~/.claude/skills` that a pipeline skill reads by path (today only
+    `push-branch`, read by ticket-to-pr Phase 5). The sandbox can't see
+    `~/.claude`, so each is mounted read-only at
+    `/home/agent/.dev-loop/skills/<name>` (sbx reserves
+    `/home/agent/.claude/skills`), and dev is passed
+    `<name>=<that SKILL.md>`. Preflight refuses one with no `SKILL.md` on
+    the host, or one not readable in the sandbox. A run on the host is
+    unchanged. `test/sandbox/sbx/host-skills-drift.test.ts` fails when a
+    pipeline skill starts reading one that isn't listed.
   - `envAllow` — optional list of bare env var names to pass into the
     sandbox, added to the defaults (the three `ANTHROPIC_DEFAULT_*_MODEL`
     names and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`). Secret-shaped names

@@ -2,7 +2,11 @@
 // each skill its run directory, skills never derive it). Every value in the
 // prompt is validated here, so nothing from a ticket can add an argument:
 //
-//   /<skill> <KEY> run-dir=<abs RUN_DIR> repo-dir=<abs REPO_DIR>
+//   /<skill> <KEY> run-dir=<abs RUN_DIR> repo-dir=<abs REPO_DIR> [<host-skill>=<abs SKILL.md> ...]
+//
+// The trailing <host-skill>= pointers come only from a sandbox adapter that
+// mounts the operator's own skills somewhere else (its hostSkillPaths); the
+// plain host loop passes none, so its prompt is unchanged.
 //
 // The skills refuse (agent_error, no files written) a run-dir that is not
 // absolute or has no `/.pipeline/v2/` in it. This side refuses first.
@@ -20,7 +24,13 @@ export interface SkillPromptArgs {
   runDir: string;
   /** Absolute REPO_DIR: repoDirFor(config, slug). */
   repoDir: string;
+  /** Skill name -> absolute SKILL.md path inside a sandbox; omitted or empty outside one. */
+  hostSkills?: Record<string, string>;
 }
+
+/** A host skill name as an argument key: a plain skill folder name that is not one of the fixed keys. */
+const HOST_SKILL_KEY = /^[a-z0-9][a-z0-9-]*$/;
+const RESERVED_KEYS = new Set(["run-dir", "repo-dir"]);
 
 /**
  * Characters a path in the prompt may contain. The skills paste REPO_DIR and
@@ -65,7 +75,7 @@ export function checkRepoDirPlacement(repoDir: string, devLoopRoot: string, clon
   return repoDir;
 }
 
-export function buildSkillPrompt({ role, ticketKey, runDir, repoDir }: SkillPromptArgs): string {
+export function buildSkillPrompt({ role, ticketKey, runDir, repoDir, hostSkills = {} }: SkillPromptArgs): string {
   const skill = SKILL_NAME[role];
   if (skill === undefined) throw new UnsafePathError(`role ${JSON.stringify(role)} has no skill`);
   if (typeof ticketKey !== "string" || !TICKET_KEY.test(ticketKey)) {
@@ -82,7 +92,15 @@ export function buildSkillPrompt({ role, ticketKey, runDir, repoDir }: SkillProm
   if (ticketSeg !== ticketKey || !last.startsWith(prefix) || !RUN_ID.test(last.slice(prefix.length))) {
     throw new UnsafePathError(`run-dir ${JSON.stringify(runDir)} must end in /${ticketKey}/${prefix}<RUN_ID>`);
   }
-  return `/${skill} ${ticketKey} run-dir=${runDir} repo-dir=${repoDir}`;
+  const pointers = Object.keys(hostSkills)
+    .sort()
+    .map((name) => {
+      if (!HOST_SKILL_KEY.test(name) || RESERVED_KEYS.has(name)) {
+        throw new UnsafePathError(`host skill name ${JSON.stringify(name)} must be a plain skill name other than run-dir/repo-dir`);
+      }
+      return ` ${name}=${checkAbsPath(name, hostSkills[name]!)}`;
+    });
+  return `/${skill} ${ticketKey} run-dir=${runDir} repo-dir=${repoDir}${pointers.join("")}`;
 }
 
 /** REPO_DIR: `targetRepo.path` when set, else the absolute v2 clone dir (the skill clones it if missing). */

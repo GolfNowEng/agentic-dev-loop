@@ -129,7 +129,15 @@ the sandbox by name (`sbx exec -e NAME`). The sandbox never sees the file.
 
 The sandbox mounts dev-loop's folder and the target repo, nothing else:
 not `~/.zshrc`, `~/.claude`, `~/.ssh`, `~/.aws`, your other projects or
-your Desktop. Anything inside the two mounts is readable by the agent, so:
+your Desktop. The one exception is `sandbox.sbx.hostSkills`: each of your
+own skills listed there (webtarsthree: `push-branch`) is mounted
+**read-only** at `/home/agent/.dev-loop/skills/<name>`, and dev is told
+that path. Without it, a sandboxed dev run bounces `env_setup` at the PR
+step, because `~/.claude/skills/push-branch/SKILL.md` doesn't exist in
+the sandbox. A run on the host (no `--sandbox`) is unchanged: it reads
+`~/.claude/skills/push-branch/SKILL.md` as always.
+
+Anything inside the mounts is readable by the agent, so:
 
 - Keep dev-loop's env file out of the repo:
   `DEVLOOP_ENV_FILE=$HOME/.config/dev-loop/.env`, exported in `~/.zshrc`.

@@ -11,6 +11,12 @@ export interface SbxConfig {
   envAllow: string[];
   /** MCP servers registered with `sbx mcp add`, passed as `--static-mcp` (the agent's Jira tools come through here). */
   mcp?: string[];
+  /**
+   * The operator's own skills (folder names under ~/.claude/skills) a pipeline
+   * run reads by path, e.g. ticket-to-pr Phase 5 reads push-branch. The
+   * sandbox can't see ~/.claude, so each is mounted read-only (see adapter.ts).
+   */
+  hostSkills: string[];
 }
 
 export const DEFAULT_ENV_ALLOW = [
@@ -20,7 +26,9 @@ export const DEFAULT_ENV_ALLOW = [
   "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS",
 ];
 
-const KNOWN = new Set(["kitDir", "memory", "template", "envAllow", "mcp"]);
+const KNOWN = new Set(["kitDir", "memory", "template", "envAllow", "mcp", "hostSkills"]);
+/** A skill folder name: never a path, a flag or a dotfile. */
+const SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /** An sbx MCP server name: never a flag, no comma (--static-mcp takes a comma list). */
 const MCP_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /** An OCI-style image reference: no spaces or shell characters, never a flag. */
@@ -38,7 +46,7 @@ export function validateSbxConfig(raw: unknown): SbxConfig {
   // "~/" keeps a personal home path out of the committed config.
   const kitDir = o.kitDir.startsWith("~/") ? join(homedir(), o.kitDir.slice(2)) : o.kitDir;
   if (!kitDir.startsWith("/")) throw new Error("sandbox.sbx: kitDir must be an absolute path");
-  const cfg: SbxConfig = { kitDir, envAllow: [] };
+  const cfg: SbxConfig = { kitDir, envAllow: [], hostSkills: [] };
   if (o.memory !== undefined) {
     if (typeof o.memory !== "string" || !MEMORY.test(o.memory)) throw new Error('sandbox.sbx: memory must look like "4g" or "512m"');
     cfg.memory = o.memory;
@@ -65,6 +73,15 @@ export function validateSbxConfig(raw: unknown): SbxConfig {
     if (!Array.isArray(o.mcp) || o.mcp.some((n) => typeof n !== "string")) throw new Error("sandbox.sbx: mcp must be an array of MCP server names");
     for (const n of o.mcp as string[]) if (!MCP_NAME.test(n)) throw new Error(`sandbox.sbx: mcp entry "${n}" must be a server name`);
     cfg.mcp = [...new Set(o.mcp as string[])];
+  }
+  if (o.hostSkills !== undefined) {
+    if (!Array.isArray(o.hostSkills) || o.hostSkills.some((n) => typeof n !== "string")) {
+      throw new Error("sandbox.sbx: hostSkills must be an array of skill names");
+    }
+    for (const n of o.hostSkills as string[]) {
+      if (!SKILL_NAME.test(n) || n.includes("..")) throw new Error(`sandbox.sbx: hostSkills entry "${n}" must be a skill folder name`);
+    }
+    cfg.hostSkills = [...new Set(o.hostSkills as string[])];
   }
   return cfg;
 }

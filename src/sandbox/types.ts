@@ -87,6 +87,14 @@ export interface SandboxAdapter {
    */
   atlassianMcp?(config: unknown): AtlassianMcp | undefined;
   /**
+   * Optional. Where the operator's own skills (read by path, e.g. push-branch
+   * in ticket-to-pr Phase 5) are inside this sandbox: skill name -> absolute
+   * SKILL.md path. The loop passes each to the skill as `<name>=<path>`.
+   * Absent, or a skill missing from the map: the skill reads its usual host
+   * path (~/.claude/skills/<name>/SKILL.md), as a run outside any sandbox does.
+   */
+  hostSkillPaths?(config: unknown): Record<string, string>;
+  /**
    * Remove leftover instances from an earlier crashed run. Removes only
    * instances whose name starts with `scope.prefix` (this project's
    * `dl-<len>-<project>-`); called after the session lock is held.

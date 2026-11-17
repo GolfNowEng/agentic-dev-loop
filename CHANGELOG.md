@@ -19,6 +19,15 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[dev]` A sandboxed dev run can read your `push-branch` skill. The sbx
+  sandbox can't see `~/.claude`, so TARS-1634's dev run bounced `env_setup`
+  at the PR step. New `sandbox.sbx.hostSkills` mounts each listed skill
+  read-only at `/home/agent/.dev-loop/skills/<name>`. The adapter's new
+  optional `hostSkillPaths` hook gives dev `push-branch=<path>`, and
+  ticket-to-pr reads that path. Preflight checks the skill exists and is
+  readable in the sandbox, and a drift test keeps the list in step with what
+  the skills read. Runs on the host are unchanged: no pointer is passed, so
+  dev reads `~/.claude/skills/push-branch/SKILL.md` as before.
 - `[core]` reset-project, per ticket, is a checklist: it surveys local files,
   git, Jira, GitHub and the sandbox adapters, prints one table, asks
   `Proceed? [y/N]` once (`--yes` when there is no terminal), runs the rows

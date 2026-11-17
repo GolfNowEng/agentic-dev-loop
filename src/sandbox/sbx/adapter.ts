@@ -3,7 +3,9 @@
 // tests never run the real binary. Verified against sbx v0.53.0 (spec
 // "Verified before step 3").
 
-import { readdirSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ResetStep } from "../../core/reset/step.ts";
 import type { SandboxAdapter, SandboxDenial, SandboxHandle } from "../types.ts";
 import { DEFAULT_ENV_ALLOW, validateSbxConfig, type SbxConfig } from "./config.ts";
@@ -40,6 +42,15 @@ const isEnvFile = (n: string): boolean => ENV_FILE.test(n) && !n.endsWith(".exam
  */
 export const GITHUB_TRIES = 3;
 export const GITHUB_RETRY_MS = 2000;
+/**
+ * Where a host skill (sandbox.sbx.hostSkills) appears inside the sandbox.
+ * sbx reserves /home/agent/.claude/skills, so the folder is mounted read-only
+ * here and the skill is told the path (hostSkillPaths). Verified live
+ * 2026-11-17 with sbx v0.54.0: a `<dir>:<path>:ro` workspace is readable, not
+ * writable.
+ */
+export const SANDBOX_SKILLS_DIR = "/home/agent/.dev-loop/skills";
+const sandboxSkillDir = (name: string): string => `${SANDBOX_SKILLS_DIR}/${name}`;
 /** sbx exec's own failure (e.g. a missing sandbox); the inner command's code passes through otherwise. */
 const EXEC_INFRA_EXIT = 125;
 
@@ -55,6 +66,8 @@ export interface SbxAdapterDeps {
   dashboardDeps?: (log: (m: string) => void) => DashboardDeps;
   /** Waits between preflight GitHub retries (default: setTimeout). */
   sleep?: (ms: number) => Promise<void>;
+  /** The operator's skills folder hostSkills are read from (default ~/.claude/skills). */
+  hostSkillsDir?: string;
 }
 
 // eslint-disable-next-line no-control-regex
@@ -80,10 +93,11 @@ function sbxConfig(raw: unknown): SbxConfig {
     ...(o.memory !== undefined ? { memory: o.memory } : {}),
     ...(o.template !== undefined ? { template: o.template } : {}),
     ...(Array.isArray(o.mcp) ? { mcp: o.mcp } : {}),
+    hostSkills: Array.isArray(o.hostSkills) ? o.hostSkills : [],
   };
 }
 
-export function createArgs(name: string, cfg: SbxConfig, mounts: string[]): string[] {
+export function createArgs(name: string, cfg: SbxConfig, mounts: string[], extraMounts: string[] = []): string[] {
   return [
     "create", "--name", name, "--no-progress", "--no-input",
     ...(cfg.memory ? ["--memory", cfg.memory] : []),
@@ -91,7 +105,7 @@ export function createArgs(name: string, cfg: SbxConfig, mounts: string[]): stri
     ...(cfg.mcp && cfg.mcp.length > 0 ? ["--static-mcp", cfg.mcp.join(",")] : []),
     // A saved local template must not be pulled; the kit still supplies network policy and credentials.
     ...(cfg.template ? ["-t", cfg.template, "--pull", "never"] : []),
-    "claude", "--kit", cfg.kitDir, ...mounts,
+    "claude", "--kit", cfg.kitDir, ...mounts, ...extraMounts,
   ];
 }
 
@@ -144,9 +158,12 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((res) => setTimeout(res, ms)));
   // The handle type is adapter-neutral, so prepare remembers each handle's envAllow here for wrap.
   const handleEnvAllow = new WeakMap<SandboxHandle, string[]>();
+  const skillsDir = deps.hostSkillsDir ?? join(homedir(), ".claude", "skills");
+  /** Each host skill's real folder (the skills dir may be a symlink), mounted read-only. */
+  const skillMounts = (cfg: SbxConfig): string[] => cfg.hostSkills.map((n) => `${realpath(join(skillsDir, n))}:${sandboxSkillDir(n)}:ro`);
 
   async function create(name: string, cfg: SbxConfig, mounts: string[]): Promise<void> {
-    const r = await run(createArgs(name, cfg, mounts), { timeoutMs: CREATE_TIMEOUT_MS });
+    const r = await run(createArgs(name, cfg, mounts, skillMounts(cfg)), { timeoutMs: CREATE_TIMEOUT_MS });
     if (r.code !== 0 || r.timedOut) throw new Error(`sbx create failed (${why(r)}): ${firstLine(r.stderr)}`);
   }
 
@@ -201,6 +218,10 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
       return sbxConfig(config).mcp?.includes("atlassian") ? { server: "mcp-gateway", naming: "v2" } : undefined;
     },
 
+    hostSkillPaths(config) {
+      return Object.fromEntries(sbxConfig(config).hostSkills.map((n) => [n, `${sandboxSkillDir(n)}/SKILL.md`]));
+    },
+
     onRunStart(ctx) {
       if (!ctx.dashboard) return;
       openSbxDashboard(ctx.repoRoot, (deps.dashboardDeps ?? realDashboardDeps)(ctx.log));
@@ -243,6 +264,10 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
       if (!listDir(cfg.kitDir).some((e) => e.endsWith(".yaml"))) throw new Error(`sandbox.sbx.kitDir "${cfg.kitDir}" has no kit yaml`);
 
       if (cfg.mcp && cfg.mcp.length > 0) await checkMcp(cfg.mcp);
+      for (const n of cfg.hostSkills) {
+        const file = join(skillsDir, n, "SKILL.md");
+        if (!existsSync(file)) throw new Error(`sandbox.sbx.hostSkills: "${n}" has no SKILL.md at ${file}`);
+      }
 
       const name = ctx.instanceName;
       try {
@@ -252,7 +277,8 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
           throw new Error(`sbx preflight failed: ${err instanceof Error ? err.message : String(err)}`);
         }
         const repo = ctx.githubRepo;
-        const check = [TOOLS_CHECK, ...envrcDirs.map(envrcCheck), ...(repo === undefined ? [] : [githubCheck(repo)])].join(" && ");
+        const skillChecks = cfg.hostSkills.map((n) => `echo dl-step:skill && test -r ${shq(`${sandboxSkillDir(n)}/SKILL.md`)}`);
+        const check = [TOOLS_CHECK, ...envrcDirs.map(envrcCheck), ...skillChecks, ...(repo === undefined ? [] : [githubCheck(repo)])].join(" && ");
         let r = await run(["exec", name, "sh", "-c", check]);
         for (let tryNo = 1; tryNo < GITHUB_TRIES && repo !== undefined && flakyGithubStep(r) !== undefined; tryNo++) {
           warn(`note: sandbox GitHub check (${flakyGithubStep(r)}) failed on try ${tryNo} of ${GITHUB_TRIES}: ${firstLine(r.stderr) || "no error output"}; retrying`);
@@ -268,6 +294,9 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
         // The && chain stops at the first failure; the last line printed names the step after it.
         const last = [...r.stdout.matchAll(/^dl-step:(\w+)$/gm)].at(-1)?.[1];
         if (last === "direnv") throw new Error("sandbox image has no direnv: add it to the template (npm run sbx:template:build; see docs/sandbox-sbx.md)");
+        if (last === "skill") {
+          throw new Error(`a host skill (sandbox.sbx.hostSkills) is not readable inside the sandbox at ${SANDBOX_SKILLS_DIR}: check the folder exists and sbx can mount it (see docs/sandbox-sbx.md)`);
+        }
         if (last === "envrc") {
           throw new Error(
             "the target repo's .envrc is not allowed inside the sandbox (it changed, or the template predates it): rebuild the template with npm run sbx:template:build (see docs/sandbox-sbx.md)",
