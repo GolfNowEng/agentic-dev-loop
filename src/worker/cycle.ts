@@ -12,7 +12,7 @@
 
 import type { JiraTicket } from "../core/jira-client.ts";
 import type { IterationOutcome, IterationRecord, PhaseEntry } from "../core/iteration-log.ts";
-import { readIterations, recentlyEnded } from "../core/iteration-log.ts";
+import { DEFAULT_RECENT_WINDOW_MS, readIterations, recentlyEnded } from "../core/iteration-log.ts";
 import { errorMessage } from "../core/run-skill.ts";
 import { redactSensitive } from "../core/redact.ts";
 import { buildPollJql, excludeKeysFromJql } from "../core/jql.ts";
@@ -35,7 +35,6 @@ import {
 export type { WorkerDeps, WorkerIterationResult } from "./context.ts";
 export { WorkerPausedError } from "./cycle-steps.ts";
 
-const DEFAULT_RECENT_WINDOW_MS = 120_000;
 
 /**
  * Write every in-flight run the session adopted (inFlight, then orphans) to

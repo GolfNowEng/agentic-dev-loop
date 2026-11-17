@@ -47,6 +47,8 @@ export interface ResetOptions {
   ignoreLiveWorker?: boolean;
   /** Liveness of a lock holder (pid + start time, epoch s); defaults to session.ts's isProcessAlive. */
   isAlive?: (pid: number, started: number) => boolean;
+  /** Leave worktrees to another step: the plan lists none and has no worktrees dir (so nothing is deleted or pruned). Default false. */
+  skipWorktrees?: boolean;
 }
 
 /** A matching record a role-scoped reset leaves in place (the other role landed in it). */
@@ -262,7 +264,7 @@ export async function planReset(opts: ResetOptions): Promise<ResetPlan> {
 
   let worktreesDir: string | null = null;
   let worktreesToRemove: string[] = [];
-  if (ticket !== null) {
+  if (ticket !== null && !opts.skipWorktrees) {
     const base = opts.config?.targetRepo.path ?? (opts.config ? cloneDir : null);
     if (base) {
       worktreesDir = join(base, ".claude", "worktrees");

@@ -225,6 +225,9 @@ export function failedAttempts(records: IterationRecord[], ticket: string, role:
   return n;
 }
 
+/** How long after a Jira status change a ticket is held (Jira's search-index lag). */
+export const DEFAULT_RECENT_WINDOW_MS = 120_000;
+
 /**
  * Tickets held back by a record that changed their Jira status and ended
  * within windowMs of now, with ms since that (latest) record ended. The window
