@@ -56,7 +56,7 @@ export interface SkillRunnerDeps {
 }
 
 /** Lowercase, and any char outside [a-z0-9-] becomes "-". */
-function sandboxNamePart(s: string): string {
+export function sandboxNamePart(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9-]/g, "-");
 }
 

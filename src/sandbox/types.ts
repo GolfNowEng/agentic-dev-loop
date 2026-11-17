@@ -10,6 +10,7 @@
  */
 import type { SpawnOptions } from "node:child_process";
 import type { AtlassianMcp } from "../core/atlassian-tools.ts";
+import type { ResetStep } from "../core/reset/step.ts";
 
 export type SandboxMode = "discover" | "enforce";
 
@@ -91,6 +92,13 @@ export interface SandboxAdapter {
    * `dl-<len>-<project>-`); called after the session lock is held.
    */
   cleanupOrphans(scope: { prefix: string }): Promise<void>;
+  /**
+   * Optional. Steps for `npm run reset-project` (area "sandbox") that survey
+   * and remove this adapter's leftovers for one ticket. `scope.prefix` is the
+   * project's `dl-<len>-<project>-`; `scope.ticket` is the ticket as it appears
+   * in instance names (lowercased, sanitized). Absent: nothing to reset.
+   */
+  resetSteps?(scope: { prefix: string; ticket: string }, config: unknown): ResetStep[];
   prepare(run: RunSandboxSpec): Promise<SandboxHandle>;
   /** Turn (cmd, args, opts) into what actually gets spawned. h must be the handle prepare returned. */
   wrap(h: SandboxHandle, cmd: string, args: string[], opts: WrappedSpawn["opts"]): WrappedSpawn;
