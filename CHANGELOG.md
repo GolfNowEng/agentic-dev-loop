@@ -32,6 +32,17 @@ sbx adapter, not yet dogfooded). Design:
   reset-project skill tells agents to `--dry-run`, show the table, and rerun
   with `--yes` only after a yes. Whole-project reset is unchanged. Docs:
   `docs/reset.md`.
+- `[core]` reset-project's "at zero" is stricter and safer (final review).
+  A mirror Issue research would reuse is `needs you: close #<n> as not
+  planned`. Only pipeline-made worktrees (`<KEY>-<RUN_ID>` and its `-ground`,
+  `-baseline`, `-fu` variants) are ever removed, by any reset path; a
+  person's own `<KEY>-*` worktree is reported, never removed. Worktree and
+  branch rows list every item in their detail lines. The branch check never
+  fetches and counts commits ahead of origin's `ls-remote` sha. The Jira rows
+  run comments, label, then status, and the status move is skipped when an
+  earlier Jira row failed. The attempt-cap comment is found for both roles.
+  ADF emoji nodes count in a comment's first line. A held ticket is
+  `needs you`.
 - `[core]` The "recently ended" poll hold is now 2 minutes (was 10) and only
   follows a run that changed the ticket's Jira status (`jira_status_changed`
   on the record). A skipped ticket logs `[worker] <KEY> skipped: a run on it
