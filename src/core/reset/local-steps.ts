@@ -10,6 +10,9 @@ import type { ResetStep, Survey } from "./step.ts";
 export function localSteps(ctx: ResetCtx): ResetStep[] {
   let plan: ResetPlan | null = null;
   let executed = false;
+  // A failed execute, remembered for the pass: later rows rethrow it rather
+  // than re-run a half-applied plan (which could archive a record twice).
+  let failure: unknown = null;
 
   // Fresh plan per survey; a new survey re-arms the shared run.
   const surveyPlan = async (): Promise<ResetPlan> => {
@@ -18,17 +21,20 @@ export function localSteps(ctx: ResetCtx): ResetStep[] {
       isAlive: ctx.isAlive, ignoreLiveWorker: true, skipWorktrees: true, includeCrossRole: ctx.includeCrossRole,
     });
     executed = false;
+    failure = null;
     return plan;
   };
-  // The first run() of a pass executes the latest plan; later ones are no-ops.
+  // The first run() of a pass executes the latest plan; later ones are no-ops,
+  // or rethrow that execute's error.
   const run = async (): Promise<void> => {
+    if (failure !== null) throw failure;
     if (executed || plan === null) return;
     executed = true;
     try {
       // Note: executeReset re-checks lock liveness with the real isProcessAlive, not ctx.isAlive.
       await executeReset(plan);
     } catch (e) {
-      executed = false; // a failed execute is not done
+      failure = e;
       throw e;
     }
   };

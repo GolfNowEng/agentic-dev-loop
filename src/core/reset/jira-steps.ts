@@ -13,7 +13,7 @@ import type { ResetCtx } from "./context.ts";
 import { resetPath, type RunWindow } from "./run-windows.ts";
 import type { ResetStep, Survey } from "./step.ts";
 
-const NO_CREDENTIALS: Survey = { found: "-", action: null, needsYou: "no credentials" };
+const NO_CREDS: Survey = { found: "-", action: null, needsYou: "no credentials" };
 const NO_CONFIG: Survey = { found: "-", action: null, needsYou: "no project config" };
 
 const hhmm = (iso: string): string => {
@@ -29,6 +29,8 @@ const deleteError = (e: unknown): string => {
 
 export function jiraSteps(ctx: ResetCtx, windows: () => Promise<RunWindow[]>): ResetStep[] {
   if (ctx.closeRemote) return [];
+  // No client: the cause is the missing config when there is none (clients need it).
+  const NO_CREDENTIALS: Survey = ctx.config ? NO_CREDS : NO_CONFIG;
   const key = ctx.ticket;
   const inScope = (r: Role): boolean => ctx.role === "all" || ctx.role === r;
 

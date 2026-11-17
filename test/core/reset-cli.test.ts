@@ -52,6 +52,16 @@ describe("reset-cli", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  /** A loadable config whose target repo is an empty local git repo (no remote). */
+  const validConfig = async (): Promise<void> => {
+    const repo = join(dir, "target");
+    await mkdir(repo);
+    await run("git", ["init", "-q", repo]);
+    const cfg = JSON.parse(await readFile(resolve(import.meta.dirname, "../../pipeline.eval.config.json"), "utf8"));
+    cfg.targetRepo.url = "git@github.com:o/proj.git";
+    cfg.targetRepo.path = repo;
+    await writeFile(join(dir, "pipeline.proj.config.json"), JSON.stringify(cfg));
+  };
   const cli = (...args: string[]) => run(process.execPath, [CLI, `--root=${root}`, "--project=proj", ...args], { cwd: dir, env: NO_CREDS_ENV });
   /** Like cli, but resolves with the exit code instead of rejecting on non-zero. */
   const cliCode = (...args: string[]): Promise<{ code: number; stdout: string; stderr: string }> =>
@@ -70,9 +80,9 @@ describe("reset-cli", () => {
   it("--close-remote --dry-run previews the PR recorded in the v2 log", async () => {
     await put(root, "runs/v2/proj.jsonl", v2rec("TARS-1", "dev", "https://github.com/o/r/pull/7") + "\n");
     const { stdout } = await cli("--ticket=TARS-1", "--dry-run", "--close-remote");
-    expect(stdout).toMatch(/jira\s+close ticket\s+-\s+needs you: no credentials/);
-    expect(stdout).toMatch(/github\s+close mirror Issue\s+-\s+needs you: no credentials/);
-    expect(stdout).toMatch(/github\s+close PR\s+https:\/\/github.com\/o\/r\/pull\/7\s+needs you: no credentials/);
+    expect(stdout).toMatch(/jira\s+close ticket\s+-\s+needs you: no project config/);
+    expect(stdout).toMatch(/github\s+close mirror Issue\s+-\s+needs you: no project config/);
+    expect(stdout).toMatch(/github\s+close PR\s+https:\/\/github.com\/o\/r\/pull\/7\s+needs you: no project config/);
     expect(stdout).not.toMatch(/jira\s+(status|label|loop comments)/);
     expect(stdout).toContain("[reset] --dry-run: nothing changed.");
   });
@@ -166,6 +176,7 @@ describe("reset-cli", () => {
   });
 
   it("--ticket --dry-run prints the table with jira rows needs you: no credentials", async () => {
+    await validConfig();
     await put(root, "runs/v2/proj.jsonl", v2rec("TARS-1", "dev", null) + "\n");
     const r = await cliCode("--ticket=TARS-1", "--dry-run");
     expect(r.code).toBe(0);
@@ -201,11 +212,21 @@ describe("reset-cli", () => {
     expect(r.stdout).toContain("Ran");
     expect(r.stdout).toContain("After reset");
     expect(r.stdout).toMatch(/local\s+run records\s+1 records in runs\/v2\/proj\s+done/);
-    // The cwd's config is unloadable: git rows need a config, Jira/GitHub rows need credentials.
+    // The cwd's config is unloadable: git, Jira and GitHub rows all need a config.
     expect(r.stdout).toContain("[reset] TARS-1 is not at zero: 8 step(s) need you:");
     expect(r.stdout).toContain("  - git worktrees: no project config");
-    expect(r.stdout).toContain("  - jira status: no credentials");
-    expect(r.stdout).toContain("  - github mirror Issue: no credentials");
+    expect(r.stdout).toContain("  - jira status: no project config");
+    expect(r.stdout).toContain("  - github mirror Issue: no project config");
+  });
+
+  it("--sandbox=nope exits 1 naming the valid adapters", async () => {
+    const r = await cliCode("--ticket=TARS-1", "--dry-run", "--sandbox=nope");
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('unknown sandbox adapter "nope"; valid: none, sbx');
+    expect(r.stdout).not.toContain("Reset TARS-1");
+    const noTicket = await cliCode("--dry-run", "--sandbox=sbx");
+    expect(noTicket.code).toBe(1);
+    expect(noTicket.stderr).toContain("--sandbox requires --ticket");
   });
 
   it("a whole-project reset requires --yes", async () => {

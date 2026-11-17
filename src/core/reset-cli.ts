@@ -2,7 +2,7 @@
  * CLI entrypoint:
  *   node src/core/reset-cli.ts --project=<name> [--ticket=<KEY>] [--role=research|dev|all]
  *                              [--include-cross-role] [--ignore-live-worker]
- *                              [--dry-run] [--yes] [--close-remote] [--root=<dir>]
+ *                              [--dry-run] [--yes] [--close-remote] [--sandbox=<name>] [--root=<dir>]
  *
  * Value flags are --name=value only (src/core/flags.ts).
  *
@@ -30,6 +30,10 @@
  * `--env-file-if-exists="${DEVLOOP_ENV_FILE:-.env}"`; without them those rows
  * read "needs you: no credentials" and the local/git/sandbox rows still run.
  *
+ * --sandbox=<name> (with --ticket) also surveys that adapter's leftovers; the
+ * configured adapter and every adapter with a sub-block in config.sandbox
+ * are always surveyed.
+ *
  * --close-remote (requires --ticket) replaces the Jira reset rows with rows
  * that close the real Jira ticket, its mirror GitHub Issue, and any PR
  * recorded for the ticket (v2 log, else the v1 dev log) -- see
@@ -54,11 +58,11 @@ import { RealGitHubClient, realExecGh, realOpenPrHeads } from "./github-client.t
 import type { Config } from "./types.ts";
 import { PROJECT_SLUG } from "./paths.ts";
 import { FlagError, parseFlags } from "./flags.ts";
-import { selectSandbox } from "../sandbox/select.ts";
 import type { ResetCtx } from "./reset/context.ts";
 import type { ResetStep, Survey } from "./reset/step.ts";
 import { runChecklist, type RunnerIO } from "./reset/runner.ts";
-import { sandboxSteps } from "./reset/sandbox-steps.ts";
+import { resetSandboxSteps } from "./reset/sandbox-steps.ts";
+import { adapterNames } from "../sandbox/index.ts";
 import { gitSteps } from "./reset/git-steps.ts";
 import { localSteps } from "./reset/local-steps.ts";
 import { jiraSteps } from "./reset/jira-steps.ts";
@@ -69,7 +73,7 @@ import { closeSteps } from "./reset/close-steps.ts";
 const execFileP = promisify(execFile);
 
 const SPEC = {
-  values: ["--project", "--ticket", "--role", "--root"],
+  values: ["--project", "--ticket", "--role", "--root", "--sandbox"],
   bools: ["--dry-run", "--yes", "--close-remote", "--include-cross-role", "--ignore-live-worker"],
 } as const;
 
@@ -92,6 +96,7 @@ async function main(): Promise<void> {
   const role = values["--role"] ?? "all";
   const includeCrossRole = bools.has("--include-cross-role");
   const ignoreLiveWorker = bools.has("--ignore-live-worker");
+  const sandboxName = values["--sandbox"];
   const rootArg = values["--root"];
   const root = rootArg === undefined ? undefined : resolve(rootArg);
 
@@ -99,6 +104,19 @@ async function main(): Promise<void> {
     console.error(`[reset] --role must be research, dev or all (got "${role}").`);
     process.exitCode = 1;
     return;
+  }
+
+  if (sandboxName !== undefined) {
+    if (!ticketKey) {
+      console.error("[reset] --sandbox requires --ticket=<KEY> (it adds that adapter's leftover sandboxes to the ticket's checklist).");
+      process.exitCode = 1;
+      return;
+    }
+    if (!adapterNames().includes(sandboxName)) {
+      console.error(`[reset] --sandbox: unknown sandbox adapter "${sandboxName}"; valid: ${adapterNames().join(", ")}`);
+      process.exitCode = 1;
+      return;
+    }
   }
 
   if (closeRemote && !ticketKey) {
@@ -141,7 +159,7 @@ async function main(): Promise<void> {
     console.log(`[reset] project: ${projectName} (slug: ${slug}), ticket: ${ticketKey}`);
     process.exitCode = await resetTicket({
       project: projectName!, slug, ticket: ticketKey, role: role as ResetRole, config, root,
-      closeRemote, includeCrossRole, ignoreLiveWorker, dryRun, yes: skipConfirm,
+      closeRemote, includeCrossRole, ignoreLiveWorker, dryRun, yes: skipConfirm, sandboxName,
     });
     return;
   }
@@ -199,6 +217,7 @@ interface TicketResetOpts {
   ignoreLiveWorker: boolean;
   dryRun: boolean;
   yes: boolean;
+  sandboxName: string | undefined;
 }
 
 /** One line from stdin when it is a terminal; null otherwise (the runner then requires --yes). */
@@ -214,13 +233,6 @@ const terminalIO: RunnerIO = {
     }
   },
 };
-
-/** A step that only reports why its area can't be surveyed (e.g. an invalid sandbox config). */
-const blockedStep = (area: ResetStep["area"], name: string, why: string): ResetStep => ({
-  area,
-  name,
-  survey: async (): Promise<Survey> => ({ found: "-", action: null, needsYou: why }),
-});
 
 async function resetTicket(o: TicketResetOpts): Promise<number> {
   // Real clients only when credentials load; otherwise every Jira/GitHub row
@@ -242,19 +254,6 @@ async function resetTicket(o: TicketResetOpts): Promise<number> {
     }
   }
 
-  const extra: ResetStep[] = [];
-  let sandbox: ResetCtx["sandbox"] = null;
-  let sandboxConfig: unknown = undefined;
-  if (o.config) {
-    try {
-      const sel = selectSandbox(o.config, undefined);
-      sandbox = sel.adapter;
-      sandboxConfig = sel.config;
-    } catch (e) {
-      extra.push(blockedStep("sandbox", "leftover sandboxes", (e instanceof Error ? e.message : String(e)).split("\n")[0]!));
-    }
-  }
-
   const ctx: ResetCtx = {
     project: o.project,
     slug: o.slug,
@@ -266,8 +265,9 @@ async function resetTicket(o: TicketResetOpts): Promise<number> {
     github,
     openPrHeads,
     git: async (args, cwd) => (await execFileP("git", args, { cwd, encoding: "utf8" })).stdout,
-    sandbox,
-    sandboxConfig,
+    // Per adapter, set by resetSandboxSteps.
+    sandbox: null,
+    sandboxConfig: undefined,
     now: () => new Date(),
     closeRemote: o.closeRemote,
     includeCrossRole: o.includeCrossRole,
@@ -290,8 +290,7 @@ async function resetTicket(o: TicketResetOpts): Promise<number> {
   try {
     // Built once: the verify pass re-surveys these same instances.
     steps = [
-      ...extra,
-      ...sandboxSteps(ctx),
+      ...resetSandboxSteps(ctx, o.config, o.sandboxName),
       ...gitSteps(ctx),
       liveWorker,
       ...localSteps(ctx),

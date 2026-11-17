@@ -38,6 +38,10 @@ describe("github reset steps", () => {
   });
 
   it("no credentials needs you", async () => {
-    expect(await githubSteps(ctx(null))[0].survey()).toMatchObject({ action: null, needsYou: "no credentials" });
+    expect(await githubSteps(ctx(null, { config: {} as never }))[0].survey()).toMatchObject({ action: null, needsYou: "no credentials" });
+  });
+
+  it("no client because no config says no project config", async () => {
+    expect(await githubSteps(ctx(null))[0].survey()).toMatchObject({ action: null, needsYou: "no project config" });
   });
 });

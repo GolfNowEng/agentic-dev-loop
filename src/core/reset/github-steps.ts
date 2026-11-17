@@ -16,7 +16,7 @@ export function githubSteps(ctx: ResetCtx): ResetStep[] {
     area: "github",
     name: "mirror Issue",
     async survey(): Promise<Survey> {
-      if (!ctx.github) return { found: "-", action: null, needsYou: "no credentials" };
+      if (!ctx.github) return { found: "-", action: null, needsYou: ctx.config ? "no credentials" : "no project config" };
       const issues = await ctx.github.findIssuesByJiraKey(ctx.ticket);
       return { found: issues.length === 0 ? "none" : issues.map(describeIssue).join(", "), action: null };
     },

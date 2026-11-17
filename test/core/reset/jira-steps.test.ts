@@ -220,6 +220,13 @@ describe("jira reset steps", () => {
     for (const sv of out) expect(sv).toMatchObject({ action: null, needsYou: "no credentials" });
   });
 
+  it("no client because no config makes every row say no project config", async () => {
+    const out: Survey[] = [];
+    for (const s of steps(ctx({ jira: null, config: null }))) out.push(await s.survey());
+    expect(out).toHaveLength(4);
+    for (const sv of out) expect(sv).toMatchObject({ action: null, needsYou: "no project config" });
+  });
+
   it("no project config makes status and label need you", async () => {
     expect(await step(ctx({ config: null }), "status").survey()).toMatchObject({ action: null, needsYou: "no project config" });
     expect(await step(ctx({ config: null }), "label").survey()).toMatchObject({ action: null, needsYou: "no project config" });

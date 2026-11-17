@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { sandboxSteps } from "../../../src/core/reset/sandbox-steps.ts";
+import { resetSandboxSteps, sandboxSteps } from "../../../src/core/reset/sandbox-steps.ts";
+import type { Config } from "../../../src/core/types.ts";
 import type { ResetCtx } from "../../../src/core/reset/context.ts";
 import { makeSbxAdapter } from "../../../src/sandbox/sbx/adapter.ts";
 import { noneAdapter } from "../../../src/sandbox/none.ts";
@@ -82,5 +83,35 @@ describe("sandbox reset steps", () => {
   it("none adapter has no reset steps", () => {
     expect(sandboxSteps(ctx(null))).toEqual([]);
     expect(sandboxSteps({ ...ctx(null), sandbox: null })).toEqual([]);
+  });
+});
+
+describe("sandbox adapters reset surveys (R11)", () => {
+  const listing = (...names: string[]): SbxRunner => async (args) => (args[0] === "ls" ? ls(...names) : ok());
+  const registry = (run: SbxRunner) => ({ none: noneAdapter, sbx: makeSbxAdapter({ run }) });
+  const base = { project: "webtarsthree", slug: "webtarsthree", ticket: "TARS-1634" } as unknown as ResetCtx;
+  const cfg = (sandbox: unknown) => ({ sandbox }) as unknown as Config;
+
+  it("an sbx sub-block with no adapter line yields the sbx leftover sandboxes row", async () => {
+    const steps = resetSandboxSteps(base, cfg({ mode: "discover", sbx: CFG }), undefined, registry(listing("dl-12-webtarsthree-tars-1634-dev-a")));
+    expect(steps.map((s) => [s.area, s.name])).toEqual([["sandbox", "leftover sandboxes"]]);
+    expect(await steps[0].survey()).toMatchObject({ found: "dl-12-webtarsthree-tars-1634-dev-a", action: "remove 1" });
+  });
+
+  it("the selected adapter counts once; no sandbox block gives no rows", () => {
+    const reg = registry(listing());
+    expect(resetSandboxSteps(base, cfg({ adapter: "sbx", sbx: CFG }), undefined, reg)).toHaveLength(1);
+    expect(resetSandboxSteps(base, cfg(undefined), undefined, reg)).toEqual([]);
+    expect(resetSandboxSteps(base, null, undefined, reg)).toEqual([]);
+  });
+
+  it("--sandbox forces an adapter in; a bad sub-block is a needs-you row", async () => {
+    const steps = resetSandboxSteps(base, cfg(undefined), "sbx", registry(listing()));
+    expect(steps).toHaveLength(1);
+    expect(await steps[0].survey()).toMatchObject({ action: null, needsYou: expect.stringContaining("kitDir is required") });
+  });
+
+  it("--sandbox with an unknown adapter throws naming the valid ones", () => {
+    expect(() => resetSandboxSteps(base, cfg(undefined), "nope", registry(listing()))).toThrow(/unknown sandbox adapter "nope"; valid: none, sbx/);
   });
 });

@@ -7,10 +7,10 @@ import { closeJiraTicket, closeMirrorIssue, closeRecordedPr } from "../remote-cl
 import type { ResetCtx } from "./context.ts";
 import type { ResetStep, Survey } from "./step.ts";
 
-const NO_CREDENTIALS: Survey = { found: "-", action: null, needsYou: "no credentials" };
-
 export function closeSteps(ctx: ResetCtx): ResetStep[] {
   const key = ctx.ticket;
+  // No client: the cause is the missing config when there is none (clients need it).
+  const NO_CREDENTIALS: Survey = { found: "-", action: null, needsYou: ctx.config ? "no credentials" : "no project config" };
   let prUrl: Promise<string | null> | null = null;
   const recordedPr = (): Promise<string | null> => (prUrl ??= findRecordedPrUrlAcross(ctx.slug, key, ctx.root));
 
