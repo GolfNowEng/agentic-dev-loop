@@ -19,6 +19,11 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[research]` A mirror Issue closed as "not planned" (what a reset leaves) is
+  never reused. `main.ts` opens a fresh Issue whose body ends with
+  `Previous attempt: #<n>` lines, and ticket-refine Step 0.5 reads the old
+  Issue's comments as prior context only: an unverified claim, never a
+  re-pickup trigger.
 - `[core]` A dropped resume no longer ends the iteration. After a dev reset
   put TARS-1634 back in To Do, the dead session lock still named its old dev
   run; the next `--once` start adopted it, dropped the resume (status no
