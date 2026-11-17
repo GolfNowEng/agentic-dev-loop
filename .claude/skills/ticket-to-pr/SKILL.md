@@ -573,6 +573,7 @@ reorder, or "improve" the title or body here.
    - Run Cleanup. The work is all committed, so the worktree is removed
      (the loop makes its own worktree to sign and push).
    - Stop. The result line says the run is ready to push.
+   - Then go straight to Cleanup; skip steps 1–4 of this phase.
 
 1. Read `PUSH_BRANCH_SKILL` (the `push-branch=` path you were given, else
    `~/.claude/skills/push-branch/SKILL.md`) with `Read` and follow it

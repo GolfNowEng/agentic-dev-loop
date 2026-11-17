@@ -70,7 +70,7 @@ import { checkAbsPath, checkRepoDirPlacement, claudeEnvFor, repoDirFor, SKILL_NA
 import { killActiveChild, spawnClaudeRun } from "./core/spawn-claude.ts";
 import { realOpenPrUrlForBranch } from "./core/github-client.ts";
 import { realGit } from "./worker/host-sign.ts";
-import { hostPush, runIdFromRunDir } from "./worker/host-push.ts";
+import { hostPush, hostPushPreflightProblem, runIdFromRunDir } from "./worker/host-push.ts";
 import { notify } from "./core/notify.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
 import { makeRunSkill, sandboxInstancePrefix, sandboxMounts, sandboxPreflightInstanceName } from "./worker/skill-runner.ts";
@@ -178,10 +178,10 @@ async function reconcile(
   }
 }
 
-/** execFile with a large buffer; rejects with stderr on a non-zero exit. */
-function runCmd(cmd: string, args: string[], cwd: string): Promise<string> {
+/** execFile with a large buffer; rejects with stderr on a non-zero exit. `timeoutMs` kills the child. */
+function runCmd(cmd: string, args: string[], cwd: string, timeoutMs?: number): Promise<string> {
   return new Promise((resolveP, reject) => {
-    execFile(cmd, args, { cwd, env: process.env, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(cmd, args, { cwd, env: process.env, maxBuffer: 64 * 1024 * 1024, ...(timeoutMs ? { timeout: timeoutMs } : {}) }, (err, stdout, stderr) => {
       if (err) reject(new Error(String(stderr).trim() || err.message));
       else resolveP(String(stdout));
     });
@@ -197,6 +197,16 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
   const runsDev = ctx.roles.includes("dev");
   const wantsHostPush = ctx.sandbox.adapter.name !== DEFAULT_ADAPTER && ctx.sandbox.adapter.hostPush?.(ctx.sandbox.config) === true;
   const devLimits = roleView(config, "dev").limits;
+  const pushBranchSkill = join(homedir(), ".claude/skills/push-branch/SKILL.md");
+  if (wantsHostPush) {
+    // Before the loop: a host push that can't run would bounce every ticket.
+    const repoDir = repoDirFor(config, slug);
+    let status: string;
+    try { status = await runCmd("direnv", ["status"], repoDir); }
+    catch (err) { throw new Error(`host push needs direnv on the host: \`direnv status\` failed in ${repoDir}: ${err instanceof Error ? err.message : String(err)}`); }
+    const problem = hostPushPreflightProblem(status, existsSync(pushBranchSkill), repoDir);
+    if (problem) throw new Error(problem);
+  }
   const deps: WorkerDeps = {
     jira: ctx.jiraClient,
     github: ctx.githubClient,
@@ -248,7 +258,7 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
               spawn: (opts) => spawnClaudeRun(opts, { log, logError }),
               run: runCmd,
               findOpenPrUrlForBranch: realOpenPrUrlForBranch(config.github.repo),
-              pushBranchSkill: join(homedir(), ".claude/skills/push-branch/SKILL.md"),
+              pushBranchSkill,
               timeoutMin: 20,
               maxBudgetUsd: 2,
               stream: ctx.stream,

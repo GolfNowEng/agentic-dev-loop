@@ -27,6 +27,11 @@ describe("ticket-to-pr push=host", () => {
     expect(s).toContain('outcome: "ready_to_push"');
     expect(s).toContain("git status --porcelain");
   });
+  it("F10: Phase 5 step 0 ends by sending the run to Cleanup", () => {
+    const s = section("### Phase 5");
+    const step0 = s.slice(s.indexOf("0. **If `PUSH_MODE=host`"), s.indexOf("\n1. "));
+    expect(step0.trimEnd().endsWith("Then go straight to Cleanup; skip steps 1–4 of this phase.")).toBe(true);
+  });
   it("verdict schema lists branch, pr_title, pr_body", () => {
     const s = section("## verdict.json schema");
     for (const f of ["ready_to_push", "branch", "pr_title", "pr_body"]) expect(s).toContain(f);

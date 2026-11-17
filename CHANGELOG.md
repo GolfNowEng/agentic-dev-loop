@@ -27,8 +27,12 @@ sbx adapter, not yet dogfooded). Design:
   The loop then re-signs only the unpushed commits as the operator in a
   fresh host worktree, running the repo's commit hooks on each, and runs
   push-branch unchanged on haiku. If signing fails, the branch is restored
-  and the run bounces `env_setup`. Host runs are unchanged. See
-  docs/sandbox-sbx.md section 10.
+  and the run bounces `env_setup`. Re-signing keeps the branch's fork point
+  (never replays onto a moved default branch). The run bounces before
+  `npm ci` if the branch edits package/lock files, `.npmrc` or `.husky/`.
+  The PR body is passed to haiku between markers, as data. The loop won't
+  start if the target `.envrc` isn't allowed or push-branch is missing.
+  Host runs are unchanged. See docs/sandbox-sbx.md section 10.
 - `[dev]` A sandboxed dev run can read your `push-branch` skill. The sbx
   sandbox can't see `~/.claude`, so TARS-1634's dev run bounced `env_setup`
   at the PR step. New `sandbox.sbx.hostSkills` mounts each listed skill

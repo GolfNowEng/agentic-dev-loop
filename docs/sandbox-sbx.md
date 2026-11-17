@@ -224,9 +224,12 @@ rejected the push with GH013.
 `ticket-to-pr`. The skill finishes Phase 4, checks the tree is clean, and
 writes a verdict with `outcome: "ready_to_push"` (`branch`, `pr_title`,
 `pr_body`) instead of pushing. The host loop then makes a fresh worktree,
-re-signs only the unpushed commits as the operator (it refuses if any commit
-is reachable from an `origin/*` ref), runs `npm ci`, and runs `push-branch`
-unchanged on haiku. push-branch may rename the branch (version guard); the
+re-signs only the unpushed commits as the operator, runs `npm ci`, and runs
+`push-branch` unchanged on haiku. An unpushed branch is re-signed on top of
+its fork point (`git merge-base HEAD origin/<default>`), so a default branch
+that moved since is never replayed onto. A pushed branch is re-signed on top
+of `origin/<branch>`, and only if that is still an ancestor of HEAD. It
+refuses if any commit in the range is already on origin. push-branch may rename the branch (version guard); the
 loop reads the final branch name to find the PR.
 
 **On failure.** If signing or the push fails, the work stays committed
@@ -240,4 +243,20 @@ or touch prompt. A locked agent bounces the run.
 
 **Hooks run, every time.** Re-signing runs webtarsthree's pre-commit suite
 once per commit. It is never skipped (no `--no-verify`). A hook that fails
-on commit 2 of 3 bounces the run.
+on commit 2 of 3 bounces the run. Each worktree git call has a 60 minute
+timeout.
+
+**The host runs the branch's code.** The pre-commit and pre-push hooks run
+the branch's tests, and that branch was written in the sandbox. So the
+host runs sandbox-written code, outside the sandbox. This is accepted
+because hooks can't be skipped (signed commits need them), and a guard
+covers the worst paths: before `npm ci`, the loop lists the files the branch
+changed since its fork point. If any is `package.json`, `package-lock.json`,
+`npm-shrinkwrap.json`, `.npmrc` or under `.husky/`, the run bounces before
+anything is installed or run. Review that branch and push it by hand.
+
+**Startup checks.** With host push on, the loop checks two things before it
+polls, and won't start if either fails. The target repo's `.envrc` must be
+allowed (`direnv status` shows `Found RC allowed 0`; no `.envrc` is fine).
+The loop never allows it for you: run `direnv allow <repoDir>` yourself
+once. And `~/.claude/skills/push-branch/SKILL.md` must exist.

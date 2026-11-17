@@ -191,3 +191,10 @@ describe.skipIf(!hasKeygen)("signUnpushed", () => {
     expect(r).toEqual({ ok: false, reason: "nothing to sign on X-1-a", restored: false });
   });
 });
+
+describe("realGit timeout (F9)", () => {
+  it("kills a git call that outlives timeoutMs", async () => {
+    // hash-object --stdin waits on an open stdin pipe until killed.
+    await expect(realGit(process.env, 300)(["hash-object", "--stdin"], tmpdir())).rejects.toThrow();
+  });
+});

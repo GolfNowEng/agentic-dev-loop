@@ -7,11 +7,11 @@ export type SignResult =
   | { ok: true; base: string; oldTip: string; newTip: string; signed: number }
   | { ok: false; reason: string; restored: boolean };
 
-export function realGit(env?: NodeJS.ProcessEnv): GitFn {
+export function realGit(env?: NodeJS.ProcessEnv, timeoutMs?: number): GitFn {
   const merged = { ...(env ?? process.env), GIT_EDITOR: "true", GIT_SEQUENCE_EDITOR: "true" };
   return (args, cwd) =>
     new Promise((resolve, reject) => {
-      execFile("git", args, { cwd, env: merged, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      execFile("git", args, { cwd, env: merged, maxBuffer: 64 * 1024 * 1024, ...(timeoutMs ? { timeout: timeoutMs } : {}) }, (err, stdout, stderr) => {
         if (err) reject(new Error(String(stderr).trim() || err.message));
         else resolve(String(stdout));
       });
