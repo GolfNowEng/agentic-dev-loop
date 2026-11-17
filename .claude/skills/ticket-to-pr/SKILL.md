@@ -787,7 +787,9 @@ from this exact path, and only from there):
 `branch`, `pr_title` and `pr_body` are optional, and required when
 `outcome` is `ready_to_push` (only under `push=host`; `pr` is `null` then).
 `branch` is the literal current branch; the title and body are Phase 4
-step 7 verbatim. Omit all three otherwise.
+step 7 verbatim. `pr_title` is at most 200 characters with no `"`,
+backtick, `$`, `\` or newline (the loop rejects it otherwise). Omit all
+three otherwise.
 
 `follow_up` is optional: `{"ticket": "<KEY>", "pr": "<url>" | null}` when
 the run filed a follow-up for pre-existing failures that blocked a hook

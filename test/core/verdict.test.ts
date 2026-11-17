@@ -410,6 +410,18 @@ describe("parseVerdict executor: ready_to_push", () => {
     });
   }
 
+  for (const bad of ['say "hi"', "a `cmd`", "cost $HOME", "back\\slash", "two\nlines", "x".repeat(201)]) {
+    it(`F2: rejects pr_title ${JSON.stringify(bad.slice(0, 20))}`, () => {
+      const v = parse({ ...base, pr_title: bad });
+      expect(v.outcome).toBe("error");
+      expect(v.failure_category).toBe("agent_error");
+    });
+  }
+
+  it("F2: accepts a 200-char pr_title", () => {
+    expect(parse({ ...base, pr_title: "x".repeat(200) }).outcome).toBe("ready_to_push");
+  });
+
   it("leaves landed/bounced verdicts unchanged", () => {
     const v = parseVerdict(validVerdictJson, "executor");
     expect(v.outcome).toBe("landed");

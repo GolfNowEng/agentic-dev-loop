@@ -449,7 +449,8 @@ on a landed dev-loop verdict).
 **`ready_to_push` (dev only).** When the loop passes `push=host` (a sandbox
 that can't sign commits), `ticket-to-pr` stops at Phase 5 with
 `outcome: "ready_to_push"`, `pr: null`, and flat `branch`, `pr_title`,
-`pr_body` fields (required for this outcome). It does not push or rename the
+`pr_body` fields (required for this outcome; `pr_title` is at most 200
+characters with no `"`, backtick, `$`, `\` or newline). It does not push or rename the
 branch; the loop re-signs the unpushed commits as the operator and runs
 `push-branch` on the host. On a run without `push=host` this outcome is an
 `agent_error`.

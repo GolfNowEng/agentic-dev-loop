@@ -69,7 +69,7 @@ function isValidReadyToPush(v: Record<string, unknown>): boolean {
   const { branch, pr_title, pr_body } = v;
   if (typeof branch !== "string" || !BRANCH_NAME.test(branch) || branch.includes("..")) return false;
   return (
-    typeof pr_title === "string" && pr_title.length > 0 &&
+    typeof pr_title === "string" && pr_title.length > 0 && pr_title.length <= 200 && !/["`$\\\n\r]/.test(pr_title) &&
     typeof pr_body === "string" && pr_body.length > 0
   );
 }
