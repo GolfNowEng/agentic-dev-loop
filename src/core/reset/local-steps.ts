@@ -15,7 +15,7 @@ export function localSteps(ctx: ResetCtx): ResetStep[] {
   const surveyPlan = async (): Promise<ResetPlan> => {
     plan = await planReset({
       project: ctx.slug, ticket: ctx.ticket, role: ctx.role, config: ctx.config, root: ctx.root,
-      isAlive: ctx.isAlive, ignoreLiveWorker: true, skipWorktrees: true,
+      isAlive: ctx.isAlive, ignoreLiveWorker: true, skipWorktrees: true, includeCrossRole: ctx.includeCrossRole,
     });
     executed = false;
     return plan;

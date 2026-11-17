@@ -21,11 +21,19 @@
  * Without --ticket: the WHOLE project. Requires --yes.
  * --root: the state root (default: this repo's root); tests pass a temp dir.
  *
- * --close-remote (requires --ticket) additionally closes the real Jira
- * ticket, its mirror GitHub Issue, and any PR recorded for the ticket (v2
- * log, else the v1 dev log) -- see src/core/remote-close.ts. Needs
- * credentials, so run it via `reset-project:remote`, which loads
- * `--env-file="${DEVLOOP_ENV_FILE:-.env}"` (DEVLOOP_ENV_FILE, default .env).
+ * With --ticket: a checklist (src/core/reset/runner.ts). Every area's steps
+ * are surveyed read-only into one table; then `Proceed? [y/N]` (only on a
+ * TTY; otherwise --yes is required), the approved rows run in area order,
+ * and a re-survey of the same steps says whether the ticket is at zero
+ * (exit 0) or which rows need you (exit 1). --dry-run prints the table only.
+ * Jira/GitHub rows need credentials: both npm scripts load
+ * `--env-file-if-exists="${DEVLOOP_ENV_FILE:-.env}"`; without them those rows
+ * read "needs you: no credentials" and the local/git/sandbox rows still run.
+ *
+ * --close-remote (requires --ticket) replaces the Jira reset rows with rows
+ * that close the real Jira ticket, its mirror GitHub Issue, and any PR
+ * recorded for the ticket (v2 log, else the v1 dev log) -- see
+ * src/core/reset/close-steps.ts and src/core/remote-close.ts.
  * An agent must confirm with the human in chat before a real
  * (non-dry-run) --close-remote, regardless of permission settings -- see
  * docs/reset.md and .claude/skills/reset-project/SKILL.md.
@@ -35,20 +43,30 @@
  * and test/core/reset-cli.test.ts drives this file as a subprocess.
  */
 
-import { resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { basename, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
+import { promisify } from "node:util";
 import { loadConfig, resolveProjectConfigPath, repoSlugFromUrl, listAvailableProjects } from "./config.ts";
-import { planReset, executeReset, describeResetPlan, describeResetSummary, type ResetRole } from "./reset-project.ts";
-import {
-  executeRemoteClose,
-  describeRemoteClosePlan,
-  describeRemoteCloseSummary,
-} from "./remote-close.ts";
+import { planReset, executeReset, describeResetPlan, describeResetSummary, shortenPath, type ResetRole } from "./reset-project.ts";
 import { credentialsFromEnv, RealJiraClient } from "./jira-client.ts";
-import { RealGitHubClient, realExecGh } from "./github-client.ts";
+import { RealGitHubClient, realExecGh, realOpenPrHeads } from "./github-client.ts";
 import type { Config } from "./types.ts";
 import { PROJECT_SLUG } from "./paths.ts";
-import { findRecordedPrUrlAcross } from "./iteration-log.ts";
 import { FlagError, parseFlags } from "./flags.ts";
+import { selectSandbox } from "../sandbox/select.ts";
+import type { ResetCtx } from "./reset/context.ts";
+import type { ResetStep, Survey } from "./reset/step.ts";
+import { runChecklist, type RunnerIO } from "./reset/runner.ts";
+import { sandboxSteps } from "./reset/sandbox-steps.ts";
+import { gitSteps } from "./reset/git-steps.ts";
+import { localSteps } from "./reset/local-steps.ts";
+import { jiraSteps } from "./reset/jira-steps.ts";
+import { runWindows } from "./reset/run-windows.ts";
+import { githubSteps } from "./reset/github-steps.ts";
+import { closeSteps } from "./reset/close-steps.ts";
+
+const execFileP = promisify(execFile);
 
 const SPEC = {
   values: ["--project", "--ticket", "--role", "--root"],
@@ -119,6 +137,16 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (ticketKey) {
+    console.log(`[reset] project: ${projectName} (slug: ${slug}), ticket: ${ticketKey}`);
+    process.exitCode = await resetTicket({
+      project: projectName!, slug, ticket: ticketKey, role: role as ResetRole, config, root,
+      closeRemote, includeCrossRole, ignoreLiveWorker, dryRun, yes: skipConfirm,
+    });
+    return;
+  }
+
+  // Whole project (no --ticket): today's plan / --yes / execute path.
   const plan = await planReset({
     project: slug,
     ticket: ticketKey,
@@ -129,34 +157,15 @@ async function main(): Promise<void> {
     ignoreLiveWorker,
   });
 
-  // The PR lookup reads the logs BEFORE executeReset archives records, and
-  // runs under --dry-run too so the preview matches the real run.
-  const remotePlan = closeRemote && ticketKey
-    ? { ticketKey, prUrl: await findRecordedPrUrlAcross(slug, ticketKey, root) }
-    : null;
-
-  console.log(`[reset] project: ${projectName} (slug: ${slug})${ticketKey ? `, ticket: ${ticketKey}` : ", WHOLE PROJECT"}`);
+  console.log(`[reset] project: ${projectName} (slug: ${slug}), WHOLE PROJECT`);
   console.log(describeResetPlan(plan));
-  if (remotePlan) {
-    console.log(describeRemoteClosePlan(remotePlan));
-  }
 
   if (dryRun) {
     console.log("[reset] --dry-run: nothing deleted or closed.");
     return;
   }
 
-  const nothingToDo =
-    plan.recordsToArchive === 0 &&
-    plan.runDirsToRemove.length === 0 &&
-    plan.sessionLeftoversToRemove.length === 0 &&
-    plan.worktreesToRemove.length === 0;
-  if (nothingToDo && !plan.wholeProject && !closeRemote) {
-    console.log("[reset] nothing matched -- nothing to delete.");
-    return;
-  }
-
-  if (plan.wholeProject && !skipConfirm) {
+  if (!skipConfirm) {
     console.error(
       "[reset] a whole-project reset (no --ticket=<KEY>) requires --yes to confirm -- " +
         "this deletes EVERY ticket's history for this project, not just one.",
@@ -175,27 +184,141 @@ async function main(): Promise<void> {
 
   const summary = await executeReset(plan);
   console.log(describeResetSummary(summary));
+  console.log("[reset] done.");
+}
 
-  if (closeRemote && remotePlan) {
-    // Real Jira/GitHub clients are constructed ONLY here, ONLY when
-    // --close-remote was actually passed -- a local-only reset (the
-    // default, and the common case) must never require real credentials
-    // or a fully-filled-in project config to exist at all.
-    if (!config) {
-      console.error(
-        `[reset] --close-remote requires a valid project config (could not load ${configPath} earlier) -- local reset completed, but remote closing was skipped.`,
-      );
-      process.exitCode = 1;
-      return;
+interface TicketResetOpts {
+  project: string;
+  slug: string;
+  ticket: string;
+  role: ResetRole;
+  config: Config | null;
+  root: string | undefined;
+  closeRemote: boolean;
+  includeCrossRole: boolean;
+  ignoreLiveWorker: boolean;
+  dryRun: boolean;
+  yes: boolean;
+}
+
+/** One line from stdin when it is a terminal; null otherwise (the runner then requires --yes). */
+const terminalIO: RunnerIO = {
+  print: (s) => console.log(s),
+  async ask(q) {
+    if (!process.stdin.isTTY) return null;
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      return await rl.question(q);
+    } finally {
+      rl.close();
     }
-    const credentials = credentialsFromEnv();
-    const jiraClient = new RealJiraClient(credentials, config);
-    const githubClient = new RealGitHubClient(config.github, realExecGh());
-    const remoteSummary = await executeRemoteClose(remotePlan, { jiraClient, githubClient });
-    console.log(describeRemoteCloseSummary(remoteSummary));
+  },
+};
+
+/** A step that only reports why its area can't be surveyed (e.g. an invalid sandbox config). */
+const blockedStep = (area: ResetStep["area"], name: string, why: string): ResetStep => ({
+  area,
+  name,
+  survey: async (): Promise<Survey> => ({ found: "-", action: null, needsYou: why }),
+});
+
+async function resetTicket(o: TicketResetOpts): Promise<number> {
+  // Real clients only when credentials load; otherwise every Jira/GitHub row
+  // says "needs you: no credentials" and the local, git and sandbox rows run.
+  let jira: ResetCtx["jira"] = null;
+  let github: ResetCtx["github"] = null;
+  let openPrHeads: ResetCtx["openPrHeads"] = null;
+  if (o.config) {
+    let credentials = null;
+    try {
+      credentials = credentialsFromEnv();
+    } catch {
+      // No credentials: rows report it.
+    }
+    if (credentials) {
+      jira = new RealJiraClient(credentials, o.config);
+      github = new RealGitHubClient(o.config.github, realExecGh());
+      openPrHeads = realOpenPrHeads(o.config.github.repo);
+    }
   }
 
-  console.log("[reset] done.");
+  const extra: ResetStep[] = [];
+  let sandbox: ResetCtx["sandbox"] = null;
+  let sandboxConfig: unknown = undefined;
+  if (o.config) {
+    try {
+      const sel = selectSandbox(o.config, undefined);
+      sandbox = sel.adapter;
+      sandboxConfig = sel.config;
+    } catch (e) {
+      extra.push(blockedStep("sandbox", "leftover sandboxes", (e instanceof Error ? e.message : String(e)).split("\n")[0]!));
+    }
+  }
+
+  const ctx: ResetCtx = {
+    project: o.project,
+    slug: o.slug,
+    ticket: o.ticket,
+    role: o.role,
+    config: o.config,
+    root: o.root,
+    jira,
+    github,
+    openPrHeads,
+    git: async (args, cwd) => (await execFileP("git", args, { cwd, encoding: "utf8" })).stdout,
+    sandbox,
+    sandboxConfig,
+    now: () => new Date(),
+    closeRemote: o.closeRemote,
+    includeCrossRole: o.includeCrossRole,
+  };
+
+  const livePlan = () =>
+    planReset({ project: o.slug, ticket: o.ticket, role: o.role, config: o.config, root: o.root, skipWorktrees: true, ignoreLiveWorker: true });
+  const liveWorker: ResetStep = {
+    area: "local",
+    name: "live worker",
+    async survey(): Promise<Survey> {
+      const locks = (await livePlan()).liveWorkerLocks.map((l) => basename(l));
+      if (locks.length === 0) return { found: "none", action: null };
+      const found = locks.map((l) => `${l} (holder alive)`).join(", ");
+      return o.ignoreLiveWorker ? { found, action: null } : { found, action: null, needsYou: `a live worker holds ${locks.join(", ")}` };
+    },
+  };
+
+  let steps: ResetStep[];
+  try {
+    // Built once: the verify pass re-surveys these same instances.
+    steps = [
+      ...extra,
+      ...sandboxSteps(ctx),
+      ...gitSteps(ctx),
+      liveWorker,
+      ...localSteps(ctx),
+      ...(o.closeRemote ? closeSteps(ctx) : jiraSteps(ctx, () => runWindows(ctx))),
+      ...githubSteps(ctx),
+    ];
+  } catch (e) {
+    console.error(`[reset] ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+
+  return runChecklist(
+    steps,
+    {
+      title: `Reset ${o.ticket} (role: ${o.role})`,
+      ticket: o.ticket,
+      dryRun: o.dryRun,
+      yes: o.yes,
+      async preExecuteCheck() {
+        if (o.ignoreLiveWorker) return null;
+        const locks = (await livePlan()).liveWorkerLocks;
+        if (locks.length === 0) return null;
+        return `[reset] refusing: a live worker holds ${locks.map(shortenPath).join(", ")}. Stop it first, or pass --ignore-live-worker.`;
+      },
+    },
+    terminalIO,
+  );
 }
 
 main().catch((err) => {

@@ -22,4 +22,6 @@ export interface ResetCtx {
   isAlive?: (pid: number, started: number) => boolean;
   now: () => Date;
   closeRemote: boolean;
+  /** --include-cross-role: archive records the other role landed in too. */
+  includeCrossRole?: boolean;
 }

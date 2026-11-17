@@ -44,7 +44,7 @@ function makeMockGitHubClient(overrides: Partial<GitHubClient> = {}): GitHubClie
 describe("remote-close module surface", () => {
   it("has no runs.jsonl-reading planner (reset-cli looks the PR up via findRecordedPrUrlAcross)", async () => {
     const mod = await import("../../src/core/remote-close.ts");
-    expect(Object.keys(mod).sort()).toEqual(["describeRemoteClosePlan", "describeRemoteCloseSummary", "executeRemoteClose"]);
+    expect(Object.keys(mod).sort()).toEqual(["closeJiraTicket", "closeMirrorIssue", "closeRecordedPr", "describeRemoteClosePlan", "describeRemoteCloseSummary", "executeRemoteClose"]);
   });
 });
 
