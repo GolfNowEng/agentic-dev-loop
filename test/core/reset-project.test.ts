@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import {
   planReset,
@@ -292,6 +293,23 @@ describe("planReset / executeReset (v2 layout)", () => {
     }
   });
 
+  it("a deleted worktree is pruned from its git repo, so its branch can be deleted afterwards", async () => {
+    const target = await mkdtemp(join(tmpdir(), "target-repo-git-"));
+    const git = (...a: string[]) => execFileSync("git", ["-C", target, ...a], { encoding: "utf8" });
+    try {
+      git("init", "-q", "-b", "main");
+      git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
+      git("worktree", "add", "-q", "-b", "TARS-1-branch", join(target, ".claude", "worktrees", "TARS-1-20261110T000000Z"));
+      const plan = await planReset({ root, project: P, ticket: "TARS-1", role: "dev", config: makeConfig(target) });
+      const summary = await executeReset(plan);
+      expect(summary.worktreesPruned).toBe(true);
+      expect(git("worktree", "list")).not.toContain("TARS-1-20261110T000000Z");
+      git("branch", "-d", "TARS-1-branch");
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
   it("no worktree scan when config is null or targetRepo.path is unset", async () => {
     expect((await planReset({ root, project: P, ticket: "TARS-1", config: null })).worktreesToRemove).toEqual([]);
     expect((await planReset({ root, project: P, ticket: "TARS-1", config: makeConfig() })).worktreesToRemove).toEqual([]);
@@ -420,6 +438,67 @@ describe("live worker guard", () => {
   });
 });
 
+describe("stale in-flight entries in dead session locks", () => {
+  let root: string;
+  const flight = (ticket: string, role: "research" | "dev") => ({
+    ticket, role, runDir: `.pipeline/v2/${P}/dev-1/${ticket}/${role}-20261110T010000Z`, since: "2026-11-10T01:00:00.000Z",
+  });
+  const lock = (pid: number, inFlight: object | null) => JSON.stringify({ pid, started: 1000, inFlight });
+  const readLock = async (name: string) => JSON.parse(await readFile(join(root, SESSIONS, name), "utf8"));
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "reset-flight-"));
+    await put(root, `runs/v2/${P}.jsonl`, rec("TARS-1", [phase("dev")]) + "\n");
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("clears a dead lock's in-flight entry for the reset ticket and role, keeping pid and start time", async () => {
+    await put(root, `${SESSIONS}/dev-1.lock`, lock(53679, flight("TARS-1", "dev")));
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", role: "dev", isAlive: () => false });
+    expect(plan.flightsToClear).toEqual([join(root, SESSIONS, "dev-1.lock")]);
+    expect(describeResetPlan(plan)).toMatch(/clear the in-flight TARS-1 dev run recorded in 1 dead session lock/);
+    const summary = await executeReset(plan);
+    expect(summary.flightsCleared).toEqual([join(root, SESSIONS, "dev-1.lock")]);
+    expect(await readLock("dev-1.lock")).toEqual({ pid: 53679, started: 1000, inFlight: null });
+  });
+
+  it("also clears an unadopted .lock.stale-* entry, and role all clears either role", async () => {
+    await put(root, `${SESSIONS}/dev-1.lock.stale-20261110T000000Z-1-ab`, lock(1, flight("TARS-1", "research")));
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", isAlive: () => false });
+    expect(plan.flightsToClear).toHaveLength(1);
+    await executeReset(plan);
+    expect((await readLock("dev-1.lock.stale-20261110T000000Z-1-ab")).inFlight).toBeNull();
+  });
+
+  it("leaves another ticket's, the other role's, and a live holder's entry alone", async () => {
+    await put(root, `${SESSIONS}/dev-1.lock`, lock(1, flight("TARS-2", "dev")));
+    await put(root, `${SESSIONS}/dev-2.lock`, lock(2, flight("TARS-1", "research")));
+    await put(root, `${SESSIONS}/dev-3.lock`, lock(3, flight("TARS-1", "dev")));
+    const plan = await planReset({ root, project: P, ticket: "TARS-1", role: "dev", isAlive: (pid) => pid === 3, ignoreLiveWorker: true });
+    expect(plan.flightsToClear).toEqual([]);
+    await executeReset(plan);
+    expect((await readLock("dev-1.lock")).inFlight.ticket).toBe("TARS-2");
+    expect((await readLock("dev-2.lock")).inFlight.role).toBe("research");
+    expect((await readLock("dev-3.lock")).inFlight.ticket).toBe("TARS-1");
+  });
+
+  it("a whole-project reset clears every matching dead entry; a corrupt lock is left alone", async () => {
+    await put(root, `${SESSIONS}/dev-1.lock`, lock(1, flight("TARS-7", "dev")));
+    await put(root, `${SESSIONS}/dev-2.lock`, "{ corrupt");
+    const plan = await planReset({ root, project: P, role: "dev", isAlive: () => false });
+    expect(plan.flightsToClear).toEqual([join(root, SESSIONS, "dev-1.lock")]);
+    await executeReset(plan);
+    expect(await readFile(join(root, SESSIONS, "dev-2.lock"), "utf8")).toBe("{ corrupt");
+  });
+
+  it("--dry-run (plan only) changes nothing", async () => {
+    await put(root, `${SESSIONS}/dev-1.lock`, lock(1, flight("TARS-1", "dev")));
+    await planReset({ root, project: P, ticket: "TARS-1", isAlive: () => false });
+    expect((await readLock("dev-1.lock")).inFlight.ticket).toBe("TARS-1");
+  });
+});
+
 describe("describeResetPlan / describeResetSummary", () => {
   let root: string;
   beforeEach(async () => {
@@ -480,6 +559,7 @@ describe("describeResetPlan / describeResetSummary", () => {
       warnings: [],
       root: join(homedir(), "x"),
       worktreesDir: null,
+      flightsToClear: [],
     };
     const text = describeResetPlan(plan);
     expect(text).not.toContain(homedir());

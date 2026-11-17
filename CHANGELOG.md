@@ -19,6 +19,18 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[core]` A dropped resume no longer ends the iteration. After a dev reset
+  put TARS-1634 back in To Do, the dead session lock still named its old dev
+  run; the next `--once` start adopted it, dropped the resume (status no
+  longer In Progress) and exited without polling. A `resume-dropped` is
+  bookkeeping only, so the worker now resolves every stale resume and goes
+  on to poll in the same iteration. It also no longer puts the ticket in the
+  10-minute "recently ended" hold (that hold covers Jira's index lag after a
+  write, and a dropped resume writes nothing), which kept the rerun idle.
+- `[core]` reset-project clears a dead session lock's in-flight entry for
+  the reset ticket and role (so a reset run isn't "resumed"), and runs
+  `git worktree prune` after deleting worktrees (the branch was otherwise
+  "checked out at" a deleted dir and could not be deleted).
 - `[core]` sbx preflight: the GitHub check failed about 3 times in 11 inside
   the sandbox (a garbled `gh api` reply, `git` exit 128, a cut-off exec,
   each after ~12 s; the host never failed), and the error showed direnv's

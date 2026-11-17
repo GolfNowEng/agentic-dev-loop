@@ -19,7 +19,7 @@ import { buildPollJql, excludeKeysFromJql } from "../core/jql.ts";
 import { append, latestRecord, makeCtx, nowIso, roleCapped, runsToday, workerState, type Ctx, type WorkerDeps, type WorkerIterationResult } from "./context.ts";
 import { completePendingHandoffs } from "./handoff.ts";
 import { enforceAttemptCap } from "./attempts.ts";
-import { recordFlights, resumeNext } from "./recover.ts";
+import { isDroppedResume, recordFlights, resumeNext } from "./recover.ts";
 import {
   MIN_DEV_BUDGET_USD,
   WorkerPausedError,
@@ -93,7 +93,8 @@ async function iterate(ctx: Ctx): Promise<WorkerIterationResult> {
   ctx.state.healed = null;
   const resumed = await resumeNext(ctx, (c, t, s) => researchThenDev(c, t, s, []), (c, t, s) => devOnly(c, t, s));
   if (resumed) return resumed;
-  if (healed) return healed;
+  // A dropped resume is bookkeeping (its record is written): carry on to the poll.
+  if (healed && !isDroppedResume(healed)) return healed;
 
   // 1. Pending handoffs (not in research-only mode: there the handoff is left pending).
   if (ctx.roles.has("dev")) await completePendingHandoffs(ctx);

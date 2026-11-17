@@ -24,6 +24,16 @@ npm run reset-project:remote -- --project=webtarsthree --ticket=TARS-1465 --clos
 | run dirs | `.pipeline/v2/<project>/<session>/<ticket>/<role>-<RUN_ID>/`, every session | both roles' |
 | `runs/v2/<project>.jsonl` | records with a phase of that role, or `resume: <role>` | every record for the ticket (whole project: every line, unreadable ones included) |
 | worktrees (`--ticket` only) | research: `<TICKET>-*-ground`; dev: the other `<TICKET>-*` | all `<TICKET>-*` |
+| dead session locks' in-flight entry | entries naming the ticket (whole project: any) and that role | either role |
+
+**Stale in-flight runs.** A worker records the run it is working on in its
+session lock (`inFlight`). If it dies (or is stopped) mid-run, the next
+start adopts that entry and tries to resume the run. Reset deletes that
+run's dir, so it also sets `inFlight` to `null` in every dead lock
+(`*.lock` or an unadopted `*.lock.stale-*`) whose entry names a matching
+ticket and role; the pid and start time stay. A live holder's lock is
+never rewritten. After deleting worktrees, reset runs `git worktree prune`
+in their repo, so a branch the worktree had checked out can be deleted.
 
 **Cross-role safety.** A record can hold both roles' phases (research
 landed, then dev in the same iteration). With `--role=research` or

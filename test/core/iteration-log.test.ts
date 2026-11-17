@@ -239,6 +239,12 @@ describe("recentlyEnded / lastSkipBlockers", () => {
     expect([...recentlyEnded(rs, now, 30 * 60_000)]).toEqual(["TARS-1"]);
   });
 
+  it("a resume-dropped record (no Jira write, so no index lag) does not hold the ticket back", () => {
+    const now = new Date("2026-11-10T11:00:00Z");
+    const rs = [rec({ outcome: "resume-dropped", phases: [], ended: "2026-11-10T10:59:00Z" })];
+    expect([...recentlyEnded(rs, now, 30 * 60_000)]).toEqual([]);
+  });
+
   it("lastSkipBlockers returns blocked_by only if the latest record is skipped-blocked", () => {
     const skip = rec({ outcome: "skipped-blocked", phases: [], blocked_by: ["TARS-9"], ended: "2026-11-10T12:00:00Z" });
     expect(lastSkipBlockers([rec(), skip], "TARS-1")).toEqual(["TARS-9"]);

@@ -432,7 +432,8 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
 
       const result = await runWorkerIteration(h.deps);
 
-      expect(result.kind).toBe("did");
+      // Dropping is bookkeeping: with nothing else to do the iteration is idle.
+      expect(result.kind).toBe("idle");
       expect(runSkillCalls(h)).toEqual([]);
       expect(h.jira.calls("claimTicket")).toEqual([]);
       const recs = await records(h);
@@ -599,6 +600,34 @@ describe("runWorkerIteration — the cycle (§6.3)", () => {
           detail: 'resume of the research phase dropped: status is now "Code Review", not "In Progress"',
         });
       });
+    });
+
+    it("(l) a dropped resume is bookkeeping: the same iteration goes on to poll and runs the ticket", async () => {
+      // Reset put the ticket back to To Do while the dead lock still named its old dev run (TARS-1634, 2026-11-16).
+      h = await harness({ session: devFlight() });
+      h.jira.statuses["TARS-2"] = "To Do";
+      h.jira.dev = [devTicket("TARS-2")];
+
+      const result = await runWorkerIteration(h.deps);
+
+      expect(result.kind).toBe("did");
+      expect(runSkillCalls(h).map((e) => [e[1], e[2]])).toEqual([["dev", "TARS-2"]]);
+      const recs = await records(h);
+      expect(recs[0]).toMatchObject({ ticket: "TARS-2", outcome: "resume-dropped" });
+      expect(recs.at(-1)!.phases.map((p) => p.role)).toEqual(["dev"]);
+    });
+
+    it("(m) several dropped resumes are all resolved in one iteration, then nothing to do is idle", async () => {
+      h = await harness({ session: researchFlight() });
+      h.jira.statuses["TARS-1"] = "Done";
+      await appendIteration(h.logPath, rec({ ticket: "TARS-9", outcome: "interrupted", phases: [], resume: "dev", detail: "x" }));
+      h.jira.statuses["TARS-9"] = "Blocked";
+
+      const result = await runWorkerIteration(h.deps);
+
+      expect(result.kind).toBe("idle");
+      expect(runSkillCalls(h)).toEqual([]);
+      expect((await records(h)).filter((r) => r.outcome === "resume-dropped").map((r) => r.ticket).sort()).toEqual(["TARS-1", "TARS-9"]);
     });
 
     it("(c) status In Progress -> resumes as before", async () => {
