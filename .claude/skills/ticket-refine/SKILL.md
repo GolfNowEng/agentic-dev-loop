@@ -36,11 +36,11 @@ or to bounce it with concrete evidence of why it isn't ready.
 Jira comment (title starts with `✅ research-loop -` or `❌ research-loop
 -`) or an equivalent GitHub Issue comment (first line starts with `##
 ✅ research-loop -` or `## ❌ research-loop -`)? Either is evidence of a
-prior pass (only on this run's Issue and the Jira ticket; comments on a
-closed-as-not-planned Issue never count, see Step 0.5) — match on the leading icon + `research-loop -` prefix, not
+prior pass — match on the leading icon + `research-loop -` prefix, not
 the old fixed strings (`Refined Spec — ready for ticket-to-pr`,
 `Ticket-Refine Bounce — <category>`) that this convention replaces; this
-skill no longer writes those. Two cases:
+skill no longer writes those. Comments on an Issue closed as `NOT_PLANNED`
+never count as a prior pass (see Step 0.5). Two cases:
 
 - **First pickup** (no such comment exists): proceed through Steps 0–7
   below as a fresh refinement. The ticket's description is never touched —
@@ -200,8 +200,8 @@ gh issue list --repo <github.repo from pipeline.<project>.config.json> \
   --json number,url,title,state,stateReason
 ```
 
-This run's Issue is the open one (or, failing that, the newest one that is
-not `NOT_PLANNED`). `main.ts` guarantees a fresh Issue exists when the only
+This run's Issue is the newest Issue (highest number) that is open or closed
+for a reason other than `NOT_PLANNED`. `main.ts` guarantees a fresh Issue exists when the only
 matches were closed as not planned. Rename it now that you have the real
 ticket summary (read via `getJiraIssue`, same call Interpret would make
 anyway — doing it here just moves the read earlier):

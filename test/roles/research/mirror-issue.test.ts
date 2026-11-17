@@ -33,6 +33,11 @@ describe("pickMirrorIssue", () => {
     expect(pickMirrorIssue([issue(5, "CLOSED", "COMPLETED"), issue(8, "OPEN")]).reuse?.number).toBe(8);
   });
 
+  it("reuses an open reopened Issue", () => {
+    const reopened = issue(6, "OPEN", "REOPENED");
+    expect(pickMirrorIssue([issue(2, "CLOSED", "NOT_PLANNED"), reopened]).reuse).toBe(reopened);
+  });
+
   it("returns nothing for no Issues", () => {
     expect(pickMirrorIssue([])).toEqual({ reuse: null, previous: [] });
   });
