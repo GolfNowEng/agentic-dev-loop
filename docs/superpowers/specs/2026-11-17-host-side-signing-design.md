@@ -178,3 +178,15 @@ updates an existing PR in place.
 
 - Host push model: haiku (see section 4).
 - Hooks on amend: accept the N suite runs; never skip a hook.
+
+## Refinements made while planning (2026-11-17)
+
+- **Host worktree.** The host signs and pushes in its own fresh worktree,
+  `<KEY>-<RUN_ID>-push`, and runs `npm ci` there first. The sandbox's
+  `node_modules` are Linux builds, and the host's husky hooks would break
+  on them.
+- **The PR URL comes from `gh`.** After push-branch runs, the loop reads
+  the PR URL from GitHub (`gh pr list --head <branch>`, on the branch name
+  after any rename). It never takes the agent's word for it.
+- **Phase 5 under `push=host` does not rename the branch.** The host's
+  push-branch does the version guard.
