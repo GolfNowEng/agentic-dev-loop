@@ -424,3 +424,23 @@ export function realOpenPrHeads(
       .map((p) => ({ head: p.headRefName, url: p.url }));
   };
 }
+
+const PR_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+/**
+ * The open PR's URL for a head branch, or null. Repo and branch are validated
+ * before gh runs (execFile, no shell).
+ */
+export function realOpenPrUrlForBranch(repo: string, exec: ExecGhFn = realExecGh()): (branch: string) => Promise<string | null> {
+  if (!REPO_SLUG.test(repo) || repo.startsWith("-")) {
+    throw new Error(`realOpenPrUrlForBranch: invalid repo ${JSON.stringify(repo)} (expected owner/name)`);
+  }
+  return async (branch) => {
+    if (typeof branch !== "string" || !PR_BRANCH.test(branch) || branch.includes("..")) {
+      throw new Error(`realOpenPrUrlForBranch: invalid branch ${JSON.stringify(branch)}`);
+    }
+    const out = (await exec(["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "url", "--jq", ".[0].url // empty"])).trim();
+    return out || null;
+  };
+}
+

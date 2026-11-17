@@ -17,6 +17,7 @@ import {
   SESSION_ID,
   PROJECT_SLUG,
   RUN_ID,
+  isPipelineWorktree,
 } from "../../src/core/paths.ts";
 
 const RID = "20261111T010203Z";
@@ -111,5 +112,12 @@ describe("paths: no path literals outside paths.ts", () => {
         });
     }
     expect(hits).toEqual([]);
+  });
+});
+
+describe("isPipelineWorktree -push", () => {
+  it("accepts the host push worktree suffix", () => {
+    expect(isPipelineWorktree("TARS-1", "TARS-1-20261117T090121Z-push")).toBe(true);
+    expect(isPipelineWorktree("TARS-1", "TARS-1-20261117T090121Z-pushy")).toBe(false);
   });
 });

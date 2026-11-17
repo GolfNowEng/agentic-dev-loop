@@ -8,6 +8,7 @@ import {
   containsTicketToken,
   realFindOpenPrUrl,
   realOpenPrHeads,
+  realOpenPrUrlForBranch,
 } from "../../src/core/github-client.ts";
 
 describe("StubGitHubClient", () => {
@@ -390,5 +391,25 @@ describe("realOpenPrHeads", () => {
     expect(exec).toHaveBeenCalledWith([
       "pr", "list", "--repo", "org/repo", "--state", "open", "--search", "TARS-1 in:title,body", "--json", "headRefName,url",
     ]);
+  });
+});
+
+describe("realOpenPrUrlForBranch", () => {
+  it("lists open PRs for the head branch and returns the url, or null when empty", async () => {
+    const exec = vi.fn(async () => "https://github.com/org/repo/pull/9\n");
+    expect(await realOpenPrUrlForBranch("org/repo", exec)("feat/TARS-1-x")).toBe("https://github.com/org/repo/pull/9");
+    expect(exec.mock.calls[0]![0]).toEqual([
+      "pr", "list", "--repo", "org/repo", "--head", "feat/TARS-1-x", "--state", "open", "--json", "url", "--jq", ".[0].url // empty",
+    ]);
+    expect(await realOpenPrUrlForBranch("org/repo", vi.fn(async () => "\n"))("b")).toBeNull();
+  });
+
+  it("refuses a bad branch or repo without calling gh", async () => {
+    const exec = vi.fn(async () => "");
+    for (const b of ["--x", "a..b", "a b", ""]) {
+      await expect(realOpenPrUrlForBranch("org/repo", exec)(b), b).rejects.toThrow(/invalid branch/);
+    }
+    expect(() => realOpenPrUrlForBranch("bad", exec)).toThrow(/invalid repo/);
+    expect(exec).not.toHaveBeenCalled();
   });
 });
