@@ -1017,6 +1017,49 @@ describe("RealJiraClient comments and labels", () => {
     await expect(client.getLabels("TARS-1")).resolves.toEqual([]);
   });
 
+  it("listComments reads an ADF emoji node's attrs.text into the first line", async () => {
+    const body = { type: "doc", content: [{ type: "paragraph", content: [
+      { type: "emoji", attrs: { shortName: ":white_check_mark:", text: "\u2705" } },
+      { type: "text", text: " research-loop - refined" },
+    ] }] };
+    fetchMock.mockResolvedValueOnce(json({ total: 1, comments: [{ id: "1", created: "c", body }] }));
+    const out = await new RealJiraClient(CREDENTIALS, makeConfig()).listComments("TARS-1");
+    expect(out[0]!.firstLine).toBe("\u2705 research-loop - refined");
+  });
+
+  it("listComments maps an ADF emoji node with only a shortName", async () => {
+    const para = (shortName: string, rest: string) => ({ type: "doc", content: [{ type: "paragraph", content: [
+      { type: "emoji", attrs: { shortName } },
+      { type: "text", text: rest },
+    ] }] });
+    fetchMock.mockResolvedValueOnce(json({ total: 4, comments: [
+      { id: "1", created: "c", body: para(":white_check_mark:", " research-loop - refined") },
+      { id: "2", created: "c", body: para(":x:", " dev-loop - bounced") },
+      { id: "3", created: "c", body: para(":warning:", " heads up") },
+      { id: "4", created: "c", body: para(":tada:", "party") },
+    ] }));
+    const out = await new RealJiraClient(CREDENTIALS, makeConfig()).listComments("TARS-1");
+    expect(out.map((c) => c.firstLine)).toEqual([
+      "\u2705 research-loop - refined",
+      "\u274c dev-loop - bounced",
+      "\u26a0\ufe0f heads up",
+      "party",
+    ]);
+  });
+
+  it("deleteComment refuses a bad ticket key or a non-numeric comment id before any request", async () => {
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+    await expect(client.deleteComment("../x", "42")).rejects.toThrow(/invalid ticket key/);
+    await expect(client.deleteComment("TARS-1", "42/../../x")).rejects.toThrow(/invalid comment id/);
+    await expect(client.deleteComment("TARS-1", "")).rejects.toThrow(/invalid comment id/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("getLabels refuses a bad ticket key before any request", async () => {
+    await expect(new RealJiraClient(CREDENTIALS, makeConfig()).getLabels("TARS-1?x=1")).rejects.toThrow(/invalid ticket key/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("StubJiraClient throws not-configured for the new methods", async () => {
     const stub = new StubJiraClient({ blockedBy: {} });
     await expect(stub.listComments("A-1")).rejects.toThrow(/listComments/);

@@ -261,10 +261,22 @@ export class StubJiraClient implements JiraClient {
   }
 }
 
+// An emoji node with no attrs.text: the loop's own prefixes' shortNames.
+const EMOJI_SHORT_NAMES: Record<string, string> = {
+  ":white_check_mark:": "\u2705",
+  ":x:": "\u274c",
+  ":warning:": "\u26a0\ufe0f",
+};
+
 function adfText(node: unknown): string {
   if (!node || typeof node !== "object") return "";
-  const n = node as { type?: string; text?: string; content?: unknown[] };
+  const n = node as { type?: string; text?: string; content?: unknown[]; attrs?: { text?: unknown; shortName?: unknown } };
   if (n.type === "text") return typeof n.text === "string" ? n.text : "";
+  if (n.type === "emoji") {
+    if (typeof n.attrs?.text === "string") return n.attrs.text;
+    const short = n.attrs?.shortName;
+    return typeof short === "string" ? (EMOJI_SHORT_NAMES[short] ?? "") : "";
+  }
   return (n.content ?? []).map(adfText).join("");
 }
 
@@ -653,10 +665,19 @@ export class RealJiraClient implements JiraClient {
   }
 
   async deleteComment(ticketKey: string, commentId: string): Promise<void> {
+    if (!TICKET_KEY.test(ticketKey)) {
+      throw new Error(`RealJiraClient.deleteComment: invalid ticket key ${JSON.stringify(ticketKey)}`);
+    }
+    if (!/^\d+$/.test(commentId)) {
+      throw new Error(`RealJiraClient.deleteComment: invalid comment id ${JSON.stringify(commentId)}`);
+    }
     await this.request(`/rest/api/3/issue/${ticketKey}/comment/${commentId}`, { method: "DELETE" });
   }
 
   async getLabels(ticketKey: string): Promise<string[]> {
+    if (!TICKET_KEY.test(ticketKey)) {
+      throw new Error(`RealJiraClient.getLabels: invalid ticket key ${JSON.stringify(ticketKey)}`);
+    }
     const response = await this.request(`/rest/api/3/issue/${ticketKey}?fields=labels`);
     const data = (await response.json()) as { fields?: { labels?: string[] } };
     return data.fields?.labels ?? [];
