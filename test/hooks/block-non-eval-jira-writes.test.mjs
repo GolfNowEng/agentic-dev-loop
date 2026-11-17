@@ -148,6 +148,27 @@ for (const [name, input] of [
   check("set: write with no tool_input denied", noInput.status === 2, `got ${noInput.status}`);
 }
 
+// The sbx gateway's server name and Atlassian's v2 tool names get the same rules.
+{
+  const gw = (name, tool_input) => JSON.stringify({ tool_name: `mcp__mcp-gateway__${name}`, tool_input });
+  const own = run(gw("addOrEditJiraIssueComment", { issueIdOrKey: "TARS-9001", commentBody: "x" }));
+  check("gateway: v2 comment on an eval key allowed", own.status === 0, `got ${own.status}, stderr: ${own.stderr}`);
+  const foreign = run(gw("addOrEditJiraIssueComment", { issueIdOrKey: "TARS-1", commentBody: "x" }));
+  check("gateway: v2 comment on a foreign key denied", foreign.status === 2, `got ${foreign.status}`);
+  const edit = run(gw("editJiraIssue", { issueIdOrKey: "TARS-1", fields: {} }));
+  check("gateway: edit on a foreign key denied", edit.status === 2, `got ${edit.status}`);
+  for (const name of ["getJiraIssue", "listJiraIssueComments", "getConfluenceContent", "searchConfluence"]) {
+    const r = run(gw(name, { issueIdOrKey: "TARS-1" }));
+    check(`gateway: read ${name} allowed`, r.status === 0, `got ${r.status}, stderr: ${r.stderr}`);
+  }
+  for (const name of ["executeWrite", "executeDestructive", "createConfluenceContent", "someFutureTool"]) {
+    const r = run(gw(name, { name: "x" }));
+    check(`gateway: ${name} denied (unknown or generic write)`, r.status === 2, `got ${r.status}`);
+  }
+  const other = run(JSON.stringify({ tool_name: "mcp__datadog__search_logs", tool_input: { q: "x" } }));
+  check("set: a non-Atlassian MCP server is not this hook's business", other.status === 0, `got ${other.status}`);
+}
+
 // Set but empty: active with no keys, so every keyed write is denied.
 {
   const r = run(mcp("addCommentToJiraIssue", { issueIdOrKey: "TARS-9001", commentBody: "x" }), { DEVLOOP_EVAL_KEYS: "" });
@@ -188,7 +209,7 @@ withOutsideCwd((cwd) => {
   const groups = settings.hooks.PreToolUse.filter((g) => g.hooks.some((h) => h.command.endsWith(`/.claude/hooks/${HOOK}`)));
   check("settings.json registers the hook", groups.length === 1, JSON.stringify(groups));
   const matcher = groups[0]?.matcher ?? "";
-  check("settings.json matcher covers every mcp__atlassian__ tool", new RegExp(`^(?:${matcher})$`).test("mcp__atlassian__transitionJiraIssue") && new RegExp(`^(?:${matcher})$`).test("mcp__atlassian__someFutureWrite"), matcher);
+  check("settings.json matcher covers every MCP tool, any server", ["mcp__atlassian__transitionJiraIssue", "mcp__atlassian__someFutureWrite", "mcp__mcp-gateway__transitionJiraIssue"].every((t) => new RegExp(`^(?:${matcher})$`).test(t)), matcher);
 }
 
 finish();

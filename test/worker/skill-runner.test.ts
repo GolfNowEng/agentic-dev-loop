@@ -15,6 +15,7 @@ import { resolveRepoPath, v2RunDir } from "../../src/core/paths.ts";
 import { ALLOWED_TOOLS as DEV_TOOLS } from "../../src/roles/dev/tools.ts";
 import { ALLOWED_TOOLS as RESEARCH_TOOLS } from "../../src/roles/research/tools.ts";
 import { makeV2Config } from "../fixtures/config.ts";
+import { allowedToolsFor } from "../../src/core/atlassian-tools.ts";
 
 const RID = "20261111T010203Z";
 const SLUG = "skill-runner-test";
@@ -210,6 +211,22 @@ describe("makeRunSkill", () => {
     const writeVerdict = async () => {
       await writeFile(join(resolveRepoPath(runDir("dev")), "verdict.json"), '{"outcome":"landed"}', "utf8");
     };
+
+    it("an adapter that proxies Atlassian MCP gets the allowlist under its server name and naming", async () => {
+      const proxy = { ...fakeAdapter, atlassianMcp: (c: unknown) => ((c as { k: number }).k === 1 ? { server: "gw", naming: "v2" as const } : undefined) };
+      const s: SandboxSelection = { adapter: proxy, mode: "discover", config: { k: 1 } };
+      await makeRunSkill(deps({ sandbox: s }))({ role: "research", ticketKey: "TARS-1", runDir: runDir("research"), maxBudgetUsd: 50 });
+      await makeRunSkill(deps({ sandbox: s }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(spawned[0].allowedTools).toBe(allowedToolsFor("research", { server: "gw", naming: "v2" }));
+      expect(spawned[0].allowedTools).toContain("mcp__gw__addOrEditJiraIssueComment");
+      expect(spawned[0].allowedTools).not.toContain("mcp__atlassian__");
+      expect(spawned[1].allowedTools).toBe(allowedToolsFor("dev", { server: "gw", naming: "v2" }));
+    });
+
+    it("an adapter without atlassianMcp keeps the host allowlist", async () => {
+      await makeRunSkill(deps({ sandbox: sel("enforce") }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      expect(spawned[0].allowedTools).toBe(DEV_TOOLS);
+    });
 
     it("without deps.sandbox, spawn opts have no sandbox key at all", async () => {
       await makeRunSkill(deps())({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });

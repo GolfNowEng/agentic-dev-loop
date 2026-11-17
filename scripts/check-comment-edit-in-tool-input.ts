@@ -21,7 +21,8 @@
  *        script fails *closed* (deny) on this case too.
  *
  * Two shapes recognized:
- *   - `mcp__atlassian__addCommentToJiraIssue` called with a non-empty
+ *   - an Atlassian comment write (`addCommentToJiraIssue`, or v2's
+ *     `addOrEditJiraIssueComment`), under any MCP server name, called with a non-empty
  *     `commentId` -- that parameter is what turns the call from "create a
  *     new comment" into "update the named comment in place."
  *   - A `Bash` call that PATCHes an existing GitHub issue comment
@@ -29,6 +30,7 @@
  *     or uses `gh issue comment --edit-last`.
  */
 
+import { bareToolName, COMMENT_TOOL_NAMES } from "../src/core/atlassian-tools.ts";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -81,7 +83,8 @@ export function decideExitCode(stdin: string): 0 | 1 | 2 {
 
     const toolName = record?.tool_name;
 
-    if (toolName === "mcp__atlassian__addCommentToJiraIssue") {
+    // Any server name (the host connector or a sandbox's MCP gateway), either tool naming.
+    if (typeof toolName === "string" && COMMENT_TOOL_NAMES.has(bareToolName(toolName) ?? "")) {
       const commentId = toolInput.commentId;
       return typeof commentId === "string" && commentId.length > 0 ? 1 : 0;
     }

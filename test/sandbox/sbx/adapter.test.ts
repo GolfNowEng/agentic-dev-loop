@@ -599,3 +599,14 @@ describe("sbx adapter: static MCP servers (sandbox.sbx.mcp)", () => {
     await expect(pf(ok("not json")).p).rejects.toThrow(/sbx preflight failed \(sbx mcp ls\)/);
   });
 });
+
+describe("sbx adapter: atlassianMcp (gateway tool names)", () => {
+  const a = makeSbxAdapter({ run: fakeRunner().run });
+  it("with atlassian in sandbox.sbx.mcp, the agent sees the v2 tools under mcp-gateway", () => {
+    expect(a.atlassianMcp?.(a.validateConfig({ kitDir: "/kit", mcp: ["atlassian"] }))).toEqual({ server: "mcp-gateway", naming: "v2" });
+  });
+  it("without it, no Atlassian tools are proxied: the host names stay (and are simply absent in the sandbox)", () => {
+    expect(a.atlassianMcp?.(a.validateConfig({ kitDir: "/kit" }))).toBeUndefined();
+    expect(a.atlassianMcp?.(a.validateConfig({ kitDir: "/kit", mcp: ["other"] }))).toBeUndefined();
+  });
+});

@@ -9,6 +9,7 @@
  * index.ts. Removing an adapter = delete its folder + its registry line.
  */
 import type { SpawnOptions } from "node:child_process";
+import type { AtlassianMcp } from "../core/atlassian-tools.ts";
 
 export type SandboxMode = "discover" | "enforce";
 
@@ -77,6 +78,13 @@ export interface SandboxAdapter {
    * must not throw.
    */
   onRunStart?(ctx: RunStartCtx): void;
+  /**
+   * Optional. Where the spawned agent finds the Atlassian MCP tools when this
+   * adapter proxies MCP itself (server name + tool naming, see
+   * src/core/atlassian-tools.ts). Absent: the host connector's names. The
+   * allowlist is built from it; the hooks match any server name regardless.
+   */
+  atlassianMcp?(config: unknown): AtlassianMcp | undefined;
   /**
    * Remove leftover instances from an earlier crashed run. Removes only
    * instances whose name starts with `scope.prefix` (this project's

@@ -56,6 +56,14 @@ const bash = (command) => JSON.stringify({ tool_name: "Bash", tool_input: { comm
   check("getJiraIssue: exit code is 0", result.status === 0, `got ${result.status}`);
 }
 
+// The same rule under the sbx gateway's server name and Atlassian's v2 tool name.
+for (const tool of ["mcp__mcp-gateway__addOrEditJiraIssueComment", "mcp__mcp-gateway__addCommentToJiraIssue", "mcp__atlassian__addOrEditJiraIssueComment"]) {
+  const edit = run(JSON.stringify({ tool_name: tool, tool_input: { cloudId: "x", issueIdOrKey: "TARS-1450", commentBody: "updated", commentId: "1039214" } }));
+  check(`${tool} with commentId: exit code is 2`, edit.status === 2, `got ${edit.status}`);
+  const fresh = run(JSON.stringify({ tool_name: tool, tool_input: { cloudId: "x", issueIdOrKey: "TARS-1450", commentBody: "fresh" } }));
+  check(`${tool} without commentId: exit code is 0`, fresh.status === 0, `got ${fresh.status}, stderr: ${fresh.stderr}`);
+}
+
 // Checker failures fail closed, against a throwaway copy of the hook.
 {
   const stdin = JSON.stringify({ tool_name: "mcp__atlassian__addCommentToJiraIssue", tool_input: { commentId: "123" } });

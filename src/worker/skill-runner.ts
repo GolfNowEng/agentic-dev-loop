@@ -24,12 +24,11 @@ import { buildSkillPrompt, checkAbsPath, claudeEnvFor, repoDirFor, SKILL_NAME } 
 import { redactSensitive } from "../core/redact.ts";
 import type { RunSkillFn, RunSkillResult } from "../core/run-skill.ts";
 import { startProgressTail, type SpawnClaudeOpts, type SpawnClaudeResult } from "../core/spawn-claude.ts";
-import { ALLOWED_TOOLS as DEV_ALLOWED_TOOLS } from "../roles/dev/tools.ts";
 import { devEarlySkillResult } from "../roles/dev/spawn-result.ts";
-import { ALLOWED_TOOLS as RESEARCH_ALLOWED_TOOLS } from "../roles/research/tools.ts";
 import { researchEarlySkillResult } from "../roles/research/spawn-result.ts";
 import { researchClaudeMdExcludes } from "../roles/research/startup.ts";
 import type { SandboxSelection } from "../sandbox/select.ts";
+import { allowedToolsFor, HOST_ATLASSIAN_MCP } from "../core/atlassian-tools.ts";
 
 export const MODEL = "sonnet";
 
@@ -141,6 +140,8 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
   const addDir = targetRepoAddDir(deps.config);
   const mounts = sandboxMounts(deps.repoRoot, repoDir);
   const shortId = deps.shortId ?? (() => randomBytes(3).toString("hex"));
+  // A sandbox that proxies Atlassian MCP renames its tools; the allowlist follows.
+  const atlassianMcp = deps.sandbox?.adapter.atlassianMcp?.(deps.sandbox.config) ?? HOST_ATLASSIAN_MCP;
 
   return async ({ role, ticketKey, runDir, maxBudgetUsd }): Promise<RunSkillResult> => {
     const skill = SKILL_NAME[role];
@@ -162,7 +163,7 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
       run = await deps.spawn({
         prompt,
         model: MODEL,
-        allowedTools: role === "research" ? RESEARCH_ALLOWED_TOOLS : DEV_ALLOWED_TOOLS,
+        allowedTools: allowedToolsFor(role, atlassianMcp),
         addDir,
         cwd: deps.repoRoot,
         excludeClaudeMd: role === "research" ? researchClaudeMdExcludes(deps.repoRoot) : [],

@@ -162,6 +162,13 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
 
     validateConfig: (raw) => validateSbxConfig(raw),
 
+    // sbx's MCP gateway serves every static MCP server as one `mcp-gateway`
+    // server, and Atlassian's remote server there uses its v2 tool names
+    // (probed live 2026-11-16: mcp__mcp-gateway__addOrEditJiraIssueComment, ...).
+    atlassianMcp(config) {
+      return sbxConfig(config).mcp?.includes("atlassian") ? { server: "mcp-gateway", naming: "v2" } : undefined;
+    },
+
     onRunStart(ctx) {
       if (!ctx.dashboard) return;
       openSbxDashboard(ctx.repoRoot, (deps.dashboardDeps ?? realDashboardDeps)(ctx.log));
