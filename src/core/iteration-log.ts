@@ -227,6 +227,8 @@ export function failedAttempts(records: IterationRecord[], ticket: string, role:
 export function recentlyEnded(records: IterationRecord[], now: Date, windowMs: number): Set<string> {
   const out = new Set<string>();
   for (const r of records) {
+    // The window covers Jira's search-index lag after a write; a dropped resume wrote nothing to Jira.
+    if (r.outcome === "resume-dropped") continue;
     const t = Date.parse(r.ended);
     if (!Number.isNaN(t) && now.getTime() - t <= windowMs) out.add(r.ticket);
   }

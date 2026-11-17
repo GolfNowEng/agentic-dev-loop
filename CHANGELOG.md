@@ -24,7 +24,9 @@ sbx adapter, not yet dogfooded). Design:
   run; the next `--once` start adopted it, dropped the resume (status no
   longer In Progress) and exited without polling. A `resume-dropped` is
   bookkeeping only, so the worker now resolves every stale resume and goes
-  on to poll in the same iteration.
+  on to poll in the same iteration. It also no longer puts the ticket in the
+  10-minute "recently ended" hold (that hold covers Jira's index lag after a
+  write, and a dropped resume writes nothing), which kept the rerun idle.
 - `[core]` reset-project clears a dead session lock's in-flight entry for
   the reset ticket and role (so a reset run isn't "resumed"), and runs
   `git worktree prune` after deleting worktrees (the branch was otherwise
