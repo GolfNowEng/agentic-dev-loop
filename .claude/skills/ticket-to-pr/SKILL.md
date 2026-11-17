@@ -21,6 +21,9 @@ The first three are required. The loop runner builds this line (see
   in this run. A sandboxed run gets it, because the sandbox can't see
   `~/.claude`; a run on the host never does. `PUSH_BRANCH_SKILL` = this
   value when given, else `~/.claude/skills/push-branch/SKILL.md`.
+- `push=host` (optional) — the sandbox can't sign commits, so the host
+  pushes for you. `PUSH_MODE` = `host` when given, else `self`. Under
+  `PUSH_MODE=host` Phase 5 does not push; it stops at `ready_to_push`.
 
 ## Role: the executor
 
@@ -556,6 +559,21 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
 Mechanical only. All reasoning finished in Phase 4 step 7; do not rewrite,
 reorder, or "improve" the title or body here.
 
+0. **If `PUSH_MODE=host` (`push=host`), do this instead of steps 1 onward:**
+   - Do not read `PUSH_BRANCH_SKILL` and do not push.
+   - Run `git status --porcelain`. It must be empty (every change
+     committed). If it is not, commit nothing new: bounce `env_setup`
+     naming the dirty files. Never guess-commit.
+   - Do not rename the branch. The host's `push-branch` runs the version
+     guard.
+   - Write `verdict.json` with `outcome: "ready_to_push"`,
+     `phase_reached: "pr"`, `pr: null`, `branch` (the literal current
+     branch name), `pr_title` and `pr_body` (Phase 4 step 7, verbatim),
+     plus all the usual metrics and `qa_notes`.
+   - Run Cleanup. The work is all committed, so the worktree is removed
+     (the loop makes its own worktree to sign and push).
+   - Stop. The result line says the run is ready to push.
+
 1. Read `PUSH_BRANCH_SKILL` (the `push-branch=` path you were given, else
    `~/.claude/skills/push-branch/SKILL.md`) with `Read` and follow it
    exactly, in its **content supplied** mode (`--title` + `Body:`), passing:
@@ -690,8 +708,9 @@ bounced at any phase, or error):
    Confirm it's actually stopped (e.g. the port is free), not just that you
    sent a stop signal.
 2. **Remove this run's worktree** — with one exception:
-   - If the run **landed** (branch pushed, PR open) or **bounced with all
-     in-progress work already committed** — remove it:
+   - If the run **landed** (branch pushed, PR open), reached
+     **`ready_to_push`** (under `push=host` everything is committed), or
+     **bounced with all in-progress work already committed** — remove it:
      `git -C <REPO_DIR> worktree remove
      <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>`. The branch
      itself lives on in the remote (landed) or in that checkout's branch
@@ -742,7 +761,7 @@ from this exact path, and only from there):
 
 ```json
 {
-  "outcome": "landed | bounced | error",
+  "outcome": "landed | bounced | error | ready_to_push",
   "phase_reached": "intake | plan | red | green | verify | pr",
   "failure_category": null,
   "detail": "the always-emitted result line's content, without the RESULT: prefix",
@@ -752,6 +771,9 @@ from this exact path, and only from there):
   "skill_version": "<git SHA of this SKILL.md's commit in dev-loop>",
   "model": "sonnet",
   "pr": "https://github.com/fandango/webtarsthree/pull/123",
+  "branch": "TARS-1301-delete-tv-objects",
+  "pr_title": "TARS-1301: delete tv objects",
+  "pr_body": "<the Phase 4 step 7 body>",
   "cost_usd": 0,
   "tokens": { "in": 0, "out": 0 },
   "qa_notes": [
@@ -761,6 +783,11 @@ from this exact path, and only from there):
   "preexisting_failures": []
 }
 ```
+
+`branch`, `pr_title` and `pr_body` are optional, and required when
+`outcome` is `ready_to_push` (only under `push=host`; `pr` is `null` then).
+`branch` is the literal current branch; the title and body are Phase 4
+step 7 verbatim. Omit all three otherwise.
 
 `follow_up` is optional: `{"ticket": "<KEY>", "pr": "<url>" | null}` when
 the run filed a follow-up for pre-existing failures that blocked a hook

@@ -213,3 +213,31 @@ name under any server (`mcp__.+__(...)`), and `test/core/atlassian-tools.test.ts
 fails if a write tool is missing from them. `npm run sbx:smoke` calls
 `getAccessibleAtlassianResources` by its gateway name, so a mismatch shows up
 there for a few cents.
+
+## 10. Signed commits
+
+**Why.** The sandbox has no signing key, and the target repo requires signed
+commits. TARS-1634's dev run (2026-11-17) pushed unsigned commits and GitHub
+rejected the push with GH013.
+
+**Flow.** When the sandbox can't sign, the loop passes `push=host` to
+`ticket-to-pr`. The skill finishes Phase 4, checks the tree is clean, and
+writes a verdict with `outcome: "ready_to_push"` (`branch`, `pr_title`,
+`pr_body`) instead of pushing. The host loop then makes a fresh worktree,
+re-signs only the unpushed commits as the operator (it refuses if any commit
+is reachable from an `origin/*` ref), runs `npm ci`, and runs `push-branch`
+unchanged on haiku. push-branch may rename the branch (version guard); the
+loop reads the final branch name to find the PR.
+
+**On failure.** If signing or the push fails, the work stays committed
+locally and the run bounces `env_setup`. A failed re-sign restores the
+branch to its old tip exactly. A retry finds the same branch and, if the PR
+exists, push-branch updates it.
+
+**Host requirements.** The operator's ssh-agent (or other signing key) must
+be unlocked and usable non-interactively when the loop runs: no passphrase
+or touch prompt. A locked agent bounces the run.
+
+**Hooks run, every time.** Re-signing runs webtarsthree's pre-commit suite
+once per commit. It is never skipped (no `--no-verify`). A hook that fails
+on commit 2 of 3 bounces the run.
