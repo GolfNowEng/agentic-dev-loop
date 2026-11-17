@@ -8,7 +8,8 @@
 
 import type { JiraClient, JiraTicket } from "../../core/jira-client.ts";
 import type { GitHubClient } from "../../core/github-client.ts";
-import type { DevView, ExecutorVerdict } from "../../core/types.ts";
+import type { DevView, ExecutorVerdict, ReadyToPush, Verdict } from "../../core/types.ts";
+import type { HostPushResult } from "../../worker/host-push.ts";
 import type { PhaseEntry } from "../../core/iteration-log.ts";
 import type { RunSkillFn, RunSkillResult } from "../../core/run-skill.ts";
 import { errorMessage } from "../../core/run-skill.ts";
@@ -32,6 +33,8 @@ export interface DevPhaseDeps {
   /** The worker session name; src-built comments end with "— <session>". */
   session: string;
   now: () => Date;
+  /** Present only on a run whose sandbox leaves signing and pushing to the host. */
+  hostPush?: (ready: ReadyToPush) => Promise<HostPushResult>;
 }
 
 /** Post to the ticket's mirror GitHub Issue if one exists; a missing Issue is silently skipped. Returns an error message or undefined. */
@@ -50,10 +53,45 @@ export async function runDevPhase(ticket: JiraTicket, deps: DevPhaseDeps): Promi
   const { jira, github, view, session } = deps;
 
   let result: RunSkillResult;
-  let verdict: ExecutorVerdict;
+  let verdict: ExecutorVerdict & Verdict;
+  let extraCost = 0;
   try {
     result = await deps.runSkill({ role: "dev", ticketKey: ticket.key, runDir: deps.runDir, maxBudgetUsd: deps.maxBudgetUsd });
-    verdict = parseVerdict(result.verdictRaw, "executor");
+    const parsed = parseVerdict(result.verdictRaw, "executor");
+    if (parsed.outcome === "ready_to_push") {
+      const ready = parsed.ready_to_push;
+      if (!deps.hostPush || !ready) {
+        verdict = agentErrorVerdict("ready_to_push but this run has no host push (push=host was not given)");
+      } else {
+        let res: HostPushResult;
+        try {
+          res = await deps.hostPush(ready);
+        } catch (err) {
+          res = { ok: false, detail: errorMessage(err), costUsd: 0 };
+        }
+        extraCost = res.costUsd;
+        verdict = res.ok
+          ? {
+              ...(parsed as ExecutorVerdict & Verdict),
+              outcome: "landed",
+              pr: res.pr,
+              detail: `${parsed.detail} Host-signed ${res.signed} commit(s) (${res.oldTip.slice(0, 7)}\u2192${res.newTip.slice(0, 7)}) and pushed ${res.branch}.`,
+            }
+          : {
+              ...(parsed as ExecutorVerdict & Verdict),
+              outcome: "bounced",
+              failure_category: "env_setup",
+              pr: null,
+              detail: `host push failed: ${res.detail}. ${
+                res.pushed
+                  ? `Branch ${res.branch ?? ready.branch} is pushed to origin (signed); no PR yet.`
+                  : `Work committed locally on ${res.branch ?? ready.branch}, not pushed.`
+              }${res.oldTip ? ` Pre-sign tip ${res.oldTip.slice(0, 7)}.` : ""}`,
+            };
+      }
+    } else {
+      verdict = parsed as ExecutorVerdict & Verdict;
+    }
   } catch (err) {
     const at = deps.now().toISOString();
     result = { verdictRaw: undefined, started: at, ended: at, costUsd: 0, tokens: { in: 0, out: 0 }, skillVersion: "", model: "" };
@@ -102,7 +140,7 @@ export async function runDevPhase(ticket: JiraTicket, deps: DevPhaseDeps): Promi
     ended: result.ended,
     outcome: verdict.outcome,
     phase_reached: verdict.phase_reached,
-    cost_usd: result.costUsd,
+    cost_usd: result.costUsd + extraCost,
     tokens: result.tokens,
     failure_category: verdict.failure_category,
     detail: verdict.detail,

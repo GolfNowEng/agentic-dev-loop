@@ -23,7 +23,7 @@ export const RUN_ID = /^\d{8}T\d{6}Z$/;
  */
 export function isPipelineWorktree(ticket: string, name: string): boolean {
   if (!TICKET_KEY.test(ticket) || !name.startsWith(`${ticket}-`)) return false;
-  return /^\d{8}T\d{6}Z(-ground|-baseline|-fu)?$/.test(name.slice(ticket.length + 1));
+  return /^\d{8}T\d{6}Z(-ground|-baseline|-fu|-push)?$/.test(name.slice(ticket.length + 1));
 }
 
 export class UnsafePathError extends Error {

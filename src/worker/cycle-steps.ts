@@ -279,6 +279,16 @@ export async function runPhase(ctx: Ctx, role: Role, ticket: JiraTicket, maxBudg
           maxBudgetUsd,
           session: deps.session.name,
           now: deps.now,
+          ...(deps.hostPush
+            ? {
+                hostPush: async (ready) => {
+                  ctx.log(`[worker] ${ticket.key}: host push starting (${ready.branch})`);
+                  const res = await deps.hostPush!(ticket.key, runDir, ready);
+                  ctx.log(`[worker] ${ticket.key}: host push ${res.ok ? `ok: ${res.pr}` : `failed: ${res.detail}`}`);
+                  return res;
+                },
+              }
+            : {}),
         });
   const entry: PhaseEntry = sandbox ? { ...phaseEntry, sandbox } : phaseEntry;
   ctx.log(parked ? `[worker] ${ticket.key}: ${role} parked (sandbox refused)` : `[worker] ${ticket.key}: ${role} ${entry.outcome}: ${entry.detail}`);

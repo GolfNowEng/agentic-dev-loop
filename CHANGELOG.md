@@ -19,6 +19,20 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[dev]` `[core]` A sandboxed dev run's commits are signed on the host.
+  TARS-1634 (2026-11-17) pushed unsigned commits from the sandbox and hit
+  GH013 (signed commits required). When the sandbox can't sign, the loop
+  passes `push=host`; ticket-to-pr stops at Phase 5 with `outcome:
+  "ready_to_push"` (plus `branch`, `pr_title`, `pr_body`) instead of pushing.
+  The loop then re-signs only the unpushed commits as the operator in a
+  fresh host worktree, running the repo's commit hooks on each, and runs
+  push-branch unchanged on haiku. If signing fails, the branch is restored
+  and the run bounces `env_setup`. Re-signing keeps the branch's fork point
+  (never replays onto a moved default branch). The run bounces before
+  `npm ci` if the branch edits package/lock files, `.npmrc` or `.husky/`.
+  The PR body is passed to haiku between markers, as data. The loop won't
+  start if the target `.envrc` isn't allowed or push-branch is missing.
+  Host runs are unchanged. See docs/sandbox-sbx.md section 10.
 - `[dev]` A sandboxed dev run can read your `push-branch` skill. The sbx
   sandbox can't see `~/.claude`, so TARS-1634's dev run bounced `env_setup`
   at the PR step. New `sandbox.sbx.hostSkills` mounts each listed skill

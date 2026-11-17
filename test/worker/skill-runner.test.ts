@@ -239,6 +239,15 @@ describe("makeRunSkill", () => {
       expect(spawned[1].prompt).toBe(`/ticket-refine TARS-1 run-dir=${resolveRepoPath(runDir("research"))} repo-dir=${repo}`);
     });
 
+    it("an adapter with hostPush adds push=host to the dev prompt only", async () => {
+      const hp = { ...fakeAdapter, hostPush: () => true };
+      const s: SandboxSelection = { adapter: hp, mode: "discover", config: { k: 1 } };
+      await makeRunSkill(deps({ sandbox: s }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+      await makeRunSkill(deps({ sandbox: s }))({ role: "research", ticketKey: "TARS-1", runDir: runDir("research"), maxBudgetUsd: 50 });
+      expect(spawned[0].prompt).toBe(`/ticket-to-pr TARS-1 run-dir=${resolveRepoPath(runDir("dev"))} repo-dir=${repo} push=host`);
+      expect(spawned[1].prompt).toBe(`/ticket-refine TARS-1 run-dir=${resolveRepoPath(runDir("research"))} repo-dir=${repo}`);
+    });
+
     it("the plain host loop (no sandbox) builds today's dev prompt, with no host skill paths", async () => {
       await makeRunSkill(deps())({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
       expect(spawned[0].prompt).toBe(`/ticket-to-pr TARS-1 run-dir=${resolveRepoPath(runDir("dev"))} repo-dir=${repo}`);

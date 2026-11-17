@@ -41,6 +41,20 @@ describe("buildSkillPrompt", () => {
     expect(() => buildSkillPrompt({ ...base, hostSkills: { "push-branch": "relative/SKILL.md" } })).toThrow(UnsafePathError);
   });
 
+  it("hostPush: dev prompt ends with ` push=host`, after host skill pointers", () => {
+    const base = { role: "dev" as const, ticketKey: "TARS-1", runDir: DEV_RUN, repoDir: "/abs/repo" };
+    expect(buildSkillPrompt({ ...base, hostPush: true })).toBe(`/ticket-to-pr TARS-1 run-dir=${DEV_RUN} repo-dir=/abs/repo push=host`);
+    expect(buildSkillPrompt({ ...base, hostSkills: { "push-branch": "/h/SKILL.md" }, hostPush: true })).toBe(
+      `/ticket-to-pr TARS-1 run-dir=${DEV_RUN} repo-dir=/abs/repo push-branch=/h/SKILL.md push=host`,
+    );
+    expect(buildSkillPrompt({ ...base, hostPush: false })).toBe(`/ticket-to-pr TARS-1 run-dir=${DEV_RUN} repo-dir=/abs/repo`);
+  });
+
+  it("hostPush is dev-only, and push is a reserved host skill name", () => {
+    expect(() => buildSkillPrompt({ role: "research", ticketKey: "TARS-1", runDir: RESEARCH_RUN, repoDir: "/abs/repo", hostPush: true })).toThrow(/push=host is dev-only/);
+    expect(() => buildSkillPrompt({ role: "dev", ticketKey: "TARS-1", runDir: DEV_RUN, repoDir: "/abs/repo", hostSkills: { push: "/x/SKILL.md" } })).toThrow(UnsafePathError);
+  });
+
   it("SKILL_NAME maps each role to its skill", () => {
     expect(SKILL_NAME).toEqual({ research: "ticket-refine", dev: "ticket-to-pr" });
   });

@@ -366,3 +366,70 @@ describe("parseSizeTrajectory", () => {
   });
 });
 
+
+describe("parseVerdict executor: ready_to_push", () => {
+  const base = {
+    ...JSON.parse(validVerdictJson),
+    outcome: "ready_to_push",
+    pr: null,
+    branch: "TARS-1-x",
+    pr_title: "feat(TARS-1): x",
+    pr_body: "## Jira Ticket\n...",
+  };
+  const parse = (o: Record<string, unknown>) => parseVerdict(JSON.stringify(o), "executor");
+
+  it("parses a valid ready_to_push verdict", () => {
+    const v = parse(base);
+    expect(v.outcome).toBe("ready_to_push");
+    expect(v.ready_to_push).toEqual({
+      branch: "TARS-1-x",
+      pr_title: "feat(TARS-1): x",
+      pr_body: "## Jira Ticket\n...",
+    });
+  });
+
+  for (const field of ["branch", "pr_title", "pr_body"]) {
+    it(`rejects missing ${field}`, () => {
+      const { [field]: _omit, ...rest } = base;
+      const v = parse(rest);
+      expect(v.outcome).toBe("error");
+      expect(v.failure_category).toBe("agent_error");
+    });
+    it(`rejects empty ${field}`, () => {
+      const v = parse({ ...base, [field]: "" });
+      expect(v.outcome).toBe("error");
+      expect(v.failure_category).toBe("agent_error");
+    });
+  }
+
+  for (const bad of ["a b", "-x", "x;y", "a..b"]) {
+    it(`rejects branch ${JSON.stringify(bad)}`, () => {
+      const v = parse({ ...base, branch: bad });
+      expect(v.outcome).toBe("error");
+      expect(v.failure_category).toBe("agent_error");
+    });
+  }
+
+  for (const bad of ['say "hi"', "a `cmd`", "cost $HOME", "back\\slash", "two\nlines", "x".repeat(201)]) {
+    it(`F2: rejects pr_title ${JSON.stringify(bad.slice(0, 20))}`, () => {
+      const v = parse({ ...base, pr_title: bad });
+      expect(v.outcome).toBe("error");
+      expect(v.failure_category).toBe("agent_error");
+    });
+  }
+
+  it("F2: accepts a 200-char pr_title", () => {
+    expect(parse({ ...base, pr_title: "x".repeat(200) }).outcome).toBe("ready_to_push");
+  });
+
+  it("leaves landed/bounced verdicts unchanged", () => {
+    const v = parseVerdict(validVerdictJson, "executor");
+    expect(v.outcome).toBe("landed");
+    expect(v.ready_to_push).toBeUndefined();
+  });
+
+  it("is not valid for the refine profile", () => {
+    const v = parseVerdict(JSON.stringify(base), "refine");
+    expect(v.outcome).toBe("error");
+  });
+});

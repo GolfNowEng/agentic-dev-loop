@@ -145,11 +145,14 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
   // A sandbox that mounts the operator's own skills elsewhere tells dev where (no sandbox: none, prompt unchanged).
   const hostSkills = deps.sandbox?.adapter.hostSkillPaths?.(deps.sandbox.config) ?? {};
 
+  // A sandbox whose commits the loop signs and pushes on the host tells dev to stop at ready_to_push.
+  const hostPush = deps.sandbox?.adapter.hostPush?.(deps.sandbox.config) === true;
+
   return async ({ role, ticketKey, runDir, maxBudgetUsd }): Promise<RunSkillResult> => {
     const skill = SKILL_NAME[role];
     const view = roleView(deps.config, role);
     const absRunDir = resolveRepoPath(runDir);
-    const prompt = buildSkillPrompt({ role, ticketKey, runDir: absRunDir, repoDir, hostSkills: role === "dev" ? hostSkills : {} });
+    const prompt = buildSkillPrompt({ role, ticketKey, runDir: absRunDir, repoDir, hostSkills: role === "dev" ? hostSkills : {}, hostPush: role === "dev" && hostPush });
 
     if (deps.beforeRun && role === "research") await deps.beforeRun(role, ticketKey);
     await mkdir(absRunDir, { recursive: true });

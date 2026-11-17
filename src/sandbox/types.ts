@@ -95,6 +95,13 @@ export interface SandboxAdapter {
    */
   hostSkillPaths?(config: unknown): Record<string, string>;
   /**
+   * Optional. True when commits made inside this sandbox are signed and pushed
+   * by the loop on the host, not by the agent: the dev agent stops at the
+   * `ready_to_push` verdict and is told `push=host`. Absent or false: the
+   * agent pushes itself, as in a run outside any sandbox.
+   */
+  hostPush?(config: unknown): boolean;
+  /**
    * Remove leftover instances from an earlier crashed run. Removes only
    * instances whose name starts with `scope.prefix` (this project's
    * `dl-<len>-<project>-`); called after the session lock is held.

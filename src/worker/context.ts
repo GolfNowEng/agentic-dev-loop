@@ -3,7 +3,8 @@
 
 import type { JiraClient, JiraTicket } from "../core/jira-client.ts";
 import type { ExecGhFindMergedPrFn, ExecGhPrViewFn, GitHubClient } from "../core/github-client.ts";
-import type { Config, DevView, ResearchView, Role } from "../core/types.ts";
+import type { HostPushResult } from "./host-push.ts";
+import type { Config, ReadyToPush, DevView, ResearchView, Role } from "../core/types.ts";
 import type { InFlight, Session } from "../core/session.ts";
 import type { IterationOutcome, IterationRecord, PhaseEntry } from "../core/iteration-log.ts";
 import { appendIteration } from "../core/iteration-log.ts";
@@ -46,6 +47,8 @@ export interface WorkerDeps {
   hasLandedResearchV1?: (key: string) => Promise<boolean>;
   /** Desktop notification (notify() from core/notify.ts in production); fire-and-forget. */
   notify?: (title: string, body: string) => void;
+  /** Signs and pushes a ready_to_push dev run on the host. Absent unless the sandbox asks for it. */
+  hostPush?: (ticketKey: string, runDir: string, ready: ReadyToPush) => Promise<HostPushResult>;
   log?: (message: string) => void;
 }
 

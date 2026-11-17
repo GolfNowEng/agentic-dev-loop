@@ -446,6 +446,15 @@ longer derives any epic-or-label-move decision from the verdict at all
 (`decideEpicMove` was deleted; no loop moves anything epic-or-label-shaped
 on a landed dev-loop verdict).
 
+**`ready_to_push` (dev only).** When the loop passes `push=host` (a sandbox
+that can't sign commits), `ticket-to-pr` stops at Phase 5 with
+`outcome: "ready_to_push"`, `pr: null`, and flat `branch`, `pr_title`,
+`pr_body` fields (required for this outcome; `pr_title` is at most 200
+characters with no `"`, backtick, `$`, `\` or newline). It does not push or rename the
+branch; the loop re-signs the unpushed commits as the operator and runs
+`push-branch` on the host. On a run without `push=host` this outcome is an
+`agent_error`.
+
 **Closed `failure_category` enum** — do not add or remove values without
 updating the pipeline spec: `spec_ambiguous · spec_contradicted · blocked ·
 too_large · tests_flaky · env_setup · verify_rejected · subagent_stall ·
