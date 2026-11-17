@@ -35,11 +35,28 @@ describe("renderTable", () => {
     expect(out.split("\n")[3]).toBe("1  jira  labels  ?      needs you: boom");
   });
 
-  it("prints details indented under the row", () => {
+  it("prints details under the Step column with a marker", () => {
     const out = renderTable("T", [row("jira", "comments", { found: "2", action: "delete 2", details: ["a", "b"] })]);
     const lines = out.split("\n");
-    expect(lines[4]).toBe("      a");
-    expect(lines[5]).toBe("      b");
+    // "1  jira  " is 9 chars: details start where the Step column starts.
+    expect(lines[4]).toBe("         ↳ a");
+    expect(lines[5]).toBe("         ↳ b");
+  });
+
+  it("wraps a long detail inside the Step and Found columns, never into Action", () => {
+    const long = "19:55 ❌ dev-loop - spec_ambiguous: bounced (spec_ambiguous) - no research-loop comment on TARS-1634 (Jira comment total: 0)";
+    const out = renderTable("T", [
+      row("jira", "loop comments", { found: "1 (0 research, 1 dev)", action: "delete 1", details: [long] }),
+      row("jira", "label", { found: "pipeline:v2:dev", action: "swap to pipeline:v2" }),
+    ]);
+    const lines = out.split("\n");
+    const actionCol = lines[2]!.indexOf("Action");
+    const detail = lines.slice(4, lines.findIndex((l) => l.startsWith("2 ")));
+    expect(detail.length).toBeGreaterThan(1);
+    expect(detail[0]!.startsWith(`${" ".repeat(lines[2]!.indexOf("Step"))}↳ 19:55`)).toBe(true);
+    for (const l of detail) expect(l.length).toBeLessThanOrEqual(actionCol - 2);
+    // Nothing is lost: the wrapped words read back as the original text.
+    expect(detail.map((l) => l.trim().replace(/^↳ /, "")).join(" ")).toBe(long);
   });
 
   it("truncates a long Found to 48 chars with …", () => {

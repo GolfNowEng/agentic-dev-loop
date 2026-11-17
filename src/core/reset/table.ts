@@ -33,10 +33,38 @@ export function renderTable(
       .map((cell, c) => (c === 0 ? cell.padStart(widths[c]!) : cell.padEnd(widths[c]!)))
       .join("  ")
       .trimEnd();
+  // Details sit under the Step column and wrap before Action, so they read as notes on their row.
+  const indent = widths[0]! + 2 + widths[1]! + 2;
+  const room = Math.max(20, widths[2]! + 2 + widths[3]! - 2);
   const lines = [title, "", fmt(header)];
   rows.forEach((r, i) => {
     lines.push(fmt(body[i]!));
-    for (const d of r.survey.details ?? []) lines.push(`      ${d}`);
+    for (const d of r.survey.details ?? []) {
+      wrap(d, room).forEach((part, j) => lines.push(`${" ".repeat(indent)}${j === 0 ? "↳ " : "  "}${part}`));
+    }
   });
   return lines.join("\n");
+}
+
+/** Split on spaces into lines of at most `width` chars; a single longer word is cut. */
+function wrap(text: string, width: number): string[] {
+  const out: string[] = [];
+  let line = "";
+  for (const word of text.split(/\s+/).filter((w) => w !== "")) {
+    for (let w = word; w !== ""; ) {
+      const next = line === "" ? w : `${line} ${w}`;
+      if (next.length <= width) {
+        line = next;
+        w = "";
+      } else if (line === "") {
+        out.push(w.slice(0, width));
+        w = w.slice(width);
+      } else {
+        out.push(line);
+        line = "";
+      }
+    }
+  }
+  if (line !== "") out.push(line);
+  return out.length > 0 ? out : [""];
 }

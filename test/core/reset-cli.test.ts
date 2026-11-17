@@ -157,7 +157,9 @@ describe("reset-cli", () => {
     });
     await put(root, "runs/v2/proj.jsonl", both + "\n");
     const dry = await cli("--ticket=TARS-1", "--role=research", "--dry-run");
-    expect(dry.stdout).toContain("kept: TARS-1 record (other role landed: dev https://github.com/o/r/pull/9)");
+    // Detail lines wrap under the Step column; join them back to check the whole text is shown.
+    const details = dry.stdout.split("\n").filter((l) => /^ +(↳ | {2})\S/.test(l)).map((l) => l.trim().replace(/^↳ /, ""));
+    expect(details.join(" ")).toContain("kept: TARS-1 record (other role landed: dev https://github.com/o/r/pull/9)");
     await cliCode("--ticket=TARS-1", "--role=research", "--yes");
     expect(await readFile(join(root, "runs/v2/proj.jsonl"), "utf8")).toBe(both + "\n");
     await cliCode("--ticket=TARS-1", "--role=research", "--include-cross-role", "--yes");
