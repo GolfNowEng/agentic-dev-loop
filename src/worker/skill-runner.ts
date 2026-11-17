@@ -142,12 +142,14 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
   const shortId = deps.shortId ?? (() => randomBytes(3).toString("hex"));
   // A sandbox that proxies Atlassian MCP renames its tools; the allowlist follows.
   const atlassianMcp = deps.sandbox?.adapter.atlassianMcp?.(deps.sandbox.config) ?? HOST_ATLASSIAN_MCP;
+  // A sandbox that mounts the operator's own skills elsewhere tells dev where (no sandbox: none, prompt unchanged).
+  const hostSkills = deps.sandbox?.adapter.hostSkillPaths?.(deps.sandbox.config) ?? {};
 
   return async ({ role, ticketKey, runDir, maxBudgetUsd }): Promise<RunSkillResult> => {
     const skill = SKILL_NAME[role];
     const view = roleView(deps.config, role);
     const absRunDir = resolveRepoPath(runDir);
-    const prompt = buildSkillPrompt({ role, ticketKey, runDir: absRunDir, repoDir });
+    const prompt = buildSkillPrompt({ role, ticketKey, runDir: absRunDir, repoDir, hostSkills: role === "dev" ? hostSkills : {} });
 
     if (deps.beforeRun && role === "research") await deps.beforeRun(role, ticketKey);
     await mkdir(absRunDir, { recursive: true });

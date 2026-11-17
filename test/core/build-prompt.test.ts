@@ -21,6 +21,26 @@ describe("buildSkillPrompt", () => {
     );
   });
 
+  it("dev with host skill paths: appends <name>=<abs path> after repo-dir, in name order", () => {
+    expect(
+      buildSkillPrompt({ role: "dev", ticketKey: "TARS-1", runDir: DEV_RUN, repoDir: "/abs/repo", hostSkills: { "push-branch": "/home/agent/.dev-loop/skills/push-branch/SKILL.md" } }),
+    ).toBe(`/ticket-to-pr TARS-1 run-dir=${DEV_RUN} repo-dir=/abs/repo push-branch=/home/agent/.dev-loop/skills/push-branch/SKILL.md`);
+  });
+
+  it("no host skill paths (the plain host loop): the prompt is exactly today's", () => {
+    expect(buildSkillPrompt({ role: "dev", ticketKey: "TARS-1", runDir: DEV_RUN, repoDir: "/abs/repo", hostSkills: {} })).toBe(
+      `/ticket-to-pr TARS-1 run-dir=${DEV_RUN} repo-dir=/abs/repo`,
+    );
+  });
+
+  it("refuses a host skill name or path that could smuggle an argument", () => {
+    const base = { role: "dev" as const, ticketKey: "TARS-1", runDir: DEV_RUN, repoDir: "/abs/repo" };
+    expect(() => buildSkillPrompt({ ...base, hostSkills: { "run-dir": "/x/SKILL.md" } })).toThrow(UnsafePathError);
+    expect(() => buildSkillPrompt({ ...base, hostSkills: { "push branch": "/x/SKILL.md" } })).toThrow(UnsafePathError);
+    expect(() => buildSkillPrompt({ ...base, hostSkills: { "push-branch": "/x y/SKILL.md" } })).toThrow(UnsafePathError);
+    expect(() => buildSkillPrompt({ ...base, hostSkills: { "push-branch": "relative/SKILL.md" } })).toThrow(UnsafePathError);
+  });
+
   it("SKILL_NAME maps each role to its skill", () => {
     expect(SKILL_NAME).toEqual({ research: "ticket-refine", dev: "ticket-to-pr" });
   });

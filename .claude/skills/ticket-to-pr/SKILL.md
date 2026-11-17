@@ -7,15 +7,20 @@ description: Turn a single ready Jira ticket into a PR against the target repo (
 
 ## Arguments
 
-`$ARGUMENTS` — exactly `<TICKET> run-dir=<RUN_DIR> repo-dir=<REPO_DIR>`,
+`$ARGUMENTS` — `<TICKET> run-dir=<RUN_DIR> repo-dir=<REPO_DIR>`, optionally
+followed by `push-branch=<abs SKILL.md path>`,
 e.g. `TARS-1301 run-dir=<abs path ending in /TARS-1301/dev-20261111T010203Z> repo-dir=<abs checkout path>`.
-All three are required. The loop runner builds this line (see "Invocation"
-below); never derive any of the three yourself.
+The first three are required. The loop runner builds this line (see
+"Invocation" below); never derive any of them yourself.
 
 - `<TICKET>` — the Jira ticket key.
 - `run-dir=` — this run's directory (`RUN_DIR` below).
 - `repo-dir=` — the target repo checkout this run works against
   (`REPO_DIR` below).
+- `push-branch=` (optional) — where the operator's `push-branch` skill is
+  in this run. A sandboxed run gets it, because the sandbox can't see
+  `~/.claude`; a run on the host never does. `PUSH_BRANCH_SKILL` = this
+  value when given, else `~/.claude/skills/push-branch/SKILL.md`.
 
 ## Role: the executor
 
@@ -551,7 +556,8 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
 Mechanical only. All reasoning finished in Phase 4 step 7; do not rewrite,
 reorder, or "improve" the title or body here.
 
-1. Read `~/.claude/skills/push-branch/SKILL.md` with `Read` and follow it
+1. Read `PUSH_BRANCH_SKILL` (the `push-branch=` path you were given, else
+   `~/.claude/skills/push-branch/SKILL.md`) with `Read` and follow it
    exactly, in its **content supplied** mode (`--title` + `Body:`), passing:
    the title and body from Phase 4 step 7 verbatim, and `--no-jira`
    (the loop runner, `src/roles/dev/phase.ts`, owns the Jira transition and QA Notes field from
@@ -563,7 +569,8 @@ reorder, or "improve" the title or body here.
    Read the file rather than invoking it as a skill: `Skill` is not in
    `ALLOWED_TOOLS` (`src/roles/dev/tools.ts`), so a nested skill call is unavailable
    in this headless run. That skill lives on the operator's machine, not in
-   this repo. **If that file does not exist**, do not
+   this repo. **If that file does not exist** (at the path above; never look
+   for it anywhere else), do not
    improvise your own push/`gh` steps (that would be a second copy of the
    logic): bounce with `failure_category: "env_setup"` and evidence naming
    the missing path.

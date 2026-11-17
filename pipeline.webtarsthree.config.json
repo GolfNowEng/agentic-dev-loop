@@ -35,7 +35,8 @@
       "kitDir": "~/Desktop/Repos/keystone-bedrock-kit",
       "template": "docker.io/library/dev-loop-sbx:v2",
       "memory": "8g",
-      "mcp": ["atlassian"]
+      "mcp": ["atlassian"],
+      "hostSkills": ["push-branch"]
     }
   }
 }

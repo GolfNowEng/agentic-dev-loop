@@ -40,6 +40,16 @@ describe("validateSbxConfig", () => {
       expect(() => validateSbxConfig({ kitDir: "/k", template: bad })).toThrow("sandbox.sbx: template must be an image reference");
     }
   });
+  it("hostSkills: a list of skill folder names, deduplicated; absent means none", () => {
+    expect(validateSbxConfig({ kitDir: "/k" }).hostSkills).toEqual([]);
+    expect(validateSbxConfig({ kitDir: "/k", hostSkills: ["push-branch", "push-branch"] }).hostSkills).toEqual(["push-branch"]);
+  });
+  it("hostSkills: rejects anything but a plain skill name", () => {
+    for (const bad of ["../x", "a/b", "", "-x", ".hidden", "a b"]) {
+      expect(() => validateSbxConfig({ kitDir: "/k", hostSkills: [bad] })).toThrow(`sandbox.sbx: hostSkills entry "${bad}" must be a skill folder name`);
+    }
+    expect(() => validateSbxConfig({ kitDir: "/k", hostSkills: "push-branch" })).toThrow("sandbox.sbx: hostSkills must be an array of skill names");
+  });
   it("expands a leading ~/ in kitDir to the home folder", () => {
     expect(validateSbxConfig({ kitDir: "~/kits/k" }).kitDir).toBe(join(homedir(), "kits/k"));
     expect(() => validateSbxConfig({ kitDir: "~other/k" })).toThrow("sandbox.sbx: kitDir must be an absolute path");
