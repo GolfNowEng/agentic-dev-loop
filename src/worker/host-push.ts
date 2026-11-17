@@ -26,6 +26,13 @@ export type HostPushResult =
   | { ok: true; pr: string; branch: string; signed: number; oldTip: string; newTip: string; costUsd: number }
   | { ok: false; detail: string; costUsd: number };
 
+/** "…/dev-20261117T090121Z" -> "20261117T090121Z": the last path segment after its first "-". */
+export function runIdFromRunDir(runDir: string): string {
+  const seg = runDir.replace(/\/+$/, "").split("/").pop() ?? "";
+  const i = seg.indexOf("-");
+  return i < 0 ? seg : seg.slice(i + 1);
+}
+
 export function hostPushPrompt(a: { skill: string; worktree: string; branch: string; title: string; body: string }): string {
   return [
     `Read ${a.skill} with the Read tool and follow it exactly, in its content-supplied mode, with --no-jira.`,

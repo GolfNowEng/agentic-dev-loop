@@ -37,13 +37,14 @@
  * the real-IO wiring those fakes stand in for.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { envFileWarning } from "./core/env-file.ts";
-import { loadConfig, loadLoopConfig, repoSlugFromUrl, resolveProjectConfigPath } from "./core/config.ts";
-import type { Config, LoopConfig, Role } from "./core/types.ts";
+import { loadConfig, loadLoopConfig, roleView, repoSlugFromUrl, resolveProjectConfigPath } from "./core/config.ts";
+import type { Config, LoopConfig, ReadyToPush, Role } from "./core/types.ts";
 import { credentialsFromEnv, assigneeAccountIdFromEnv, RealJiraClient } from "./core/jira-client.ts";
 import type { JiraCredentials } from "./core/jira-client.ts";
 import {
@@ -65,8 +66,11 @@ import { selectSandbox, type SandboxSelection } from "./sandbox/select.ts";
 import { parseArgs, preflight, type Phase } from "./core/cli-args.ts";
 import { fillModelEnvFromClaudeSettings } from "./core/claude-settings-env.ts";
 import { FlagError } from "./core/flags.ts";
-import { checkAbsPath, checkRepoDirPlacement, repoDirFor, SKILL_NAME } from "./core/build-prompt.ts";
+import { checkAbsPath, checkRepoDirPlacement, claudeEnvFor, repoDirFor, SKILL_NAME } from "./core/build-prompt.ts";
 import { killActiveChild, spawnClaudeRun } from "./core/spawn-claude.ts";
+import { realOpenPrUrlForBranch } from "./core/github-client.ts";
+import { realGit } from "./worker/host-sign.ts";
+import { hostPush, runIdFromRunDir } from "./worker/host-push.ts";
 import { notify } from "./core/notify.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
 import { makeRunSkill, sandboxInstancePrefix, sandboxMounts, sandboxPreflightInstanceName } from "./worker/skill-runner.ts";
@@ -174,6 +178,16 @@ async function reconcile(
   }
 }
 
+/** execFile with a large buffer; rejects with stderr on a non-zero exit. */
+function runCmd(cmd: string, args: string[], cwd: string): Promise<string> {
+  return new Promise((resolveP, reject) => {
+    execFile(cmd, args, { cwd, env: process.env, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(String(stderr).trim() || err.message));
+      else resolveP(String(stdout));
+    });
+  });
+}
+
 async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccountId: string): Promise<void> {
   const session = tracked.session;
   const prefix = prefixOf(ctx.phase);
@@ -181,6 +195,8 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
   const execGhPrView = realExecGhPrView();
   const runsResearch = ctx.roles.includes("research");
   const runsDev = ctx.roles.includes("dev");
+  const wantsHostPush = ctx.sandbox.adapter.name !== DEFAULT_ADAPTER && ctx.sandbox.adapter.hostPush?.(ctx.sandbox.config) === true;
+  const devLimits = roleView(config, "dev").limits;
   const deps: WorkerDeps = {
     jira: ctx.jiraClient,
     github: ctx.githubClient,
@@ -220,6 +236,28 @@ async function runLoop(ctx: LoopContext, tracked: TrackedSession, assigneeAccoun
     hasLandedResearchV1: runsResearch ? (key) => hasLandedV1("research", slug, key) : undefined,
     notify: (title, body) => notify(title, body),
     log,
+    ...(wantsHostPush
+      ? {
+          hostPush: (ticketKey: string, runDir: string, ready: ReadyToPush) =>
+            hostPush(ticketKey, runIdFromRunDir(runDir), ready, {
+              repoDir: repoDirFor(config, slug),
+              repoRoot: REPO_ROOT,
+              githubRepo: config.github.repo,
+              defaultBranch: config.targetRepo.defaultBranch,
+              git: realGit(),
+              spawn: (opts) => spawnClaudeRun(opts, { log, logError }),
+              run: runCmd,
+              findOpenPrUrlForBranch: realOpenPrUrlForBranch(config.github.repo),
+              pushBranchSkill: join(homedir(), ".claude/skills/push-branch/SKILL.md"),
+              timeoutMin: 20,
+              maxBudgetUsd: 2,
+              stream: ctx.stream,
+              env: claudeEnvFor(devLimits, process.env),
+              usagePath: join(resolveRepoPath(runDir), "host-push-usage.json"),
+              log,
+            }),
+        }
+      : {}),
   };
 
   // First, before any network-bound work: the adopted in-flight runs go to the log.

@@ -421,3 +421,45 @@ describe("buildBounceCommentAdf session suffix", () => {
     expect((buildBounceCommentAdf(v) as { content: unknown[] }).content).toHaveLength(1);
   });
 });
+
+describe("runDevPhase ready_to_push", () => {
+  const ready = { branch: "PROJ-1-x", pr_title: "t", pr_body: "b" };
+  const rtp = () => makeVerdict({ outcome: "ready_to_push", pr: null, ...ready, detail: "Done." } as Partial<ExecutorVerdict>);
+  const okRes = { ok: true as const, pr: "https://github.com/org/repo/pull/9", branch: "feat/PROJ-1-x", signed: 2, oldTip: "aaaaaaa1111", newTip: "bbbbbbb2222", costUsd: 0.5 };
+
+  it("hostPush ok lands: Code Review transition, host PR, summed cost, Host-signed detail", async () => {
+    const hostPush = vi.fn(async () => okRes);
+    const deps = makeDeps({ runSkill: skillReturning(rtp()), hostPush });
+    const entry = await runDevPhase(makeTicket(), deps);
+    expect(hostPush).toHaveBeenCalledWith(ready);
+    expect(deps.jira.transitionStatus).toHaveBeenCalledWith("PROJ-1", deps.view.statusNames.prOpen, expect.anything());
+    expect(entry.outcome).toBe("landed");
+    expect(entry.pr).toBe(okRes.pr);
+    expect(entry.cost_usd).toBeCloseTo(3.75);
+    expect(entry.detail).toBe("Done. Host-signed 2 commit(s) (aaaaaaa→bbbbbbb) and pushed feat/PROJ-1-x.");
+  });
+
+  it.each([
+    ["fails", async () => ({ ok: false as const, detail: "signing failed: x", costUsd: 0.5 }), 3.75, "host push failed: signing failed: x. Work committed locally on PROJ-1-x, not pushed."],
+    ["throws", async () => { throw new Error("boom"); }, 3.25, "host push failed: boom. Work committed locally on PROJ-1-x, not pushed."],
+  ])("hostPush %s bounces env_setup", async (_n, impl, cost, detail) => {
+    const deps = makeDeps({ runSkill: skillReturning(rtp()), hostPush: vi.fn(impl) });
+    const entry = await runDevPhase(makeTicket(), deps);
+    expect(entry.outcome).toBe("bounced");
+    expect(entry.failure_category).toBe("env_setup");
+    expect(entry.pr).toBeNull();
+    expect(entry.detail).toBe(detail);
+    expect(entry.cost_usd).toBeCloseTo(cost);
+    expect(deps.jira.addComment).toHaveBeenCalled();
+    expect(deps.jira.transitionStatus).toHaveBeenCalledWith("PROJ-1", deps.view.statusNames.bounced);
+  });
+
+  it("without hostPush is an agent_error and writes nothing to Jira", async () => {
+    const deps = makeDeps({ runSkill: skillReturning(rtp()) });
+    const entry = await runDevPhase(makeTicket(), deps);
+    expect(entry.outcome).toBe("error");
+    expect(entry.failure_category).toBe("agent_error");
+    expect(entry.detail).toContain("ready_to_push but this run has no host push");
+    expect(deps.jira.transitionStatus).not.toHaveBeenCalled();
+  });
+});

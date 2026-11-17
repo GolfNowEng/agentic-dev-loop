@@ -98,3 +98,11 @@ describe("hostPushPrompt", () => {
     expect(p).toContain("Read /s/SKILL.md with the Read tool");
   });
 });
+
+describe("runIdFromRunDir", () => {
+  it("takes the segment after the first dash of the last path segment", async () => {
+    const { runIdFromRunDir } = await import("../../src/worker/host-push.ts");
+    expect(runIdFromRunDir("/a/b/PROJ-1/dev-20261117T090121Z")).toBe("20261117T090121Z");
+    expect(runIdFromRunDir("x/dev-2026-1/")).toBe("2026-1");
+  });
+});
