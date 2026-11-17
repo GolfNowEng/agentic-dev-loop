@@ -96,7 +96,16 @@ The loop spawns a small `claude -p` on the host, without a sandbox:
   content-supplied mode with `--title`, `Body:` and `--no-jira`, using
   `pr_title` and `pr_body` verbatim. Then write `{pr: <url>}` to a small
   result file.
-- **Model:** the sonnet tier.
+- **Model:** haiku (operator decision, 2026-11-17).
+  - The step is mechanical: the title, body and branch are already
+    written.
+  - The prompt is templated and literal.
+  - The jobs that tripped an agent up before (cleanup, the Jira status
+    moves) are excluded by `--no-jira`, and the loop does them in code.
+  - push-branch's version guard is a table lookup (`feat` means a `feat/`
+    branch and the `bump:minor` label), so it isn't open-ended judgment.
+  - If haiku turns out unreliable at it in practice, the fix is to tighten
+    the prompt first, and raise the tier only after that.
 
 This is exactly the call ticket-to-pr Phase 5 makes on a host run. Only the
 caller is different.
@@ -154,7 +163,7 @@ updates an existing PR in place.
 
 ## Open questions for the operator
 
-1. **Hooks on amend.** webtarsthree's `.husky/pre-commit` runs `npm test`,
+1. **Hooks on amend** (decided: (a)). webtarsthree's `.husky/pre-commit` runs `npm test`,
    the full suite of about 7845 tests. Re-signing N commits would run it N
    times, and dev usually makes 2–4 commits (RED, GREEN, fixes). The suite
    already passed in the sandbox on the same tree, and pre-push runs it
@@ -164,5 +173,8 @@ updates an existing PR in place.
    - (b) Re-sign with `git -c core.hooksPath=/dev/null`. This is a hook
      bypass, which the standing rules forbid. Not proposed. It's listed
      only so it's clear it was ruled out.
-2. **Model for the host push spawn:** sonnet tier (proposed) or haiku. It's
-   mechanical, but push-branch's version guard involves some judgment.
+
+## Decided
+
+- Host push model: haiku (see section 4).
+- Hooks on amend: accept the N suite runs; never skip a hook.

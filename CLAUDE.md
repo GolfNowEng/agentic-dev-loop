@@ -29,6 +29,30 @@ via `--append-system-prompt`. Edit the stance there, not here.
   (RED), committed before any implementation, then the minimum code to pass
   (GREEN).
 
+## The pillar: agents judge, the loop does the mechanics
+
+**IMPORTANT. Follow this in every design and change; refine it as we learn.**
+
+- **Agents do the work that needs judgment.** Reading and grounding a
+  ticket, planning, writing the tests and the code, QA, writing the PR
+  title and body. They hand the result over in `verdict.json`.
+- **The loop does everything mechanical, in plain TypeScript, with tests.**
+  Jira status moves, QA Notes fields, comments, signing commits, cleanup,
+  reset. These must never depend on an LLM's read of the situation on a
+  given day. An agent stuck mid-cleanup, or one that "reasons" about a Jira
+  transition, is the failure mode this pillar exists to prevent.
+- **When an agent must run a mechanical step,** keep it on the cheapest
+  tier (haiku), with templated, literal instructions. Today that's only
+  the operator's push-branch skill, the one copy of the push and PR steps,
+  which the loop must not duplicate. The agent gets the content already
+  written and has nothing to decide.
+- **The handoff is a contract.** The agent says what it did and what's
+  ready (a verdict). The loop checks that against facts (git, Jira, GitHub)
+  before acting on it, and refuses rather than guessing.
+- **Security follows the same line.** Credentials and signing keys stay
+  with the loop on the host. A sandboxed agent produces work but never
+  decides what gets signed or published.
+
 ## Both phases
 
 - **A bounce is a success, not a failure.** `outcome: "bounced"` with good
