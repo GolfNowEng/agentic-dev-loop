@@ -77,6 +77,57 @@ describe.skipIf(!hasKeygen)("signUnpushed", () => {
     expect(r.ok && r.signed).toBe(1);
   });
 
+  it("F1: keeps the merge-base when origin/main moved after the fork", async () => {
+    await commit("a", "one");
+    await commit("b", "two");
+    const fork = await g("merge-base", "HEAD", "origin/main");
+    const tree = await g("rev-parse", "HEAD^{tree}");
+    await g("checkout", "-q", "main");
+    await commit("m", "main moved");
+    await g("push", "-q", "origin", "main");
+    await g("checkout", "-q", "X-1-a");
+    await g("fetch", "-q", "origin");
+    expect(await g("rev-parse", "origin/main")).not.toBe(fork);
+    const r = await signUnpushed(args());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.signed).toBe(2);
+    expect(r.base).toBe(fork);
+    expect(await g("rev-parse", "HEAD^{tree}")).toBe(tree);
+    expect(await g("merge-base", "HEAD", "origin/main")).toBe(fork);
+    expect((await g("log", "--format=%G?", `${fork}..HEAD`)).split("\n")).toEqual(["G", "G"]);
+    expect(await g("log", "--format=%G?", "-1", fork)).toBe("N");
+  });
+
+  it("F1: pushed branch whose origin tip is not an ancestor is refused", async () => {
+    await commit("a", "one");
+    await g("push", "-q", "origin", "X-1-a");
+    await g("reset", "-q", "--hard", "HEAD~1");
+    await commit("b", "two");
+    const head = await g("rev-parse", "HEAD");
+    const r = await signUnpushed(args());
+    expect(r).toEqual({ ok: false, reason: "origin/X-1-a is not an ancestor of HEAD (diverged); refusing to rewrite", restored: false });
+    expect(await g("rev-parse", "HEAD")).toBe(head);
+  });
+
+  it("F1: pushed branch base is the origin/<branch> sha", async () => {
+    await commit("a", "one");
+    await g("push", "-q", "origin", "X-1-a");
+    const pushedSha = await g("rev-parse", "HEAD");
+    await commit("b", "two");
+    const r = await signUnpushed(args());
+    expect(r.ok && r.base).toBe(pushedSha);
+  });
+
+  it("F1/#10: refuses a commit already on another origin ref", async () => {
+    await commit("a", "one");
+    const a = await g("rev-parse", "HEAD");
+    await g("push", "-q", "origin", "HEAD:refs/heads/other");
+    await commit("b", "two");
+    const r = await signUnpushed(args());
+    expect(r).toEqual({ ok: false, reason: `${a} is already on origin; refusing to rewrite pushed history`, restored: false });
+  });
+
   it("refuses a merge commit", async () => {
     await commit("a", "one");
     await g("checkout", "-q", "-b", "side", "main");

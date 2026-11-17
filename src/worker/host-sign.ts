@@ -33,17 +33,25 @@ export async function signUnpushed(a: SignArgs): Promise<SignResult> {
     if (!containsTicketToken(branch, ticketKey)) return fail(`branch ${branch} does not name ${ticketKey}`);
 
     const pushed = (await run("ls-remote", "--heads", "origin", branch)) !== "";
-    const base = pushed ? `origin/${branch}` : `origin/${defaultBranch}`;
-    await run("rev-parse", "--verify", `${base}^{commit}`);
+    let base: string;
+    if (pushed) {
+      // Pushed: only the commits on top of origin/<branch>, and only if HEAD still descends from it.
+      base = await run("rev-parse", "--verify", `origin/${branch}^{commit}`);
+      try { await run("merge-base", "--is-ancestor", base, "HEAD"); }
+      catch { return fail(`origin/${branch} is not an ancestor of HEAD (diverged); refusing to rewrite`); }
+    } else {
+      // Unpushed: keep the fork point; never replay onto a default branch that moved since.
+      await run("rev-parse", "--verify", `origin/${defaultBranch}^{commit}`);
+      base = await run("merge-base", "HEAD", `origin/${defaultBranch}`);
+    }
 
     const shas = lines(await run("rev-list", `${base}..HEAD`));
     if (shas.length === 0) return fail(`nothing to sign on ${branch}`);
     const merges = lines(await run("rev-list", "--merges", `${base}..HEAD`));
     if (merges.length > 0) return fail(`${merges[0]} is a merge commit; refusing to rewrite`);
-    for (const sha of shas) {
-      const refs = lines(await run("for-each-ref", "--contains", sha, "refs/remotes/origin"));
-      if (refs.length > 0) return fail(`${sha} is already on ${refs[0].split(/\s+/).pop()}; refusing to rewrite pushed history`);
-    }
+    const unpushed = new Set(lines(await run("rev-list", "HEAD", "--not", "--remotes=origin")));
+    const onOrigin = shas.find((sha) => !unpushed.has(sha));
+    if (onOrigin) return fail(`${onOrigin} is already on origin; refusing to rewrite pushed history`);
 
     const oldTip = await run("rev-parse", "HEAD");
     const oldTree = await run("rev-parse", "HEAD^{tree}");
