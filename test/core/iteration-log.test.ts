@@ -233,16 +233,19 @@ describe("hasLandedPhase / failedAttempts", () => {
 });
 
 describe("recentlyEnded / lastSkipBlockers", () => {
-  it("respects the window", () => {
+  it("a record without jira_status_changed never holds its ticket", () => {
     const now = new Date("2026-11-10T11:00:00Z");
-    const rs = [rec({ ended: "2026-11-10T10:50:00Z" }), rec({ ticket: "TARS-2", ended: "2026-11-10T08:00:00Z" })];
-    expect([...recentlyEnded(rs, now, 30 * 60_000)]).toEqual(["TARS-1"]);
+    const rs = [rec({ ended: "2026-11-10T10:59:00Z" }), rec({ outcome: "resume-dropped", phases: [], ended: "2026-11-10T10:59:00Z" })];
+    expect([...recentlyEnded(rs, now, 120_000)]).toEqual([]);
   });
 
-  it("a resume-dropped record (no Jira write, so no index lag) does not hold the ticket back", () => {
+  it("a status-changing record holds for windowMs and reports its age", () => {
     const now = new Date("2026-11-10T11:00:00Z");
-    const rs = [rec({ outcome: "resume-dropped", phases: [], ended: "2026-11-10T10:59:00Z" })];
-    expect([...recentlyEnded(rs, now, 30 * 60_000)]).toEqual([]);
+    const rs = [
+      rec({ ended: "2026-11-10T10:59:00Z", jira_status_changed: true }),
+      rec({ ticket: "TARS-2", ended: "2026-11-10T10:50:00Z", jira_status_changed: true }),
+    ];
+    expect(recentlyEnded(rs, now, 120_000)).toEqual(new Map([["TARS-1", 60_000]]));
   });
 
   it("lastSkipBlockers returns blocked_by only if the latest record is skipped-blocked", () => {

@@ -69,6 +69,37 @@ function rec(o: Partial<IterationRecord> = {}): IterationRecord {
 }
 
 describe("runWorkerIteration — the cycle (§6.3)", () => {
+  it("a claimed-and-bounced research run writes jira_status_changed: true", async () => {
+    h = await harness({ script: { research: [{ verdictRaw: researchBounce() }] } });
+    h.jira.research = [ticket("TARS-1")];
+    await runWorkerIteration(h.deps);
+    const recs = await records(h);
+    expect(recs[0].outcome).toBe("bounced");
+    expect(recs[0].jira_status_changed).toBe(true);
+  });
+
+  it("a resume-dropped record has no jira_status_changed", async () => {
+    h = await harness({
+      session: makeSession("dev-1", { ticket: "TARS-1", role: "research", runDir: v2RunDir("repo", "dev-1", "TARS-1", "research", "20261111T110000Z"), since: "2026-11-11T11:00:00.000Z" }),
+    });
+    h.jira.statuses["TARS-1"] = "Done";
+    await runWorkerIteration(h.deps);
+    const dropped = (await records(h)).filter((r) => r.outcome === "resume-dropped");
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0].jira_status_changed).toBeUndefined();
+  });
+
+  it.each([
+    [45_000, "45s"],
+    [60_000, "1m"],
+    [119_000, "1m"],
+  ])("a held ticket logs its age (%i ms -> %s)", async (ms, text) => {
+    h = await harness();
+    await appendIteration(h.logPath, rec({ ticket: "TARS-1", ended: new Date(h.clock.t - ms).toISOString(), jira_status_changed: true }));
+    await runWorkerIteration(h.deps);
+    expect(h.logs).toContain(`[worker] TARS-1 skipped: a run on it ended ${text} ago`);
+  });
+
   it("research green → handoff → dev landed", async () => {
     h = await harness();
     h.jira.research = [ticket("TARS-1")];

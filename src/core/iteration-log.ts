@@ -102,6 +102,8 @@ export interface IterationRecord {
   resume?: Role;
   detail?: string;
   jira_sync_error?: string;
+  /** Set when this iteration changed the ticket's Jira status (claim or transition); only such records hold the ticket back for the recent window. */
+  jira_status_changed?: true;
   /** Outcome "parked" only: what the sandbox refused. */
   parked?: ParkedRun;
 }
@@ -223,14 +225,22 @@ export function failedAttempts(records: IterationRecord[], ticket: string, role:
   return n;
 }
 
-/** Tickets with any record ended within windowMs of now. */
-export function recentlyEnded(records: IterationRecord[], now: Date, windowMs: number): Set<string> {
-  const out = new Set<string>();
+/**
+ * Tickets held back by a record that changed their Jira status and ended
+ * within windowMs of now, with ms since that (latest) record ended. The window
+ * covers Jira's search-index lag after a status write; other records wrote
+ * no status, so they hold nothing.
+ */
+export function recentlyEnded(records: IterationRecord[], now: Date, windowMs: number): Map<string, number> {
+  const out = new Map<string, number>();
   for (const r of records) {
-    // The window covers Jira's search-index lag after a write; a dropped resume wrote nothing to Jira.
-    if (r.outcome === "resume-dropped") continue;
+    if (r.jira_status_changed !== true) continue;
     const t = Date.parse(r.ended);
-    if (!Number.isNaN(t) && now.getTime() - t <= windowMs) out.add(r.ticket);
+    if (Number.isNaN(t)) continue;
+    const age = now.getTime() - t;
+    if (age > windowMs) continue;
+    const prev = out.get(r.ticket);
+    if (prev === undefined || age < prev) out.set(r.ticket, age);
   }
   return out;
 }

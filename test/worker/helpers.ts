@@ -269,7 +269,7 @@ export async function harness(
       mergedCache: new Map(),
     },
     findOpenPrUrl: async () => null,
-    recentWindowMs: 600_000,
+    recentWindowMs: 120_000,
     log: (m: string) => logs.push(m),
     ...o.deps,
   });

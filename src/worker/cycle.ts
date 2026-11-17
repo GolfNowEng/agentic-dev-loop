@@ -35,7 +35,7 @@ import {
 export type { WorkerDeps, WorkerIterationResult } from "./context.ts";
 export { WorkerPausedError } from "./cycle-steps.ts";
 
-const DEFAULT_RECENT_WINDOW_MS = 600_000;
+const DEFAULT_RECENT_WINDOW_MS = 120_000;
 
 /**
  * Write every in-flight run the session adopted (inFlight, then orphans) to
@@ -100,7 +100,10 @@ async function iterate(ctx: Ctx): Promise<WorkerIterationResult> {
   if (ctx.roles.has("dev")) await completePendingHandoffs(ctx);
 
   // 2. EXCLUDE: recently ended (survives restarts; Jira index lag) ∪ parked ∪ attempt-capped.
-  for (const k of recent) ctx.exclude.add(k);
+  for (const [k, ageMs] of recent) {
+    ctx.exclude.add(k);
+    ctx.log(`[worker] ${k} skipped: a run on it ended ${ageMs < 60_000 ? `${Math.floor(ageMs / 1000)}s` : `${Math.floor(ageMs / 60_000)}m`} ago`);
+  }
   for (const k of new Set(ctx.records.map((r) => r.ticket))) {
     if (latestRecord(ctx.records, k)?.outcome === "parked") ctx.exclude.add(k);
   }
