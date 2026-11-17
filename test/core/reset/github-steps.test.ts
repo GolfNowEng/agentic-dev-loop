@@ -16,7 +16,7 @@ const ctx = (github: FakeGitHub | null, over: Partial<ResetCtx> = {}): ResetCtx 
 });
 
 describe("github reset steps", () => {
-  it("reports a closed-not-planned Issue and never acts", async () => {
+  it("an Issue research would reuse needs you: close it as not planned; reset never acts", async () => {
     const gh = fake([
       { number: 585, url: "u585", state: "CLOSED", stateReason: "NOT_PLANNED" },
       { number: 590, url: "u590", state: "OPEN" },
@@ -25,8 +25,23 @@ describe("github reset steps", () => {
     const steps = githubSteps(ctx(gh));
     expect(steps.map((s) => [s.area, s.name])).toEqual([["github", "mirror Issue"]]);
     const sv = await steps[0].survey();
-    expect(sv).toEqual({ found: "#585 (closed, not planned), #590 (open), #600 (closed)", action: null });
+    // pickMirrorIssue reuses the newest Issue not closed as not planned: #600.
+    expect(sv).toEqual({ found: "#585 (closed, not planned), #590 (open), #600 (closed)", action: null, needsYou: "close #600 as not planned" });
+    expect(sv.run).toBeUndefined();
     expect(gh.calls).toEqual(["findIssuesByJiraKey TARS-1"]);
+  });
+
+  it("an open Issue needs you", async () => {
+    const sv = await githubSteps(ctx(fake([{ number: 590, url: "u590", state: "OPEN" }])))[0].survey();
+    expect(sv).toEqual({ found: "#590 (open)", action: null, needsYou: "close #590 as not planned" });
+  });
+
+  it("only not-planned Issues is at zero", async () => {
+    const sv = await githubSteps(ctx(fake([
+      { number: 585, url: "u585", state: "CLOSED", stateReason: "NOT_PLANNED" },
+      { number: 586, url: "u586", state: "CLOSED", stateReason: "NOT_PLANNED" },
+    ]), { role: "research" }))[0].survey();
+    expect(sv).toEqual({ found: "#585 (closed, not planned), #586 (closed, not planned)", action: null });
   });
 
   it("reports none, and research scope also gets the row", async () => {
