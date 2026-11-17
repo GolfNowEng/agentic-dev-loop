@@ -7,7 +7,9 @@ describe("loop comment prefixes", () => {
     expect(loopCommentRoles(`${CONTRACT.researchPass} refined, ready for dev`)).toEqual(["research"]);
     expect(loopCommentRoles(`## ${CONTRACT.researchFail} scope too large, needs split`)).toEqual(["research"]);
     expect(loopCommentRoles("❌ dev-loop - test-failure: 3 tests red")).toEqual(["dev"]); // code-review.ts
-    expect(loopCommentRoles("❌ dev-loop - blocked-attempts: 3 failed dev attempts")).toEqual(["dev"]); // attempts.ts
+    // attempts.ts posts the dev prefix for either role's cap, so it counts for both.
+    expect(loopCommentRoles("❌ dev-loop - blocked-attempts: 3 failed dev attempts")).toEqual(["research", "dev"]);
+    expect(loopCommentRoles("❌ dev-loop - blocked-attempts: 3 failed research attempts")).toEqual(["research", "dev"]);
     expect(loopCommentRoles("dev-loop could not start this ticket: moving it to In Progress requires X")).toEqual(["research", "dev"]); // cycle-steps.ts
   });
 

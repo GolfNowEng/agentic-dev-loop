@@ -53,6 +53,13 @@ describe("runWindows", () => {
     ]);
   });
 
+  it("a blocked-attempts record makes a window for both roles with slack on both sides", async () => {
+    const r = JSON.stringify({ ticket: "TARS-1", session: "s1", started: "2026-11-16T10:00:00Z", ended: "2026-11-16T10:00:01Z", outcome: "blocked-attempts", phases: [], detail: "3 failed research attempts (maxAttemptsPerTicket 3)" });
+    await writeFile(join(root, "runs/v2/proj.reset-archive.jsonl"), r + "\n");
+    const w = { from: t("2026-11-16T10:00:00Z") - SLACK, to: t("2026-11-16T10:00:01Z") + SLACK };
+    expect(await runWindows(ctx())).toEqual([{ role: "research", ...w }, { role: "dev", ...w }]);
+  });
+
   it("a run dir's progress.jsonl makes a window", async () => {
     await runDir("s9", "TARS-1", "dev-20261116T120000Z", [
       JSON.stringify({ ts: "2026-11-16T12:00:05Z", phase: "intake", event: "phase_start" }),

@@ -1,7 +1,8 @@
 // The ticket's run windows: when each of its runs could have posted to Jira.
 // From every phase in the live runs log and the reset archive
 // ([started, ended + 2 min]), every claim-error record (research,
-// [started - 2 min, ended + 2 min]) and from every run dir of the ticket, any
+// [started - 2 min, ended + 2 min]), every blocked-attempts record (both
+// roles, same slack) and from every run dir of the ticket, any
 // session, with a progress.jsonl ([first ts, last ts + 2 min]), so a run
 // stopped mid-way with no record still has a window. Read before anything is
 // archived or deleted (the runner surveys every row before running any).
@@ -41,10 +42,15 @@ export async function runWindows(ctx: ResetCtx): Promise<RunWindow[]> {
       if (rec.ticket !== ctx.ticket) continue;
       // The research claim posts its missing-fields comment just before this
       // phase-less record is appended, so its window has slack on both sides.
-      if (rec.outcome === "claim-error") {
+      if (rec.outcome === "claim-error" || rec.outcome === "blocked-attempts") {
         const from = Date.parse(rec.started);
         const to = Date.parse(rec.ended);
-        if (Number.isFinite(from) && Number.isFinite(to)) out.push({ role: "research", from: from - WINDOW_SLACK_MS, to: to + WINDOW_SLACK_MS });
+        // blocked-attempts: posted at poll time, outside any phase, for either
+        // role's cap (attempts.ts); the record cannot say which, so both.
+        const roles: Role[] = rec.outcome === "claim-error" ? ["research"] : ["research", "dev"];
+        if (Number.isFinite(from) && Number.isFinite(to)) {
+          for (const role of roles) out.push({ role, from: from - WINDOW_SLACK_MS, to: to + WINDOW_SLACK_MS });
+        }
       }
       for (const p of rec.phases) {
         const from = Date.parse(p.started);

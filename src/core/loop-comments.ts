@@ -12,9 +12,16 @@ import type { Role } from "./types.ts";
 /** src/worker/cycle-steps.ts reportMissingFields: posted by the research claim (Ruling R9: a loop comment). */
 const MISSING_FIELDS = "dev-loop could not start this ticket:";
 
+/**
+ * src/worker/attempts.ts buildAttemptsCommentAdf: posted at poll time for
+ * either role's attempt cap, always with the dev-loop prefix, so it counts for
+ * both roles (its window comes from the blocked-attempts record, see run-windows.ts).
+ */
+const BLOCKED_ATTEMPTS = "❌ dev-loop - blocked-attempts:";
+
 export const LOOP_COMMENT_PREFIXES: Record<Role, readonly string[]> = {
   // ticket-refine's pass pointer and bounce comment (CONTRACT in src/core/contract.ts).
-  research: ["✅ research-loop -", "❌ research-loop -", MISSING_FIELDS],
+  research: ["✅ research-loop -", "❌ research-loop -", MISSING_FIELDS, BLOCKED_ATTEMPTS],
   // src/roles/dev/code-review.ts buildBounceCommentAdf, src/worker/attempts.ts buildAttemptsCommentAdf.
   dev: ["✅ dev-loop -", "❌ dev-loop -", MISSING_FIELDS],
 };
