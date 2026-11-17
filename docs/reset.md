@@ -64,9 +64,13 @@ that role. It never touches the other role's comments, records or label.
 Status and label are done once per reset, not per role. The status and label
 targets come from config, not from records. The Jira rows run in table order:
 comments, label, then status. Moving the status makes the ticket pollable
-again, so it runs last, and it is skipped (`failed: skipped: an earlier Jira
-step failed`) when the comments or label row failed or the comments row needs
-you in the same pass.
+again, so it runs last of all rows (after GitHub too). It is held, and never
+run, when any other row needs you, errored or failed: the table shows
+`↳ held until the rows that need you are clean` under it, and the run reports
+`failed: held: <area> <step> needs you`. So a ticket whose mirror Issue is
+still open stays off the poll until you close that Issue and reset again.
+Within the Jira rows it is also skipped (`failed: skipped: an earlier Jira
+step failed`) when the comments or label row failed in the same pass.
 
 **Loop comments.** The loop posts with the user's own Jira credentials, so the
 author cannot tell them apart. A comment is the loop's only when both hold:

@@ -13,6 +13,12 @@ export interface ResetStep {
   area: ResetArea;
   name: string;
   survey(): Promise<Survey>;
+  /**
+   * Its run makes the ticket pollable again (the Jira status move). The
+   * runner runs it last, and only when no other row needs the person, errored
+   * or failed: a half-reset ticket never goes back on the poll.
+   */
+  makesPollable?: boolean;
 }
 
 // `error` records a failed survey or failed run; such a row is never at zero.

@@ -52,6 +52,7 @@ export function jiraSteps(ctx: ResetCtx, windows: () => Promise<RunWindow[]>): R
   const status: ResetStep = {
     area: "jira",
     name: "status",
+    makesPollable: true,
     async survey(): Promise<Survey> {
       if (!ctx.jira) return NO_CREDENTIALS;
       if (!ctx.config) return NO_CONFIG;

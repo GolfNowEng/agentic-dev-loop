@@ -39,8 +39,25 @@ async function surveyAll(steps: ResetStep[]): Promise<SurveyedRow[]> {
 const runnable = (r: SurveyedRow): boolean =>
   !r.error && !r.survey.needsYou && r.survey.action !== null && typeof r.survey.run === "function";
 
+/** The first row (other than a pollable one) that keeps the ticket off the poll, as "<area> <step> <why>". */
+function blocker(rows: SurveyedRow[], failed: Map<ResetStep, string>): string | null {
+  for (const r of rows) {
+    if (r.step.makesPollable) continue;
+    if (failed.has(r.step)) return `${r.step.area} ${r.step.name} failed`;
+    if (r.error || r.survey.needsYou) return `${r.step.area} ${r.step.name} needs you`;
+  }
+  return null;
+}
+
+const HELD_NOTE = "held until the rows that need you are clean";
+
 export async function runChecklist(steps: ResetStep[], opts: RunnerOpts, io: RunnerIO): Promise<number> {
   const rows = await surveyAll(steps);
+  if (blocker(rows, new Map()) !== null) {
+    for (const r of rows) {
+      if (r.step.makesPollable && runnable(r)) r.survey = { ...r.survey, details: [...(r.survey.details ?? []), HELD_NOTE] };
+    }
+  }
   io.print(renderTable(opts.title, rows));
 
   if (rows.every(atZero)) {
@@ -69,14 +86,18 @@ export async function runChecklist(steps: ResetStep[], opts: RunnerOpts, io: Run
     return 1;
   }
 
-  // AREA_ORDER, then table order within an area (sort is stable).
-  const order = rows
-    .filter(runnable)
-    .sort((a, b) => AREA_ORDER.indexOf(a.step.area) - AREA_ORDER.indexOf(b.step.area));
+  // AREA_ORDER, then table order within an area (sort is stable); a step that
+  // makes the ticket pollable goes after every other row.
+  const rank = (r: SurveyedRow): number => (r.step.makesPollable ? AREA_ORDER.length : AREA_ORDER.indexOf(r.step.area));
+  const order = rows.filter(runnable).sort((a, b) => rank(a) - rank(b));
   const status = new Map<SurveyedRow, string>();
   const failed = new Map<ResetStep, string>();
   for (const row of order) {
     try {
+      if (row.step.makesPollable) {
+        const why = blocker(rows, failed);
+        if (why !== null) throw new Error(`held: ${why}`);
+      }
       await row.survey.run!();
       status.set(row, "done");
     } catch (e) {

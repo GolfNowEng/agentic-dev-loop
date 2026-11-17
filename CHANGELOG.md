@@ -42,7 +42,9 @@ sbx adapter, not yet dogfooded). Design:
   run comments, label, then status, and the status move is skipped when an
   earlier Jira row failed. The attempt-cap comment is found for both roles.
   ADF emoji nodes count in a comment's first line. A held ticket is
-  `needs you`.
+  `needs you`. The status move runs after every other row and is held when
+  any row needs you, errored or failed (e.g. a mirror Issue still open), so a
+  half-reset ticket never goes back on the poll.
 - `[core]` The "recently ended" poll hold is now 2 minutes (was 10) and only
   follows a run that changed the ticket's Jira status (`jira_status_changed`
   on the record). A skipped ticket logs `[worker] <KEY> skipped: a run on it

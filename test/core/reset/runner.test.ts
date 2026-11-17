@@ -241,4 +241,48 @@ describe("runChecklist", () => {
     await runChecklist([sneaky, fake("git", "worktrees", log)], opts({ yes: true }), io());
     expect(ran).toEqual([]);
   });
+
+  describe("a step that makes the ticket pollable", () => {
+    const pollable = (log: string[]): ResetStep & { surveys: number } => Object.assign(fake("jira", "status", log), { makesPollable: true });
+
+    it("is held while another row needs you, and the table says so before the prompt", async () => {
+      const log: string[] = [];
+      const o = io();
+      const code = await runChecklist(
+        [fake("local", "run records", log), pollable(log), fake("github", "mirror Issue", log, { needsYou: "close #590 as not planned" })],
+        opts(),
+        o,
+      );
+      expect(log).toEqual(["local/run records"]);
+      // The note may wrap in a narrow table: compare with the spacing collapsed.
+      expect(o.out[0]!.replace(/\s+/g, " ")).toContain("↳ held until the rows that need you are clean");
+      expect(o.out.join("\n")).toContain("jira status: failed: held: github mirror Issue needs you");
+      expect(code).toBe(1);
+    });
+
+    it("is held when an earlier run failed", async () => {
+      const log: string[] = [];
+      const code = await runChecklist([fake("git", "worktrees", log, { fails: "nope" }), pollable(log)], opts({ yes: true }), io());
+      expect(log).toEqual(["git/worktrees"]);
+      expect(code).toBe(1);
+    });
+
+    it("is held when another row's survey threw", async () => {
+      const log: string[] = [];
+      await runChecklist([fake("sandbox", "leftover sandboxes", log, { surveyThrows: "sbx down" }), pollable(log)], opts({ yes: true }), io());
+      expect(log).toEqual([]);
+    });
+
+    it("runs last when everything else is clean or done", async () => {
+      const log: string[] = [];
+      const code = await runChecklist(
+        [pollable(log), fake("github", "x", log), fake("local", "run records", log), fake("sandbox", "s", log, { clean: true })],
+        opts({ yes: true }),
+        io(),
+      );
+      expect(log).toEqual(["local/run records", "github/x", "jira/status"]);
+      expect(code).toBe(0);
+    });
+  });
 });
+
