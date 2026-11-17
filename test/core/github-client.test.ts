@@ -7,6 +7,7 @@ import {
   realDefaultBranch,
   containsTicketToken,
   realFindOpenPrUrl,
+  realOpenPrHeads,
 } from "../../src/core/github-client.ts";
 
 describe("StubGitHubClient", () => {
@@ -33,7 +34,7 @@ describe("RealGitHubClient", () => {
 
     const issue = await client.findIssueByJiraKey("PROJ-1");
 
-    expect(issue).toEqual({ number: 42, url: "https://github.com/org/repo/issues/42", state: "CLOSED" });
+    expect(issue).toEqual({ number: 42, url: "https://github.com/org/repo/issues/42", state: "CLOSED", stateReason: null });
     expect(execFn).toHaveBeenCalledWith([
       "issue",
       "list",
@@ -44,7 +45,7 @@ describe("RealGitHubClient", () => {
       "--state",
       "all",
       "--json",
-      "number,url,state",
+      "number,url,state,stateReason",
     ]);
   });
 
@@ -345,5 +346,49 @@ describe("realFindOpenPrUrl", () => {
     expect(await realFindOpenPrUrl("org/repo", exec)("TARS-1")).toBeNull();
     await expect(realFindOpenPrUrl("org/repo", exec)("TARS-1 --x")).rejects.toThrow(/invalid ticket key/);
     expect(exec).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("findIssuesByJiraKey / findIssueByJiraKey preference", () => {
+  const entries = [
+    { number: 9, url: "u9", state: "CLOSED", stateReason: "COMPLETED" },
+    { number: 3, url: "u3", state: "CLOSED", stateReason: "NOT_PLANNED" },
+    { number: 5, url: "u5", state: "OPEN", stateReason: null },
+  ];
+
+  it("findIssuesByJiraKey returns every match with stateReason, ascending", async () => {
+    const execFn = vi.fn(async () => JSON.stringify(entries));
+    const out = await new RealGitHubClient({ repo: "org/repo" }, execFn).findIssuesByJiraKey("PROJ-1");
+    expect(out.map((i) => i.number)).toEqual([3, 5, 9]);
+    expect(out[0]).toEqual({ number: 3, url: "u3", state: "CLOSED", stateReason: "NOT_PLANNED" });
+    expect(out[1]!.stateReason).toBeNull();
+    expect(execFn.mock.calls[0]![0]).toContain("number,url,state,stateReason");
+  });
+
+  it("findIssueByJiraKey prefers an open Issue over a closed one", async () => {
+    const execFn = vi.fn(async () => JSON.stringify(entries));
+    const issue = await new RealGitHubClient({ repo: "org/repo" }, execFn).findIssueByJiraKey("PROJ-1");
+    expect(issue?.number).toBe(5);
+  });
+
+  it("stub throws not-configured", async () => {
+    await expect(new StubGitHubClient().findIssuesByJiraKey("PROJ-1")).rejects.toThrow(/not configured/);
+  });
+});
+
+describe("realOpenPrHeads", () => {
+  it("keeps only <KEY>- heads", async () => {
+    const exec = vi.fn(async () =>
+      JSON.stringify([
+        { headRefName: "TARS-1-a", url: "u1" },
+        { headRefName: "TARS-10-b", url: "u2" },
+        { headRefName: "main", url: "u3" },
+      ]),
+    );
+    const out = await realOpenPrHeads("org/repo", exec)("TARS-1");
+    expect(out).toEqual([{ head: "TARS-1-a", url: "u1" }]);
+    expect(exec).toHaveBeenCalledWith([
+      "pr", "list", "--repo", "org/repo", "--state", "open", "--search", "TARS-1 in:title,body", "--json", "headRefName,url",
+    ]);
   });
 });

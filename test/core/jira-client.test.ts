@@ -942,3 +942,85 @@ describe("parseRequiredFields", () => {
     expect(parseRequiredFields("null")).toEqual([]);
   });
 });
+
+describe("RealJiraClient comments and labels", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const json = (o: unknown, status = 200) => new Response(JSON.stringify(o), { status });
+
+  it("listComments pages until total and extracts the first line", async () => {
+    const first = {
+      id: "1",
+      created: "2026-01-01T00:00:00.000+0000",
+      body: {
+        type: "doc",
+        content: [
+          { type: "heading", content: [{ type: "text", text: "\u2705 research-loop - " }, { type: "text", text: "refined" }] },
+        ],
+      },
+    };
+    const page1 = Array.from({ length: 100 }, (_, i) => (i === 0 ? first : { id: String(i + 1), created: "c", body: { type: "doc", content: [] } }));
+    const page2 = [{ id: "200", created: "c2", body: { type: "doc", content: [{ type: "paragraph", content: [] }, { type: "paragraph", content: [{ type: "text", text: "  second  " }] }] } }];
+    fetchMock.mockResolvedValueOnce(json({ startAt: 0, total: 101, comments: page1 }));
+    fetchMock.mockResolvedValueOnce(json({ startAt: 100, total: 101, comments: page2 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const out = await client.listComments("TARS-1");
+
+    expect(out).toHaveLength(101);
+    expect(out[0]).toEqual({
+      id: "1",
+      created: "2026-01-01T00:00:00.000+0000",
+      firstLine: "\u2705 research-loop - refined",
+      url: "https://example.atlassian.net/browse/TARS-1?focusedCommentId=1",
+    });
+    expect(out[1]!.firstLine).toBe("");
+    expect(out[100]!.firstLine).toBe("second");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/rest/api/3/issue/TARS-1/comment?startAt=0&maxResults=100&orderBy=created");
+    expect(String(fetchMock.mock.calls[1][0])).toContain("startAt=100");
+  });
+
+  it("listComments caps firstLine at 120 chars", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ total: 1, comments: [{ id: "1", created: "c", body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x".repeat(300) }] }] } }] }),
+    );
+    const out = await new RealJiraClient(CREDENTIALS, makeConfig()).listComments("TARS-1");
+    expect(out[0]!.firstLine).toHaveLength(120);
+  });
+
+  it("deleteComment sends DELETE to the comment path", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await new RealJiraClient(CREDENTIALS, makeConfig()).deleteComment("TARS-1", "42");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(new URL(String(url)).pathname).toBe("/rest/api/3/issue/TARS-1/comment/42");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("deleteComment surfaces a 403 with its status", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("nope", { status: 403 }));
+    await expect(new RealJiraClient(CREDENTIALS, makeConfig()).deleteComment("TARS-1", "42")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("getLabels returns fields.labels", async () => {
+    fetchMock.mockResolvedValueOnce(json({ fields: { labels: ["pipeline:v2"] } }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+    await expect(client.getLabels("TARS-1")).resolves.toEqual(["pipeline:v2"]);
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://example.atlassian.net/rest/api/3/issue/TARS-1?fields=labels");
+    fetchMock.mockResolvedValueOnce(json({ fields: {} }));
+    await expect(client.getLabels("TARS-1")).resolves.toEqual([]);
+  });
+
+  it("StubJiraClient throws not-configured for the new methods", async () => {
+    const stub = new StubJiraClient({ blockedBy: {} });
+    await expect(stub.listComments("A-1")).rejects.toThrow(/listComments/);
+    await expect(stub.deleteComment("A-1", "1")).rejects.toThrow(/deleteComment/);
+    await expect(stub.getLabels("A-1")).rejects.toThrow(/getLabels/);
+  });
+});

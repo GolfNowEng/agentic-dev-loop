@@ -139,6 +139,25 @@ export interface JiraClient {
    * (src/core/blocker-gate.ts) is the only caller.
    */
   getBlockedBy(ticketKey: string): Promise<string[]>;
+
+  /** Every comment on the ticket, oldest first (paged, 100 at a time). */
+  listComments(ticketKey: string): Promise<JiraComment[]>;
+
+  /** Delete one comment. Throws the request error (with `status`) on failure. */
+  deleteComment(ticketKey: string, commentId: string): Promise<void>;
+
+  /** The ticket's labels (`GET issue?fields=labels`); `[]` when absent. */
+  getLabels(ticketKey: string): Promise<string[]>;
+}
+
+/** A Jira comment as reset needs it: identity, time, a one-line preview and a link. */
+export interface JiraComment {
+  id: string;
+  /** ISO timestamp as Jira reports it. */
+  created: string;
+  /** First ADF block with text, trimmed, max 120 chars. */
+  firstLine: string;
+  url: string;
 }
 
 export type CloseTicketResult =
@@ -228,6 +247,35 @@ export class StubJiraClient implements JiraClient {
     if (!this.blockedBy) throw StubJiraClient.notConfigured("getBlockedBy");
     return [...(this.blockedBy[ticketKey] ?? [])];
   }
+
+  async listComments(_ticketKey: string): Promise<JiraComment[]> {
+    throw StubJiraClient.notConfigured("listComments");
+  }
+
+  async deleteComment(_ticketKey: string, _commentId: string): Promise<void> {
+    throw StubJiraClient.notConfigured("deleteComment");
+  }
+
+  async getLabels(_ticketKey: string): Promise<string[]> {
+    throw StubJiraClient.notConfigured("getLabels");
+  }
+}
+
+function adfText(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const n = node as { type?: string; text?: string; content?: unknown[] };
+  if (n.type === "text") return typeof n.text === "string" ? n.text : "";
+  return (n.content ?? []).map(adfText).join("");
+}
+
+/** Text of the first top-level ADF block whose text is non-empty, trimmed, max 120 chars. */
+function adfFirstLine(body: unknown): string {
+  const content = (body as { content?: unknown[] } | null)?.content ?? [];
+  for (const block of content) {
+    const text = adfText(block).trim();
+    if (text) return text.slice(0, 120);
+  }
+  return "";
 }
 
 /** Credentials RealJiraClient needs, read from process.env by callers. */
@@ -573,6 +621,45 @@ export class RealJiraClient implements JiraClient {
       if (typeof key === "string" && TICKET_KEY.test(key)) keys.push(key);
     }
     return keys;
+  }
+
+  async listComments(ticketKey: string): Promise<JiraComment[]> {
+    if (!TICKET_KEY.test(ticketKey)) {
+      throw new Error(`RealJiraClient.listComments: invalid ticket key ${JSON.stringify(ticketKey)}`);
+    }
+    const out: JiraComment[] = [];
+    let startAt = 0;
+    for (;;) {
+      const response = await this.request(
+        `/rest/api/3/issue/${ticketKey}/comment?startAt=${startAt}&maxResults=100&orderBy=created`,
+      );
+      const data = (await response.json()) as {
+        total?: number;
+        comments?: Array<{ id: string; created: string; body?: unknown }>;
+      };
+      const comments = data.comments ?? [];
+      for (const c of comments) {
+        out.push({
+          id: String(c.id),
+          created: c.created,
+          firstLine: adfFirstLine(c.body),
+          url: `${this.credentials.baseUrl}/browse/${ticketKey}?focusedCommentId=${c.id}`,
+        });
+      }
+      startAt += comments.length;
+      if (comments.length === 0 || startAt >= (data.total ?? 0)) break;
+    }
+    return out;
+  }
+
+  async deleteComment(ticketKey: string, commentId: string): Promise<void> {
+    await this.request(`/rest/api/3/issue/${ticketKey}/comment/${commentId}`, { method: "DELETE" });
+  }
+
+  async getLabels(ticketKey: string): Promise<string[]> {
+    const response = await this.request(`/rest/api/3/issue/${ticketKey}?fields=labels`);
+    const data = (await response.json()) as { fields?: { labels?: string[] } };
+    return data.fields?.labels ?? [];
   }
 
   private async fetchTransitions(ticketKey: string): Promise<JiraTransitionsResponse> {
