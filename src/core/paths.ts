@@ -15,6 +15,17 @@ export const PROJECT_SLUG = /^[a-z0-9-]+$/;
 /** The format runIdNow() produces. */
 export const RUN_ID = /^\d{8}T\d{6}Z$/;
 
+/**
+ * True iff `name` is a worktree dir the pipeline itself makes for `ticket`
+ * under `<repo>/.claude/worktrees/`: `<TICKET>-<RUN_ID>` (ticket-to-pr's run
+ * worktree), `-ground` (ticket-refine), `-baseline` and `-fu` (ticket-to-pr's
+ * baseline and follow-up worktrees). A person's own `<TICKET>-okta-spike` is not.
+ */
+export function isPipelineWorktree(ticket: string, name: string): boolean {
+  if (!TICKET_KEY.test(ticket) || !name.startsWith(`${ticket}-`)) return false;
+  return /^\d{8}T\d{6}Z(-ground|-baseline|-fu)?$/.test(name.slice(ticket.length + 1));
+}
+
 export class UnsafePathError extends Error {
   constructor(message: string) {
     super(message);

@@ -1,13 +1,15 @@
 // Git reset steps: the ticket's worktrees, its local branches, and a read-only
 // list of its pushed branches and open PRs. Only `<TICKET>-*` names are ever
-// considered (exact prefix, so TARS-1 never matches TARS-10-...). A local
+// considered (exact prefix, so TARS-1 never matches TARS-10-...), and only
+// worktrees the pipeline makes (isPipelineWorktree) are ever removed: any
+// other `<TICKET>-*` worktree is a person's own and is only reported. A local
 // branch is deleted only when it is not on origin, has no open PR, is 0 ahead
 // of origin/<defaultBranch> and is not checked out in the repo; every one of
 // those is re-checked right before `git branch -D`. Pushed branches and PRs
 // are never touched here.
 import { lstat, readdir, realpath, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { resolveRepoPath, TICKET_KEY, UnsafePathError, v2CloneDir } from "../paths.ts";
+import { isPipelineWorktree, resolveRepoPath, TICKET_KEY, UnsafePathError, v2CloneDir } from "../paths.ts";
 import type { ResetCtx } from "./context.ts";
 import type { ResetStep, Survey } from "./step.ts";
 
@@ -56,7 +58,11 @@ export function gitSteps(ctx: ResetCtx): ResetStep[] {
       // git reports real paths; compare against the real worktrees dir.
       const wtDir = await realpath(lexical).catch(() => null);
       if (wtDir === null) return { found: "none", action: null };
-      const inScope = (name: string) => ours(name) && (ctx.role === "all" || (ctx.role === "research") === name.endsWith("-ground"));
+      const pipelineMade = (name: string) => isPipelineWorktree(ctx.ticket, name);
+      const inScope = (name: string) => pipelineMade(name) && (ctx.role === "all" || (ctx.role === "research") === name.endsWith("-ground"));
+      // `<TICKET>-*` dirs the pipeline never makes: a person's own, never removed.
+      const notOurs = (await readdir(wtDir).catch(() => [] as string[])).filter((n) => ours(n) && !pipelineMade(n)).sort();
+      const notOursDetails = notOurs.map((n) => `needs you: ${n} is not a pipeline worktree`);
 
       let listed = "";
       try {
@@ -77,7 +83,10 @@ export function gitSteps(ctx: ResetCtx): ResetStep[] {
         if (st?.isDirectory()) leftovers.push(join(wtDir, name));
       }
       const all = [...registered, ...leftovers].sort((a, b) => basename(a).localeCompare(basename(b)));
-      if (all.length === 0) return { found: "none", action: null };
+      if (all.length === 0) {
+        if (notOurs.length === 0) return { found: "none", action: null };
+        return { found: notOurs.join(", "), action: null, needsYou: `${notOurs.join(", ")}: not a pipeline worktree`, details: notOursDetails };
+      }
 
       const run = async (): Promise<void> => {
         for (const p of all) assertUnder(p, wtDir);
@@ -94,7 +103,13 @@ export function gitSteps(ctx: ResetCtx): ResetStep[] {
           if (registered.length > 0) throw e; // no registered entries: no git repo to prune
         }
       };
-      return { found: all.map((p) => basename(p)).join(", "), action: `remove ${all.length} + prune`, run };
+      const names = all.map((p) => basename(p));
+      return {
+        found: names.join(", ") + (notOurs.length > 0 ? ` (+${notOurs.length} not pipeline)` : ""),
+        action: `remove ${all.length} + prune`,
+        details: [...names.map((n) => `remove ${n}`), ...notOursDetails],
+        run,
+      };
     },
   };
 
@@ -139,6 +154,8 @@ export function gitSteps(ctx: ResetCtx): ResetStep[] {
       if (deletable.length === 0) {
         return blocked.length > 0 ? { found: found.join(", "), action: null, needsYou: blocked.join("; ") } : { found: found.join(", "), action: null };
       }
+      // Every branch, one per line: the person approves the full list, not the truncated Found cell.
+      const listing = found.map((f) => (deletable.some((b) => f === `${b} (0 ahead)`) ? `delete ${f}` : `keep ${f}`));
       const run = async (): Promise<void> => {
         const skipped: string[] = [];
         await git(["fetch", "--quiet", "origin", base], repo);
@@ -165,7 +182,7 @@ export function gitSteps(ctx: ResetCtx): ResetStep[] {
         found: found.join(", "),
         action: `delete ${deletable.length}`,
         run,
-        ...(blocked.length > 0 ? { details: blocked.map((w) => `needs you: ${w}`) } : {}),
+        details: [...listing, ...blocked.map((w) => `needs you: ${w}`)],
       };
     },
   };

@@ -62,41 +62,73 @@ describe("git reset steps", () => {
     expect(steps.map((s) => [s.area, s.name])).toEqual([["git", "worktrees"], ["git", "local branches"], ["git", "pushed branches / PRs"]]);
   });
 
-  it("removes a ticket worktree and prunes git's entry", async () => {
-    g(repo, "worktree", "add", "-q", "-b", "TARS-1-dev", join(wt, "TARS-1-dev"));
-    await mkdir(join(wt, "TARS-1-old"));
-    g(repo, "worktree", "add", "-q", "-b", "TARS-10-dev", join(wt, "TARS-10-dev"));
-    await writeFile(join(wt, "TARS-1-dev", "dirty.txt"), "uncommitted\n");
+  const RUN = "20261117T035443Z";
+  it("removes a ticket's pipeline worktrees and prunes git's entry", async () => {
+    g(repo, "worktree", "add", "-q", "-b", "TARS-1-dev", join(wt, `TARS-1-${RUN}`));
+    await mkdir(join(wt, `TARS-1-${RUN}-baseline`));
+    g(repo, "worktree", "add", "-q", "-b", "TARS-10-dev", join(wt, `TARS-10-${RUN}`));
+    await writeFile(join(wt, `TARS-1-${RUN}`, "dirty.txt"), "uncommitted\n");
     const [s] = await surveyAll(ctx());
-    expect(s).toMatchObject({ found: "TARS-1-dev, TARS-1-old", action: "remove 2 + prune" });
+    expect(s).toMatchObject({ found: `TARS-1-${RUN}, TARS-1-${RUN}-baseline`, action: "remove 2 + prune" });
     await s.run!();
-    expect(await exists(join(wt, "TARS-1-dev"))).toBe(false);
-    expect(await exists(join(wt, "TARS-1-old"))).toBe(false);
-    expect(await exists(join(wt, "TARS-10-dev"))).toBe(true);
+    expect(await exists(join(wt, `TARS-1-${RUN}`))).toBe(false);
+    expect(await exists(join(wt, `TARS-1-${RUN}-baseline`))).toBe(false);
+    expect(await exists(join(wt, `TARS-10-${RUN}`))).toBe(true);
     const list = g(repo, "worktree", "list", "--porcelain");
-    expect(list).not.toContain(join(wt, "TARS-1-dev"));
-    expect(list).toContain(join(wt, "TARS-10-dev"));
+    expect(list).not.toContain(join(wt, `TARS-1-${RUN}`) + "\n");
+    expect(list).toContain(join(wt, `TARS-10-${RUN}`));
     expect((await surveyAll(ctx()))[0]).toEqual({ found: "none", action: null });
   });
 
+  it("lists every worktree it will remove in details, one per line, full name", async () => {
+    for (const sfx of ["", "-ground", "-baseline"]) await mkdir(join(wt, `TARS-1-${RUN}${sfx}`));
+    const [s] = await surveyAll(ctx());
+    expect(s.action).toBe("remove 3 + prune");
+    expect(s.details).toEqual([`remove TARS-1-${RUN}`, `remove TARS-1-${RUN}-baseline`, `remove TARS-1-${RUN}-ground`]);
+  });
+
+  it("never removes a person's own worktree; reports it as needs you", async () => {
+    g(repo, "worktree", "add", "-q", "-b", "TARS-1-okta", join(wt, "TARS-1-okta-spike"));
+    await mkdir(join(wt, "TARS-1-notes"));
+    g(repo, "worktree", "add", "-q", "-b", "TARS-1-dev", join(wt, `TARS-1-${RUN}`));
+    await mkdir(join(wt, `TARS-1-${RUN}-ground`));
+    await mkdir(join(wt, `TARS-1-${RUN}-fu`));
+    const [s] = await surveyAll(ctx());
+    expect(s).toMatchObject({ action: "remove 3 + prune" });
+    expect(s.needsYou).toBeUndefined();
+    expect(s.details).toEqual([
+      `remove TARS-1-${RUN}`, `remove TARS-1-${RUN}-fu`, `remove TARS-1-${RUN}-ground`,
+      "needs you: TARS-1-notes is not a pipeline worktree", "needs you: TARS-1-okta-spike is not a pipeline worktree",
+    ]);
+    await s.run!();
+    expect(await exists(join(wt, "TARS-1-okta-spike"))).toBe(true);
+    expect(await exists(join(wt, "TARS-1-notes"))).toBe(true);
+    expect(await exists(join(wt, `TARS-1-${RUN}`))).toBe(false);
+    expect(await exists(join(wt, `TARS-1-${RUN}-ground`))).toBe(false);
+    expect(g(repo, "worktree", "list", "--porcelain")).toContain(join(wt, "TARS-1-okta-spike"));
+    const after = (await surveyAll(ctx()))[0];
+    expect(after).toMatchObject({ action: null, needsYou: "TARS-1-notes, TARS-1-okta-spike: not a pipeline worktree" });
+    expect(after.run).toBeUndefined();
+  });
+
   it("ignores a ticket-named worktree outside .claude/worktrees", async () => {
-    g(repo, "worktree", "add", "-q", "-b", "TARS-1-elsewhere", join(tmp, "TARS-1-elsewhere"));
+    g(repo, "worktree", "add", "-q", "-b", "TARS-1-elsewhere", join(tmp, `TARS-1-${RUN}`));
     const [s] = await surveyAll(ctx());
     expect(s).toEqual({ found: "none", action: null });
   });
 
   it("research scope only removes -ground worktrees", async () => {
-    g(repo, "worktree", "add", "-q", "-b", "TARS-1-ground", join(wt, "TARS-1-ground"));
-    g(repo, "worktree", "add", "-q", "-b", "TARS-1-dev", join(wt, "TARS-1-dev"));
+    g(repo, "worktree", "add", "-q", "--detach", join(wt, `TARS-1-${RUN}-ground`));
+    g(repo, "worktree", "add", "-q", "-b", "TARS-1-dev", join(wt, `TARS-1-${RUN}`));
     const s = await surveyAll(ctx({ role: "research" }));
-    expect(s[0]).toMatchObject({ found: "TARS-1-ground", action: "remove 1 + prune" });
+    expect(s[0]).toMatchObject({ found: `TARS-1-${RUN}-ground`, action: "remove 1 + prune" });
     expect(s[1]).toEqual({ found: "-", action: null });
     expect(s[2]).toEqual({ found: "-", action: null });
     await s[0].run!();
-    expect(await exists(join(wt, "TARS-1-ground"))).toBe(false);
-    expect(await exists(join(wt, "TARS-1-dev"))).toBe(true);
+    expect(await exists(join(wt, `TARS-1-${RUN}-ground`))).toBe(false);
+    expect(await exists(join(wt, `TARS-1-${RUN}`))).toBe(true);
     const dev = await surveyAll(ctx({ role: "dev" }));
-    expect(dev[0]).toMatchObject({ found: "TARS-1-dev", action: "remove 1 + prune" });
+    expect(dev[0]).toMatchObject({ found: `TARS-1-${RUN}`, action: "remove 1 + prune" });
   });
 
   it("deletes a 0-ahead local-only branch", async () => {
@@ -137,7 +169,11 @@ describe("git reset steps", () => {
     g(repo, "branch", "TARS-1-a");
     await commitOn("TARS-1-b");
     const s = (await surveyAll(ctx()))[1];
-    expect(s).toMatchObject({ found: "TARS-1-a (0 ahead), TARS-1-b (1 unpushed)", action: "delete 1", details: ["needs you: TARS-1-b has 1 unpushed commit(s)"] });
+    expect(s).toMatchObject({
+      found: "TARS-1-a (0 ahead), TARS-1-b (1 unpushed)",
+      action: "delete 1",
+      details: ["delete TARS-1-a (0 ahead)", "keep TARS-1-b (1 unpushed)", "needs you: TARS-1-b has 1 unpushed commit(s)"],
+    });
     expect(s.needsYou).toBeUndefined();
     await s.run!();
     expect(branches().sort()).toEqual(["TARS-1-b", "master"]);
@@ -182,7 +218,7 @@ describe("git reset steps", () => {
     g(repo, "branch", "TARS-10-a");
     g(repo, "branch", "TARS-10-p");
     g(repo, "push", "-q", "origin", "TARS-10-p");
-    g(repo, "worktree", "add", "-q", "-b", "TARS-10-dev", join(wt, "TARS-10-dev"));
+    g(repo, "worktree", "add", "-q", "-b", "TARS-10-dev", join(wt, `TARS-10-${RUN}`));
     const s = await surveyAll(ctx({ openPrHeads: async () => [{ head: "TARS-10-p", url: "https://x/pull/10" }] }));
     expect(s[0]).toEqual({ found: "none", action: null });
     expect(s[1]).toEqual({ found: "none", action: null });
