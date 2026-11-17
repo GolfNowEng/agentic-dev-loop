@@ -84,7 +84,11 @@ export function localSteps(ctx: ResetCtx): ResetStep[] {
       const rel = v2RunsLog(ctx.slug);
       const path = ctx.root === undefined ? resolveRepoPath(rel) : resolve(ctx.root, rel);
       const age = recentlyEnded(await readIterations(path), ctx.now(), DEFAULT_RECENT_WINDOW_MS).get(ctx.ticket);
-      return { found: age === undefined ? "none" : `held (ended ${Math.floor(age / 1000)}s ago)`, action: null };
+      if (age === undefined) return { found: "none", action: null };
+      // Not at zero while held: the ticket is off the poll. Archiving the
+      // record (run records row) lifts it, so the verify pass reads clean.
+      const left = Math.max(1, Math.ceil((DEFAULT_RECENT_WINDOW_MS - age) / 1000));
+      return { found: `held (ended ${Math.floor(age / 1000)}s ago)`, action: null, needsYou: `held for ${left}s more by the recent-window hold` };
     },
   };
 

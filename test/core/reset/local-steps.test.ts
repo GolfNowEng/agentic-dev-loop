@@ -110,7 +110,9 @@ describe("local reset steps", () => {
     await put(root, `runs/v2/${P}.jsonl`, rec("TARS-1", [phase("dev")], { ended, jira_status_changed: true }) + "\n");
     const c = ctx();
     const { s } = await surveyAll(c);
-    expect(s[3]).toEqual({ found: "held (ended 45s ago)", action: null });
+    // 120s hold, ended 45.5s ago: 74.5s left, rounded up.
+    expect(s[3]).toEqual({ found: "held (ended 45s ago)", action: null, needsYou: "held for 75s more by the recent-window hold" });
+    expect(s[3].run).toBeUndefined();
     await s[0].run!();
     expect((await surveyAll(c)).s[3]).toEqual({ found: "none", action: null });
   });
