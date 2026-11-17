@@ -53,6 +53,16 @@ describe("hostPush", () => {
     expect(spawned[0].prompt).toContain("TARS-1: do it");
     expect(spawned[0].prompt).toContain("Body line\n- item");
     expect(spawned[0].prompt).toContain("--no-jira");
+    // gh must target the project's repo, not whatever repo the agent's cwd is in (TARS-1634 live run).
+    expect(spawned[0].env.GH_REPO).toBe("o/r");
+  });
+
+  it("a failure after the spawn says whether the branch reached origin", async () => {
+    const { d } = mk({ pr: null });
+    const git0 = d.git;
+    d.git = async (args, cwd) => (args[0] === "ls-remote" ? "abc\trefs/heads/TARS-1-x\n" : git0(args, cwd));
+    const r = await hostPush("TARS-1", "20261117T090121Z", ready, d);
+    expect(r).toMatchObject({ ok: false, pushed: true });
   });
 
   it("uses the renamed branch for the PR lookup", async () => {

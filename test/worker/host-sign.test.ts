@@ -186,6 +186,14 @@ describe.skipIf(!hasKeygen)("signUnpushed", () => {
     expect(await g("rev-parse", "HEAD")).toBe(old);
   });
 
+  it("a pushed branch already at its origin tip needs no signing (a retry after a PR failure)", async () => {
+    await commit("a", "one");
+    await g("push", "-q", "origin", "X-1-a");
+    const tip = await g("rev-parse", "HEAD");
+    const r = await signUnpushed(args());
+    expect(r).toEqual({ ok: true, base: tip, oldTip: tip, newTip: tip, signed: 0 });
+  });
+
   it("nothing to sign", async () => {
     const r = await signUnpushed(args());
     expect(r).toEqual({ ok: false, reason: "nothing to sign on X-1-a", restored: false });

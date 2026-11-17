@@ -46,7 +46,12 @@ export async function signUnpushed(a: SignArgs): Promise<SignResult> {
     }
 
     const shas = lines(await run("rev-list", `${base}..HEAD`));
-    if (shas.length === 0) return fail(`nothing to sign on ${branch}`);
+    if (shas.length === 0) {
+      // Already pushed and nothing new on top: those commits went through this
+      // signing before (a retry after the PR step failed). Nothing to rewrite.
+      if (pushed) return { ok: true, base, oldTip: base, newTip: base, signed: 0 };
+      return fail(`nothing to sign on ${branch}`);
+    }
     const merges = lines(await run("rev-list", "--merges", `${base}..HEAD`));
     if (merges.length > 0) return fail(`${merges[0]} is a merge commit; refusing to rewrite`);
     const unpushed = new Set(lines(await run("rev-list", "HEAD", "--not", "--remotes=origin")));

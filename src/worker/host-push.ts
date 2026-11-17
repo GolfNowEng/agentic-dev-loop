@@ -27,7 +27,7 @@ export interface HostPushDeps {
 
 export type HostPushResult =
   | { ok: true; pr: string; branch: string; signed: number; oldTip: string; newTip: string; costUsd: number }
-  | { ok: false; detail: string; costUsd: number; /** Current branch, once known. */ branch?: string; /** Pre-sign tip, once signed. */ oldTip?: string };
+  | { ok: false; detail: string; costUsd: number; /** Current branch, once known. */ branch?: string; /** Pre-sign tip, once signed. */ oldTip?: string; /** True when the branch is on origin (checked after the spawn). */ pushed?: boolean };
 
 /** A rebase over many commits runs every commit's hooks; give the worktree git calls room. */
 export const WT_GIT_TIMEOUT_MS = 60 * 60 * 1000;
@@ -92,10 +92,12 @@ export async function hostPush(ticketKey: string, runId: string, ready: ReadyToP
   let cost = 0;
   let branch: string | undefined;
   let oldTip: string | undefined;
+  let pushed: boolean | undefined;
   const fail = (detail: string): HostPushResult => ({
     ok: false, detail, costUsd: cost,
     ...(branch ? { branch } : {}),
     ...(oldTip ? { oldTip } : {}),
+    ...(pushed !== undefined ? { pushed } : {}),
   });
   const wtGit: GitFn = (args, cwd) => d.run("direnv", ["exec", wt, "git", ...args], cwd, WT_GIT_TIMEOUT_MS);
   let added = false;
@@ -149,7 +151,9 @@ export async function hostPush(ticketKey: string, runId: string, ready: ReadyToP
       stream: d.stream,
       ticketKey,
       rawUsagePath: d.usagePath,
-      env: d.env,
+      // The spawn's cwd is dev-loop's root (for its hooks), so a bare `gh` would
+      // target dev-loop's own GitHub repo. GH_REPO points every gh call at the project.
+      env: { ...d.env, GH_REPO: d.githubRepo },
       cwd: d.repoRoot,
       logPrefix: "host-push",
     });
@@ -159,6 +163,8 @@ export async function hostPush(ticketKey: string, runId: string, ready: ReadyToP
     try { head = (await d.git(["rev-parse", "--abbrev-ref", "HEAD"], wt)).trim(); }
     catch (e) { return fail(`could not read branch in ${wt}: ${firstLine(e)}`); }
     branch = head;
+    // A fact for the bounce message: did the push reach origin even if the PR step failed?
+    pushed = await d.git(["ls-remote", "--heads", "origin", head], d.repoDir).then((o) => o.trim() !== "", () => undefined);
 
     const pr = await d.findOpenPrUrlForBranch(head);
     if (!pr) return fail(`push-branch did not leave an open PR for ${head}: ${resultText(res.stdout).slice(0, 300)}`);

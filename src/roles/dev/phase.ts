@@ -82,7 +82,11 @@ export async function runDevPhase(ticket: JiraTicket, deps: DevPhaseDeps): Promi
               outcome: "bounced",
               failure_category: "env_setup",
               pr: null,
-              detail: `host push failed: ${res.detail}. Work committed locally on ${res.branch ?? ready.branch}, not pushed.${res.oldTip ? ` Pre-sign tip ${res.oldTip.slice(0, 7)}.` : ""}`,
+              detail: `host push failed: ${res.detail}. ${
+                res.pushed
+                  ? `Branch ${res.branch ?? ready.branch} is pushed to origin (signed); no PR yet.`
+                  : `Work committed locally on ${res.branch ?? ready.branch}, not pushed.`
+              }${res.oldTip ? ` Pre-sign tip ${res.oldTip.slice(0, 7)}.` : ""}`,
             };
       }
     } else {

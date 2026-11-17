@@ -460,6 +460,12 @@ describe("runDevPhase ready_to_push", () => {
     expect(entry.detail).toBe("host push failed: no PR. Work committed locally on feat/PROJ-1-x, not pushed. Pre-sign tip ccccccc.");
   });
 
+  it("a failure after the push says the branch IS on origin (never 'not pushed')", async () => {
+    const hostPush = vi.fn(async () => ({ ok: false as const, detail: "no PR", costUsd: 0, branch: "PROJ-1-x", oldTip: "cccccccdddd", pushed: true }));
+    const entry = await runDevPhase(makeTicket(), makeDeps({ runSkill: skillReturning(rtp()), hostPush }));
+    expect(entry.detail).toBe("host push failed: no PR. Branch PROJ-1-x is pushed to origin (signed); no PR yet. Pre-sign tip ccccccc.");
+  });
+
   it("without hostPush is an agent_error and writes nothing to Jira", async () => {
     const deps = makeDeps({ runSkill: skillReturning(rtp()) });
     const entry = await runDevPhase(makeTicket(), deps);
