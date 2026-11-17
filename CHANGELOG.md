@@ -19,6 +19,14 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[core]` sbx preflight: the GitHub check failed about 3 times in 11 inside
+  the sandbox (a garbled `gh api` reply, `git` exit 128, a cut-off exec,
+  each after ~12 s; the host never failed), and the error showed direnv's
+  "loading .envrc" line, not the real one. An undiagnosed GitHub-step
+  failure is now retried up to 3 times, 2 s apart, with a note per retry; a
+  blocked host, missing repo or SSH problem still fails at once. Errors
+  skip direnv's status lines and ANSI codes, and say "exit N, no error
+  output" when there is nothing else.
 - `[core]` `[hooks]` sbx: the sandboxed agent's Atlassian tools are named
   `mcp__mcp-gateway__*` with Atlassian's v2 names, but the allowlist only
   named `mcp__atlassian__*`, so the second TARS-1634 run was denied
