@@ -35,11 +35,13 @@ Optional:
 - `--ignore-live-worker` — a real reset refuses while a live worker holds
   a session lock for the project; this overrides that. Prefer stopping the
   worker instead.
-- `--dry-run` (print the plans, act on nothing), `--yes` (skip the
-  confirmation: the whole-project gate, or the per-ticket `Proceed?` prompt),
+- `--dry-run` — print the plans, act on nothing.
+- `--yes` — skip the confirmation: the whole-project gate, or the per-ticket
+  `Proceed?` prompt.
 - `--sandbox=<name>` — also survey that sandbox adapter's leftovers
-  (requires `--ticket`), `--close-remote` (see below — requires
-  `--ticket`, refused for a whole-project reset).
+  (requires `--ticket`).
+- `--close-remote` — see below. Requires `--ticket`; refused for a
+  whole-project reset.
 
 ## Per-ticket reset is a checklist (agents: read this first)
 
@@ -88,12 +90,28 @@ A **per-ticket** reset also changes the ticket's Jira status (to the research
 trigger status) and its pipeline label (research trigger for `all`/`research`,
 handoff label for `dev`), deletes the comments the loop posted (a loop prefix
 from `LOOP_COMMENT_PREFIXES` AND created inside a recorded run window, with
-2 minutes slack), removes worktrees and local branches that are not pushed,
-have no open PR and are 0 ahead, and removes the ticket's leftover sandboxes
-(every adapter selected or with a sub-block in `config.sandbox`, plus
-`--sandbox=<name>`). It never deletes pushed branches, PRs, follow-up tickets,
-the mirror Issue or a person's comment, and never touches another ticket's or
-project's data. Without Jira credentials those rows say `needs you`.
+2 minutes slack), removes the pipeline's own worktrees and local branches that
+are not pushed, have no open PR and are 0 ahead, and removes the ticket's
+leftover sandboxes (every adapter selected or with a sub-block in
+`config.sandbox`, plus `--sandbox=<name>`). Its Jira rows run comments, then
+label, then status; the status move (which makes the ticket pollable) is
+skipped when an earlier Jira row failed. It never deletes pushed branches,
+PRs, follow-up tickets, the mirror Issue or a person's comment, never fetches,
+and never touches another ticket's or project's data. Without Jira credentials
+the Jira and GitHub rows say `needs you`.
+
+Rows that say `needs you` and that you must hand to the user, not fix by hand:
+
+- **mirror Issue** `close #<n> as not planned`: an open (or closed-completed)
+  mirror Issue would be reused by the next research run with the old comments
+  on it. The user closes it as not planned on GitHub; reset never does.
+- **worktrees** `<name> is not a pipeline worktree`: a `<TICKET>-*` worktree
+  the pipeline did not make (only `<TICKET>-<RUN_ID>` and its `-ground`,
+  `-baseline`, `-fu` variants are). It is the user's own; never remove it.
+- **local branches** `origin/<base> not fetched locally; run git fetch`: the
+  user fetches in the target repo, then reruns.
+- **recent-window hold** `held for <N>s more`: archiving the records lifts it,
+  so it normally clears in the verify pass.
 `--close-remote` replaces the Jira rows with close rows, under the same
 approval.
 
