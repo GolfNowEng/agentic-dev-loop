@@ -67,8 +67,60 @@ describe("jira reset steps", () => {
   const steps = (c: ResetCtx, w: RunWindow[] = [researchWin, devWin]): ResetStep[] => jiraSteps(c, async () => w);
   const step = (c: ResetCtx, name: string, w?: RunWindow[]): ResetStep => steps(c, w).find((s) => s.name === name)!;
 
-  it("names the four steps in order", () => {
-    expect(steps(ctx()).map((s) => [s.area, s.name])).toEqual([["jira", "status"], ["jira", "label"], ["jira", "loop comments"], ["jira", "follow-up tickets"]]);
+  it("names the four steps in order: status last of the acting rows", () => {
+    expect(steps(ctx()).map((s) => [s.area, s.name])).toEqual([["jira", "loop comments"], ["jira", "label"], ["jira", "status"], ["jira", "follow-up tickets"]]);
+  });
+
+  const pass = async (ss: ResetStep[]): Promise<Survey[]> => {
+    const out: Survey[] = [];
+    for (const st of ss) out.push(await st.survey());
+    return out;
+  };
+
+  it("a failed comment delete skips the status move this pass; a fresh survey re-arms it", async () => {
+    jira.add("1", BASE + 60_000, "✅ research-loop - refined");
+    jira.refuse.set("1", 500);
+    const ss = steps(ctx());
+    const [c, l, st] = await pass(ss);
+    await expect(c.run!()).rejects.toThrow("could not delete");
+    await l.run!();
+    await expect(st.run!()).rejects.toThrow("skipped: an earlier Jira step failed");
+    expect(jira.writes).not.toContain(`transitionStatus TARS-1 ${TODO}`);
+    expect(jira.status).toBe("In Progress");
+    jira.refuse.delete("1");
+    const again = await pass(ss);
+    expect(again[0]).toMatchObject({ needsYou: expect.stringContaining("could not delete") });
+    jira.comments = [];
+    const third = await pass(ss);
+    await third[1].run?.();
+    await third[2].run!();
+    expect(jira.status).toBe(TODO);
+  });
+
+  it("a failed label swap skips the status move", async () => {
+    jira.swapLabel = async () => { throw new Error("label 400"); };
+    const [, l, st] = await pass(steps(ctx()));
+    await expect(l.run!()).rejects.toThrow("label 400");
+    await expect(st.run!()).rejects.toThrow("skipped: an earlier Jira step failed");
+    expect(jira.status).toBe("In Progress");
+  });
+
+  it("a comments survey that threw, or a comments row that needs you, skips the status move", async () => {
+    const list = jira.listComments.bind(jira);
+    jira.listComments = async () => { throw new Error("jira 503"); };
+    const ss = steps(ctx());
+    await expect(ss[0].survey()).rejects.toThrow("jira 503");
+    await (await ss[1].survey()).run?.();
+    await expect((await ss[2].survey()).run!()).rejects.toThrow("skipped: an earlier Jira step failed");
+    expect(jira.status).toBe("In Progress");
+    jira.listComments = list;
+    jira.add("1", BASE + 60_000, "✅ research-loop - refined");
+    jira.refuse.set("1", 403);
+    await expect((await ss[0].survey()).run!()).rejects.toThrow();
+    const [c, , st] = await pass(ss);
+    expect(c.needsYou).toMatch(/could not delete/);
+    await expect(st.run!()).rejects.toThrow("skipped: an earlier Jira step failed");
+    expect(jira.status).toBe("In Progress");
   });
 
   it("deletes an in-window research comment", async () => {
