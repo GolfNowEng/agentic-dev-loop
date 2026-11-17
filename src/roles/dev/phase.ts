@@ -8,7 +8,7 @@
 
 import type { JiraClient, JiraTicket } from "../../core/jira-client.ts";
 import type { GitHubClient } from "../../core/github-client.ts";
-import type { DevView, ExecutorVerdict } from "../../core/types.ts";
+import type { DevView, ExecutorVerdict, Verdict } from "../../core/types.ts";
 import type { PhaseEntry } from "../../core/iteration-log.ts";
 import type { RunSkillFn, RunSkillResult } from "../../core/run-skill.ts";
 import { errorMessage } from "../../core/run-skill.ts";
@@ -50,10 +50,16 @@ export async function runDevPhase(ticket: JiraTicket, deps: DevPhaseDeps): Promi
   const { jira, github, view, session } = deps;
 
   let result: RunSkillResult;
-  let verdict: ExecutorVerdict;
+  let verdict: ExecutorVerdict & Verdict;
   try {
     result = await deps.runSkill({ role: "dev", ticketKey: ticket.key, runDir: deps.runDir, maxBudgetUsd: deps.maxBudgetUsd });
-    verdict = parseVerdict(result.verdictRaw, "executor");
+    const parsed = parseVerdict(result.verdictRaw, "executor");
+    // Temporary (Task 5 replaces): no host push exists yet, so keep the logged
+    // outcome a RunOutcome.
+    verdict =
+      parsed.outcome === "ready_to_push"
+        ? agentErrorVerdict("ready_to_push but this run has no host push (push=host was not given)")
+        : (parsed as ExecutorVerdict & Verdict);
   } catch (err) {
     const at = deps.now().toISOString();
     result = { verdictRaw: undefined, started: at, ended: at, costUsd: 0, tokens: { in: 0, out: 0 }, skillVersion: "", model: "" };

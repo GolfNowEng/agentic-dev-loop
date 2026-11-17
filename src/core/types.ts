@@ -176,6 +176,13 @@ export interface Verdict {
   size_trajectory?: SizeTrajectory;
 }
 
+/** What a sandboxed dev run hands the host so it can sign, push and open the PR. */
+export interface ReadyToPush {
+  branch: string;
+  pr_title: string;
+  pr_body: string;
+}
+
 /**
  * The verdict shape ticket-to-pr (the executor role) always writes, and
  * what parseVerdict(raw, "executor") guarantees: a RunOutcome (never
@@ -183,8 +190,10 @@ export interface Verdict {
  * unconditionally -- e.g. `verdict.pr !== null` decides the bounce branch,
  * so a missing `pr` must be an agent_error, never silently `undefined`.
  */
-export interface ExecutorVerdict extends Verdict {
-  outcome: RunOutcome;
+export interface ExecutorVerdict extends Omit<Verdict, "outcome"> {
+  outcome: RunOutcome | "ready_to_push";
+  /** Set only when outcome is "ready_to_push"; the host loop signs and pushes. */
+  ready_to_push?: ReadyToPush;
   red_confirmed: boolean;
   verify_loops: number;
   retries: number;

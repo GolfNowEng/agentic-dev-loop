@@ -1,4 +1,4 @@
-import type { CodeReviewFieldsConfig, Verdict } from "../../core/types.ts";
+import type { CodeReviewFieldsConfig, ExecutorVerdict, Verdict } from "../../core/types.ts";
 
 /**
  * Build the QA-notes Atlassian Document (ADF) for Jira's QA Notes field
@@ -22,7 +22,7 @@ import type { CodeReviewFieldsConfig, Verdict } from "../../core/types.ts";
  * a real transition attempt -- so this always returns a full ADF doc, not
  * a string.
  */
-export function buildQaNotesAdf(verdict: Verdict): Record<string, unknown> {
+export function buildQaNotesAdf(verdict: Verdict | ExecutorVerdict): Record<string, unknown> {
   if (verdict.qa_notes && verdict.qa_notes.length > 0) {
     return {
       type: "doc",
@@ -89,7 +89,7 @@ function qaNoteStepContent(step: string): Array<Record<string, unknown>> {
  * convention has always used the bare category name and this change
  * doesn't alter that, only the leading icon+repo-name prefix).
  */
-export function buildBounceCommentAdf(verdict: Verdict, session?: string): Record<string, unknown> {
+export function buildBounceCommentAdf(verdict: Verdict | ExecutorVerdict, session?: string): Record<string, unknown> {
   return withSessionSuffix(
     {
       type: "doc",

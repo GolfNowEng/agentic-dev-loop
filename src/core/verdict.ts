@@ -44,11 +44,16 @@ const VALID_PHASES: PhaseReached[] = [
 const VALID_TSHIRTS: TShirtSize[] = ["S", "M", "L", "XL"];
 const VALID_DELTAS: SizeDelta[] = ["grew", "shrank", "unchanged"];
 
-function isValidVerdictShape(value: unknown): value is Verdict {
+function isValidVerdictShape(value: unknown, extraOutcome?: string): value is Verdict | ExecutorVerdict {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
 
-  if (!VERDICT_OUTCOMES.includes(v.outcome as VerdictOutcome)) return false;
+  if (
+    !VERDICT_OUTCOMES.includes(v.outcome as VerdictOutcome) &&
+    !(extraOutcome !== undefined && v.outcome === extraOutcome)
+  ) {
+    return false;
+  }
   if (!VALID_PHASES.includes(v.phase_reached as PhaseReached)) return false;
   if (v.failure_category !== null && typeof v.failure_category !== "string") {
     return false;
@@ -58,8 +63,23 @@ function isValidVerdictShape(value: unknown): value is Verdict {
   return true;
 }
 
-function isValidExecutorShape(v: Verdict): v is ExecutorVerdict {
-  if (!RUN_OUTCOMES.includes(v.outcome as RunOutcome)) return false;
+const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+function isValidReadyToPush(v: Record<string, unknown>): boolean {
+  const { branch, pr_title, pr_body } = v;
+  if (typeof branch !== "string" || !BRANCH_NAME.test(branch) || branch.includes("..")) return false;
+  return (
+    typeof pr_title === "string" && pr_title.length > 0 &&
+    typeof pr_body === "string" && pr_body.length > 0
+  );
+}
+
+function isValidExecutorShape(v: Verdict | ExecutorVerdict): v is ExecutorVerdict {
+  if (v.outcome === "ready_to_push") {
+    if (!isValidReadyToPush(v as unknown as Record<string, unknown>)) return false;
+  } else if (!RUN_OUTCOMES.includes(v.outcome as RunOutcome)) {
+    return false;
+  }
   if (typeof v.red_confirmed !== "boolean") return false;
   if (typeof v.verify_loops !== "number") return false;
   if (typeof v.retries !== "number") return false;
@@ -114,7 +134,7 @@ export function parseSizeTrajectory(value: unknown): SizeTrajectory | null {
  * identical shape. It carries every executor field (zeroed), so it is a
  * valid result for both profiles.
  */
-export function agentErrorVerdict(detail: string): ExecutorVerdict {
+export function agentErrorVerdict(detail: string): ExecutorVerdict & Verdict {
   return {
     outcome: "error",
     phase_reached: "intake",
@@ -142,7 +162,7 @@ export function parseVerdict(raw: string | null | undefined, profile: "executor"
 export function parseVerdict(
   raw: string | null | undefined,
   profile: VerdictProfile,
-): Verdict {
+): Verdict | ExecutorVerdict {
   if (raw === null || raw === undefined) {
     return agentErrorVerdict("verdict.json was missing");
   }
@@ -157,7 +177,7 @@ export function parseVerdict(
   // Fail closed: anything but an explicit "refine" (including a missing
   // profile from an untyped caller) gets the strict executor check.
   if (
-    !isValidVerdictShape(parsed) ||
+    !isValidVerdictShape(parsed, profile === "refine" ? undefined : "ready_to_push") ||
     (profile !== "refine" && !isValidExecutorShape(parsed))
   ) {
     return agentErrorVerdict(
@@ -169,7 +189,11 @@ export function parseVerdict(
   // a malformed trajectory must never flip outcome to "error". Sanitize
   // it here, at the parse boundary, so nothing downstream (RunLogLine
   // carry-over, runs.jsonl) ever sees an unvalidated value.
-  const verdict = parsed;
+  const verdict = parsed as ExecutorVerdict;
+  if (verdict.outcome === "ready_to_push") {
+    const raw = parsed as unknown as Record<string, string>;
+    verdict.ready_to_push = { branch: raw.branch!, pr_title: raw.pr_title!, pr_body: raw.pr_body! };
+  }
   if (verdict.size_trajectory !== undefined) {
     const sanitized = parseSizeTrajectory(verdict.size_trajectory);
     if (sanitized === null) {
@@ -203,7 +227,7 @@ export async function readVerdictFile(path: string, profile: "executor"): Promis
 export async function readVerdictFile(
   path: string,
   profile: VerdictProfile,
-): Promise<Verdict> {
+): Promise<Verdict | ExecutorVerdict> {
   let raw: string;
   try {
     raw = await readFile(path, "utf8");
