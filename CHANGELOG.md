@@ -19,14 +19,50 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[core]` reset-project, per ticket, is a checklist: it surveys local files,
+  git, Jira, GitHub and the sandbox adapters, prints one table, asks
+  `Proceed? [y/N]` once (`--yes` when there is no terminal), runs the rows
+  (sandbox, git, local, Jira/GitHub), then prints `Ran` and `After reset`
+  tables and ends `<KEY> is at zero` or the steps that need you. It now also
+  resets the Jira status and label and deletes the loop's own comments (a
+  loop prefix AND created inside a recorded run window), removes unpushed
+  stale worktrees and branches, and removes leftover sandboxes of every
+  configured adapter (`--sandbox=<name>` adds one). Both reset scripts load
+  the env file; without credentials the Jira/GitHub rows say needs you. The
+  reset-project skill tells agents to `--dry-run`, show the table, and rerun
+  with `--yes` only after a yes. Whole-project reset is unchanged. Docs:
+  `docs/reset.md`.
+- `[core]` reset-project's "at zero" is stricter and safer (final review).
+  A mirror Issue research would reuse is `needs you: close #<n> as not
+  planned`. Only pipeline-made worktrees (`<KEY>-<RUN_ID>` and its `-ground`,
+  `-baseline`, `-fu` variants) are ever removed, by any reset path; a
+  person's own `<KEY>-*` worktree is reported, never removed. Worktree and
+  branch rows list every item in their detail lines. The branch check never
+  fetches and counts commits ahead of origin's `ls-remote` sha. The Jira rows
+  run comments, label, then status, and the status move is skipped when an
+  earlier Jira row failed. The attempt-cap comment is found for both roles.
+  ADF emoji nodes count in a comment's first line. A held ticket is
+  `needs you`. The status move runs after every other row and is held when
+  any row needs you, errored or failed (e.g. a mirror Issue still open), so a
+  half-reset ticket never goes back on the poll.
+- `[core]` The "recently ended" poll hold is now 2 minutes (was 10) and only
+  follows a run that changed the ticket's Jira status (`jira_status_changed`
+  on the record). A skipped ticket logs `[worker] <KEY> skipped: a run on it
+  ended <N>s|<M>m ago`.
+- `[research]` A mirror Issue closed as "not planned" (what a reset leaves) is
+  never reused. `main.ts` opens a fresh Issue whose body ends with
+  `Previous attempt: #<n>` lines, and ticket-refine Step 0.5 reads the old
+  Issue's comments as prior context only: an unverified claim, never a
+  re-pickup trigger.
 - `[core]` A dropped resume no longer ends the iteration. After a dev reset
   put TARS-1634 back in To Do, the dead session lock still named its old dev
   run; the next `--once` start adopted it, dropped the resume (status no
   longer In Progress) and exited without polling. A `resume-dropped` is
   bookkeeping only, so the worker now resolves every stale resume and goes
   on to poll in the same iteration. It also no longer puts the ticket in the
-  10-minute "recently ended" hold (that hold covers Jira's index lag after a
-  write, and a dropped resume writes nothing), which kept the rerun idle.
+  "recently ended" hold (that hold covers Jira's index lag after a status
+  write, and a dropped resume writes nothing), which kept the rerun idle. The
+  hold has since been cut to 2 minutes and to status-changing runs only.
 - `[core]` reset-project clears a dead session lock's in-flight entry for
   the reset ticket and role (so a reset run isn't "resumed"), and runs
   `git worktree prune` after deleting worktrees (the branch was otherwise

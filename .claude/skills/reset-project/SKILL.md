@@ -1,6 +1,6 @@
 ---
 name: reset-project
-description: Deterministically wipe this repo's own v2 pipeline state (one role or both) for one ticket, or an entire project, so it can be re-run from scratch. Local reset never touches Jira/GitHub/git history; the optional --close-remote flag additionally closes the real Jira ticket, its mirror GitHub Issue, and any open PR -- see the confirmation-first policy below before ever passing it.
+description: Deterministically take one ticket (one role or both) back to zero, or wipe a whole project's v2 state, so it can be re-run from scratch. A per-ticket reset is a surveyed checklist (local, git, Jira, GitHub, sandbox) with one approval; run --dry-run first and show the user the table. The optional --close-remote flag closes the real Jira ticket, its mirror GitHub Issue, and any open PR -- see the confirmation-first policy below before ever passing it.
 ---
 
 # reset-project
@@ -35,9 +35,36 @@ Optional:
 - `--ignore-live-worker` — a real reset refuses while a live worker holds
   a session lock for the project; this overrides that. Prefer stopping the
   worker instead.
-- `--dry-run` (print the plans, act on nothing), `--yes` (skip the
-  whole-project confirmation gate), `--close-remote` (see below — requires
-  `--ticket`, refused for a whole-project reset).
+- `--dry-run` — print the plans, act on nothing.
+- `--yes` — skip the confirmation: the whole-project gate, or the per-ticket
+  `Proceed?` prompt.
+- `--sandbox=<name>` — also survey that sandbox adapter's leftovers
+  (requires `--ticket`).
+- `--close-remote` — see below. Requires `--ticket`; refused for a
+  whole-project reset.
+
+## Per-ticket reset is a checklist (agents: read this first)
+
+With `--ticket`, the script surveys everything (local files, git, Jira,
+GitHub, sandbox), prints one table, asks `Proceed? [y/N]`, runs the rows in
+order (sandbox, git, local, Jira/GitHub), then prints `Ran` and `After reset`
+tables and ends with `[reset] <KEY> is at zero.` or the steps that need the
+human. It resets the ticket's Jira status and label and deletes the loop's own
+comments too, so it is no longer local-only. The step table and safety rules
+are in `docs/reset.md`.
+
+**Agent procedure.** Your shell has no terminal, so the prompt cannot be
+answered and a real run without `--yes` exits 1.
+
+1. Run `--dry-run` first. It changes nothing.
+2. Show the user the table in chat. Say which rows act (Jira status, label,
+   comment deletions, branch and sandbox removals) and which say `needs you`.
+3. Only after the user says yes in chat, rerun the same command with `--yes`.
+4. Report the final line. If it lists steps that need the user, say so; do
+   not work around them by hand.
+
+Exit codes: dry-run, declined and already-at-zero 0; no terminal without
+`--yes` 1; live worker refusal 1; after execute 0 only when at zero.
 
 ## What this is for
 
@@ -54,14 +81,39 @@ remote close" cases correctly, with test coverage
 (`test/core/reset-project.test.ts`, `test/core/reset-cli.test.ts`,
 `test/core/remote-close.test.ts`) backing every guarantee.
 
-## Local reset: what it does and does not do
+## What a reset does and does not do
 
-Local reset (no `--close-remote`) is scoped **strictly to this repo's own
-local, gitignored v2 state** for the chosen role(s) — see
-`docs/reset.md` for the exact rationale. It never touches Jira, GitHub, or
-the target repo's git history, and never touches another ticket's or
-another project's data. It also never swaps the ticket's
-pipeline labels (`roles.research.triggerLabel`, `roles.research.handoffLabel`).
+A **whole-project** reset (no `--ticket`) is scoped strictly to this repo's
+own local, gitignored v2 state and never touches Jira, GitHub or git.
+
+A **per-ticket** reset also changes the ticket's Jira status (to the research
+trigger status) and its pipeline label (research trigger for `all`/`research`,
+handoff label for `dev`), deletes the comments the loop posted (a loop prefix
+from `LOOP_COMMENT_PREFIXES` AND created inside a recorded run window, with
+2 minutes slack), removes the pipeline's own worktrees and local branches that
+are not pushed, have no open PR and are 0 ahead, and removes the ticket's
+leftover sandboxes (every adapter selected or with a sub-block in
+`config.sandbox`, plus `--sandbox=<name>`). Its Jira rows run comments, then
+label, then status; the status move (which makes the ticket pollable) is
+skipped when an earlier Jira row failed. It never deletes pushed branches,
+PRs, follow-up tickets, the mirror Issue or a person's comment, never fetches,
+and never touches another ticket's or project's data. Without Jira credentials
+the Jira and GitHub rows say `needs you`.
+
+Rows that say `needs you` and that you must hand to the user, not fix by hand:
+
+- **mirror Issue** `close #<n> as not planned`: an open (or closed-completed)
+  mirror Issue would be reused by the next research run with the old comments
+  on it. The user closes it as not planned on GitHub; reset never does.
+- **worktrees** `<name> is not a pipeline worktree`: a `<TICKET>-*` worktree
+  the pipeline did not make (only `<TICKET>-<RUN_ID>` and its `-ground`,
+  `-baseline`, `-fu` variants are). It is the user's own; never remove it.
+- **local branches** `origin/<base> not fetched locally; run git fetch`: the
+  user fetches in the target repo, then reruns.
+- **recent-window hold** `held for <N>s more`: archiving the records lifts it,
+  so it normally clears in the verify pass.
+`--close-remote` replaces the Jira rows with close rows, under the same
+approval.
 
 ## `--close-remote`: closing the real ticket, Issue, and PR
 
@@ -98,10 +150,9 @@ intermediate hop path within the bound reaches one either — likely needs
 a human to walk it through Jira's UI; never silently treated as success)
 / `error` (with the actual failure message) for each item.
 
-**Needs real Jira/GitHub credentials** — invoke via
-`npm run reset-project:remote` (loads `.env`), not the plain
-`reset-project` script (which deliberately never loads `.env`, so a
-purely local reset never requires credentials to exist at all).
+**Needs real Jira/GitHub credentials.** Both `npm run reset-project` and
+`npm run reset-project:remote` load the env file (`DEVLOOP_ENV_FILE`,
+default `.env`) when it exists.
 
 **Agent policy — always confirm first.** If you are an agent about to
 invoke `--close-remote` for a real (non-`--dry-run`) run: always ask the
@@ -117,11 +168,14 @@ matter how permissions are configured.
 From the repo root (any cwd works; paths don't depend on it):
 
 ```bash
-# Local-only: see what would be deleted, without deleting anything:
+# Table only, nothing changes (always run this first):
 npm run reset-project -- --project=webtarsthree --ticket=TARS-1465 --dry-run
 
-# Local-only: actually delete it (both roles):
+# Per ticket: show the table, then (a human at a terminal) answer the prompt:
 npm run reset-project -- --project=webtarsthree --ticket=TARS-1465
+
+# After the user's yes in chat (an agent's shell has no terminal):
+npm run reset-project -- --project=webtarsthree --ticket=TARS-1465 --yes
 
 # Only the research side (dev-* run dirs and dev-only records stay):
 npm run reset-project -- --project=webtarsthree --ticket=TARS-1465 --role=research
@@ -144,7 +198,7 @@ purpose (see `--include-cross-role`). `WARNING: skipped symlink` means a
 symlinked dir under the project's v2 state root was not followed or
 deleted; inspect it by hand.
 
-## What gets deleted locally (per-ticket)
+## What the local rows delete (per-ticket)
 
 1. The ticket's records in `runs/v2/<project>.jsonl` that match `--role`
    — appended to `runs/v2/<project>.reset-archive.jsonl` first

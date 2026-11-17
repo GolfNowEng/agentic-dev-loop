@@ -942,3 +942,128 @@ describe("parseRequiredFields", () => {
     expect(parseRequiredFields("null")).toEqual([]);
   });
 });
+
+describe("RealJiraClient comments and labels", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const json = (o: unknown, status = 200) => new Response(JSON.stringify(o), { status });
+
+  it("listComments pages until total and extracts the first line", async () => {
+    const first = {
+      id: "1",
+      created: "2026-01-01T00:00:00.000+0000",
+      body: {
+        type: "doc",
+        content: [
+          { type: "heading", content: [{ type: "text", text: "\u2705 research-loop - " }, { type: "text", text: "refined" }] },
+        ],
+      },
+    };
+    const page1 = Array.from({ length: 100 }, (_, i) => (i === 0 ? first : { id: String(i + 1), created: "c", body: { type: "doc", content: [] } }));
+    const page2 = [{ id: "200", created: "c2", body: { type: "doc", content: [{ type: "paragraph", content: [] }, { type: "paragraph", content: [{ type: "text", text: "  second  " }] }] } }];
+    fetchMock.mockResolvedValueOnce(json({ startAt: 0, total: 101, comments: page1 }));
+    fetchMock.mockResolvedValueOnce(json({ startAt: 100, total: 101, comments: page2 }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+
+    const out = await client.listComments("TARS-1");
+
+    expect(out).toHaveLength(101);
+    expect(out[0]).toEqual({
+      id: "1",
+      created: "2026-01-01T00:00:00.000+0000",
+      firstLine: "\u2705 research-loop - refined",
+      url: "https://example.atlassian.net/browse/TARS-1?focusedCommentId=1",
+    });
+    expect(out[1]!.firstLine).toBe("");
+    expect(out[100]!.firstLine).toBe("second");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/rest/api/3/issue/TARS-1/comment?startAt=0&maxResults=100&orderBy=created");
+    expect(String(fetchMock.mock.calls[1][0])).toContain("startAt=100");
+  });
+
+  it("listComments caps firstLine at 120 chars", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ total: 1, comments: [{ id: "1", created: "c", body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x".repeat(300) }] }] } }] }),
+    );
+    const out = await new RealJiraClient(CREDENTIALS, makeConfig()).listComments("TARS-1");
+    expect(out[0]!.firstLine).toHaveLength(120);
+  });
+
+  it("deleteComment sends DELETE to the comment path", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await new RealJiraClient(CREDENTIALS, makeConfig()).deleteComment("TARS-1", "42");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(new URL(String(url)).pathname).toBe("/rest/api/3/issue/TARS-1/comment/42");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("deleteComment surfaces a 403 with its status", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("nope", { status: 403 }));
+    await expect(new RealJiraClient(CREDENTIALS, makeConfig()).deleteComment("TARS-1", "42")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("getLabels returns fields.labels", async () => {
+    fetchMock.mockResolvedValueOnce(json({ fields: { labels: ["pipeline:v2"] } }));
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+    await expect(client.getLabels("TARS-1")).resolves.toEqual(["pipeline:v2"]);
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://example.atlassian.net/rest/api/3/issue/TARS-1?fields=labels");
+    fetchMock.mockResolvedValueOnce(json({ fields: {} }));
+    await expect(client.getLabels("TARS-1")).resolves.toEqual([]);
+  });
+
+  it("listComments reads an ADF emoji node's attrs.text into the first line", async () => {
+    const body = { type: "doc", content: [{ type: "paragraph", content: [
+      { type: "emoji", attrs: { shortName: ":white_check_mark:", text: "\u2705" } },
+      { type: "text", text: " research-loop - refined" },
+    ] }] };
+    fetchMock.mockResolvedValueOnce(json({ total: 1, comments: [{ id: "1", created: "c", body }] }));
+    const out = await new RealJiraClient(CREDENTIALS, makeConfig()).listComments("TARS-1");
+    expect(out[0]!.firstLine).toBe("\u2705 research-loop - refined");
+  });
+
+  it("listComments maps an ADF emoji node with only a shortName", async () => {
+    const para = (shortName: string, rest: string) => ({ type: "doc", content: [{ type: "paragraph", content: [
+      { type: "emoji", attrs: { shortName } },
+      { type: "text", text: rest },
+    ] }] });
+    fetchMock.mockResolvedValueOnce(json({ total: 4, comments: [
+      { id: "1", created: "c", body: para(":white_check_mark:", " research-loop - refined") },
+      { id: "2", created: "c", body: para(":x:", " dev-loop - bounced") },
+      { id: "3", created: "c", body: para(":warning:", " heads up") },
+      { id: "4", created: "c", body: para(":tada:", "party") },
+    ] }));
+    const out = await new RealJiraClient(CREDENTIALS, makeConfig()).listComments("TARS-1");
+    expect(out.map((c) => c.firstLine)).toEqual([
+      "\u2705 research-loop - refined",
+      "\u274c dev-loop - bounced",
+      "\u26a0\ufe0f heads up",
+      "party",
+    ]);
+  });
+
+  it("deleteComment refuses a bad ticket key or a non-numeric comment id before any request", async () => {
+    const client = new RealJiraClient(CREDENTIALS, makeConfig());
+    await expect(client.deleteComment("../x", "42")).rejects.toThrow(/invalid ticket key/);
+    await expect(client.deleteComment("TARS-1", "42/../../x")).rejects.toThrow(/invalid comment id/);
+    await expect(client.deleteComment("TARS-1", "")).rejects.toThrow(/invalid comment id/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("getLabels refuses a bad ticket key before any request", async () => {
+    await expect(new RealJiraClient(CREDENTIALS, makeConfig()).getLabels("TARS-1?x=1")).rejects.toThrow(/invalid ticket key/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("StubJiraClient throws not-configured for the new methods", async () => {
+    const stub = new StubJiraClient({ blockedBy: {} });
+    await expect(stub.listComments("A-1")).rejects.toThrow(/listComments/);
+    await expect(stub.deleteComment("A-1", "1")).rejects.toThrow(/deleteComment/);
+    await expect(stub.getLabels("A-1")).rejects.toThrow(/getLabels/);
+  });
+});

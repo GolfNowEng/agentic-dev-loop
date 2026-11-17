@@ -95,6 +95,31 @@ async function postCloseComment(jiraClient: JiraClient, ticketKey: string): Prom
   }
 }
 
+/** Close the Jira ticket (comment first, then the first done-category transition). Throws on a request error. */
+export async function closeJiraTicket(
+  jiraClient: JiraClient,
+  ticketKey: string,
+): Promise<Pick<RemoteCloseSummary, "jira" | "jiraDetail">> {
+  await postCloseComment(jiraClient, ticketKey);
+  const result = await jiraClient.closeTicket(ticketKey);
+  return result.result === "closed" ? { jira: "closed", jiraDetail: result.transitionName } : { jira: result.result };
+}
+
+/** Close the ticket's mirror GitHub Issue as not planned. Throws on a request error. */
+export async function closeMirrorIssue(githubClient: GitHubClient, ticketKey: string): Promise<"closed" | "not-found"> {
+  const issue = await githubClient.findIssueByJiraKey(ticketKey);
+  if (!issue) return "not-found";
+  await githubClient.closeIssue(issue.number, "not_planned");
+  return "closed";
+}
+
+/** Close the recorded PR. Throws on a request error. */
+export async function closeRecordedPr(githubClient: GitHubClient, prUrl: string): Promise<"closed" | "already-closed"> {
+  return githubClient.closePr(prUrl);
+}
+
+const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
 /**
  * Execute a RemoteClosePlan for real: close the Jira ticket, its mirror
  * GitHub Issue, and (if one was found) its open PR. Each of the three is
@@ -114,37 +139,25 @@ export async function executeRemoteClose(
   };
 
   try {
-    await postCloseComment(jiraClient, plan.ticketKey);
-    const result = await jiraClient.closeTicket(plan.ticketKey);
-    summary.jira = result.result;
-    if (result.result === "closed") {
-      summary.jiraDetail = result.transitionName;
-    }
+    Object.assign(summary, await closeJiraTicket(jiraClient, plan.ticketKey));
   } catch (err) {
     summary.jira = "error";
-    summary.jiraDetail = err instanceof Error ? err.message : String(err);
+    summary.jiraDetail = errorMessage(err);
   }
 
   try {
-    const issue = await githubClient.findIssueByJiraKey(plan.ticketKey);
-    if (!issue) {
-      summary.issue = "not-found";
-    } else {
-      await githubClient.closeIssue(issue.number, "not_planned");
-      summary.issue = "closed";
-    }
+    summary.issue = await closeMirrorIssue(githubClient, plan.ticketKey);
   } catch (err) {
     summary.issue = "error";
-    summary.issueDetail = err instanceof Error ? err.message : String(err);
+    summary.issueDetail = errorMessage(err);
   }
 
   if (plan.prUrl) {
     try {
-      const prResult = await githubClient.closePr(plan.prUrl);
-      summary.pr = prResult;
+      summary.pr = await closeRecordedPr(githubClient, plan.prUrl);
     } catch (err) {
       summary.pr = "error";
-      summary.prDetail = err instanceof Error ? err.message : String(err);
+      summary.prDetail = errorMessage(err);
     }
   }
 

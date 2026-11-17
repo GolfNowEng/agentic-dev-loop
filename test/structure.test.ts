@@ -308,9 +308,11 @@ describe("structure: final-review fixes stay wired", () => {
   it("every --env-file script reads DEVLOOP_ENV_FILE, defaulting to .env (I4)", () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
     const withEnvFile = Object.entries(pkg.scripts).filter(([, cmd]) => cmd.includes("--env-file"));
-    expect(withEnvFile.map(([name]) => name).sort()).toEqual(["check-auth", "cutover:relabel", "loop", "reset-project:remote", "sbx:preflight"]);
-    for (const [, cmd] of withEnvFile) {
-      expect(cmd).toContain('--env-file="${DEVLOOP_ENV_FILE:-.env}"');
+    expect(withEnvFile.map(([name]) => name).sort()).toEqual(["check-auth", "cutover:relabel", "loop", "reset-project", "reset-project:remote", "sbx:preflight"]);
+    // Reset runs without credentials too (its Jira/GitHub rows then say so), so its file is optional.
+    const optional = new Set(["reset-project", "reset-project:remote"]);
+    for (const [name, cmd] of withEnvFile) {
+      expect(cmd).toContain(optional.has(name) ? '--env-file-if-exists="${DEVLOOP_ENV_FILE:-.env}"' : '--env-file="${DEVLOOP_ENV_FILE:-.env}"');
       expect(cmd).not.toContain("--env-file=.env");
     }
   });

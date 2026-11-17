@@ -293,6 +293,23 @@ describe("planReset / executeReset (v2 layout)", () => {
     }
   });
 
+  it("worktrees: only pipeline-made names, never a person's own <TICKET>-* worktree", async () => {
+    const target = await mkdtemp(join(tmpdir(), "target-repo-test-"));
+    try {
+      const wt = join(target, ".claude", "worktrees");
+      const R = "20261117T035443Z";
+      for (const n of [`TARS-1-${R}`, `TARS-1-${R}-ground`, `TARS-1-${R}-baseline`, `TARS-1-${R}-fu`, "TARS-1-okta-spike", `TARS-1-${R}-mine`]) {
+        await mkdir(join(wt, n), { recursive: true });
+      }
+      const plan = await planReset({ root, project: P, ticket: "TARS-1", config: makeConfig(target) });
+      expect(plan.worktreesToRemove).toEqual([`TARS-1-${R}`, `TARS-1-${R}-baseline`, `TARS-1-${R}-fu`, `TARS-1-${R}-ground`].map((n) => join(wt, n)));
+      await executeReset(plan);
+      expect((await readdir(wt)).sort()).toEqual([`TARS-1-${R}-mine`, "TARS-1-okta-spike"]);
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
   it("a deleted worktree is pruned from its git repo, so its branch can be deleted afterwards", async () => {
     const target = await mkdtemp(join(tmpdir(), "target-repo-git-"));
     const git = (...a: string[]) => execFileSync("git", ["-C", target, ...a], { encoding: "utf8" });

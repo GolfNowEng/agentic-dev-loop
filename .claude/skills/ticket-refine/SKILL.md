@@ -39,7 +39,8 @@ Jira comment (title starts with `✅ research-loop -` or `❌ research-loop
 prior pass — match on the leading icon + `research-loop -` prefix, not
 the old fixed strings (`Refined Spec — ready for ticket-to-pr`,
 `Ticket-Refine Bounce — <category>`) that this convention replaces; this
-skill no longer writes those. Two cases:
+skill no longer writes those. Comments on an Issue closed as `NOT_PLANNED`
+never count as a prior pass (see Step 0.5). Two cases:
 
 - **First pickup** (no such comment exists): proceed through Steps 0–7
   below as a fresh refinement. The ticket's description is never touched —
@@ -195,17 +196,34 @@ docs/future-enhancements.md's Jira label-trigger design):
 
 ```bash
 gh issue list --repo <github.repo from pipeline.<project>.config.json> \
-  --search 'in:title "<TICKET-KEY>:"' --state all --json number,url,title
+  --search 'in:title "<TICKET-KEY>:"' --state all \
+  --json number,url,title,state,stateReason
 ```
 
-Exactly one match is expected (idempotency is `GitHubClient`'s job,
-already run before this skill started). Rename it now that you have the
-real ticket summary (read via `getJiraIssue`, same call Interpret would
-make anyway — doing it here just moves the read earlier):
+This run's Issue is the newest Issue (highest number) that is open or closed
+for a reason other than `NOT_PLANNED`. `main.ts` guarantees a fresh Issue exists when the only
+matches were closed as not planned. Rename it now that you have the real
+ticket summary (read via `getJiraIssue`, same call Interpret would make
+anyway — doing it here just moves the read earlier):
 
 ```bash
 gh issue edit <number> --repo <github.repo> --title "<TICKET-KEY>: <ticket summary>"
 ```
+
+**Not-planned Issues are prior context only.** For each `NOT_PLANNED` Issue
+(left by an earlier run that was reset), read its comments:
+
+```bash
+gh issue view <n> --repo <github.repo> --json comments
+```
+
+What it holds is what the earlier run found and why it was reset. Treat it
+as an unverified claim under the stance's rules, exactly like the raw
+ticket: never a spec to copy, and never a reason to treat this run as a
+re-pickup (it does not count as "a prior pass" in "Setup: idempotent
+re-refinement"). Note it once in `progress.jsonl` (`"phase": "triage",
+"event": "note"`, detail `prior attempt #<n> read as context`). Never
+rename, comment on, or reopen a not-planned Issue.
 
 Remember this Issue's number/URL for the rest of the run — every comment
 this skill posts from Step 1 onward that the routing rule below classifies

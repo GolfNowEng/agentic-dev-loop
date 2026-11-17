@@ -53,6 +53,7 @@ import {
   realExecGhFindMergedPr,
   realFindOpenPrUrl,
 } from "./core/github-client.ts";
+import { buildMirrorIssueBody, pickMirrorIssue } from "./roles/research/mirror-issue.ts";
 import { redactSensitive } from "./core/redact.ts";
 import { decideNextAction, type PollResultKind } from "./core/poll-loop.ts";
 import { PROJECT_SLUG, resolveRepoPath, v2CloneDir, v2RunsLog, v2SessionsDir } from "./core/paths.ts";
@@ -130,14 +131,14 @@ interface LoopContext {
 async function ensureMirrorIssue(ctx: LoopContext, ticketKey: string): Promise<void> {
   const skill = SKILL_NAME.research;
   try {
-    const existing = await ctx.githubClient.findIssueByJiraKey(ticketKey);
+    const { reuse: existing, previous } = pickMirrorIssue(await ctx.githubClient.findIssuesByJiraKey(ticketKey));
     if (existing) {
       log(`[${skill}] ${ticketKey}: GitHub Issue already exists (${existing.url}), skipping creation`);
       return;
     }
     const issue = await ctx.githubClient.createIssue({
       title: `${ticketKey}: (refinement in progress)`,
-      body: `Mirror of [${ticketKey}](${ctx.credentials.baseUrl}/browse/${ticketKey}). ticket-refine is running -- this Issue will be updated with recon/attack/verify findings per the routing rule as the run progresses.`,
+      body: buildMirrorIssueBody(ticketKey, ctx.credentials.baseUrl, previous),
       jiraKey: ticketKey,
     });
     log(`[${skill}] ${ticketKey}: created GitHub Issue ${issue.url}`);

@@ -1,6 +1,151 @@
 # Resetting a ticket or project to a clean local state
 
-## 2.0.0: v2 state, `--role` (current behavior)
+## Per-ticket reset: the checklist (current behavior)
+
+`npm run reset-project -- --project=<p> --ticket=<KEY>` is a checklist
+(`src/core/reset-cli.ts`, steps in `src/core/reset/`). Spec:
+`docs/superpowers/specs/2026-11-16-reset-checklist-design.md`.
+
+1. **Survey.** Read-only. Local files, the target repo's git, Jira, GitHub
+   and the sandbox adapters are each checked live. A dirty Jira ticket with
+   no local record is still reset.
+2. **Table.** One row per step: what was found, what it will do. A step with
+   nothing to do shows `-`. A step that is unsafe to do automatically shows
+   `needs you: <why>`; it is listed and never acted on.
+3. **Approve.** `Proceed? [y/N]`. Anything but `y`/`yes` changes nothing.
+4. **Execute.** Order: sandbox, git, local, then Jira and GitHub. Each step
+   runs on its own, so one failing does not stop the rest. A live worker
+   holding the project's session lock refuses the run
+   (`--ignore-live-worker` overrides).
+5. **Verify.** Two more tables: `Ran` (done or failed per row) and
+   `After reset` (a fresh survey). It ends with `[reset] <KEY> is at zero.`
+   or a list of the steps that still need you.
+
+```bash
+npm run reset-project -- --project=webtarsthree --ticket=TARS-1634 --dry-run   # table only
+npm run reset-project -- --project=webtarsthree --ticket=TARS-1634             # asks Proceed? [y/N]
+npm run reset-project -- --project=webtarsthree --ticket=TARS-1634 --yes       # no prompt
+npm run reset-project -- --project=webtarsthree --ticket=TARS-1634 --sandbox=sbx
+```
+
+**Exit codes.** `--dry-run`, declined, and already at zero: 0, nothing
+changed. No terminal to ask on and no `--yes`: 1. Live worker refusal: 1.
+After execute: 0 only when the final table is at zero, else 1.
+
+**Env file.** Both scripts (`reset-project`, `reset-project:remote`) load
+`DEVLOOP_ENV_FILE` (default `.env`) with `--env-file-if-exists`. The GitHub
+client is only built when the Jira credentials load, so without Jira
+credentials both the Jira and the GitHub rows say `needs you: no credentials`,
+and the git branch rows say `needs you: remote check failed: no GitHub
+credentials`. The local, git worktree and sandbox rows still run.
+
+**`--role=research|dev|all`** (default `all`) limits the steps and items to
+that role. It never touches the other role's comments, records or label.
+
+### The steps
+
+| Area | Step | At zero means | Never |
+|---|---|---|---|
+| local | run records | No v2 record for the role; archived, not deleted | touch v1 history; drop a refused cross-role record |
+| local | run dirs | No `<role>-*` dir for the ticket | |
+| local | session lock in-flight | No dead lock names the ticket and role | rewrite a live holder's lock |
+| local | recent-window hold | No record holds the ticket back from the next poll. While held the row is `needs you: held for <N>s more by the recent-window hold`; archiving the records lifts the hold, so the verify pass reads clean | |
+| local | live worker | No live session lock for the project | |
+| git | worktrees | No pipeline worktree for the ticket (research: `-ground` only; dev: the others); git's list pruned. Any other `<TICKET>-*` worktree is `needs you: <name> is not a pipeline worktree` | remove a worktree the pipeline did not make |
+| git | local branches | No local `<TICKET>-*` branch | delete a branch that is on origin, has an open PR, or is ahead; fetch |
+| git | pushed branches / PRs | Listed only | delete or close (only `--close-remote` closes, after confirmation) |
+| jira | loop comments | No comment the loop posted for the role | delete a comment a person wrote |
+| jira | label | `all`/`research`: the research trigger label, handoff label removed. `dev`: the handoff (dev trigger) label, research label removed | add or remove any other label |
+| jira | status | The research trigger status (`claimStatus.from`, To Do), for every role | move it while an earlier Jira row failed this pass |
+| jira | follow-up tickets | Listed (from dev verdicts' `follow_up`) | delete or close them |
+| github | mirror Issue | No Issue research would reuse: every mirror Issue is closed as not planned (research and `all`). Otherwise `needs you: close #<n> as not planned` | edit, reopen or close it |
+| sandbox | leftover sandboxes | No sandbox for the ticket | change network policy or secrets |
+
+Status and label are done once per reset, not per role. The status and label
+targets come from config, not from records. The Jira rows run in table order:
+comments, label, then status. Moving the status makes the ticket pollable
+again, so it runs last of all rows (after GitHub too). It is held, and never
+run, when any other row needs you, errored or failed: the table shows
+`↳ held until the rows that need you are clean` under it, and the run reports
+`failed: held: <area> <step> needs you`. So a ticket whose mirror Issue is
+still open stays off the poll until you close that Issue and reset again.
+Within the Jira rows it is also skipped (`failed: skipped: an earlier Jira
+step failed`) when the comments or label row failed in the same pass.
+
+**Loop comments.** The loop posts with the user's own Jira credentials, so the
+author cannot tell them apart. A comment is the loop's only when both hold:
+
+- it was created inside a run window of the role being reset: a recorded
+  phase's `started`..`ended` (live log and `runs/v2/<project>.reset-archive.jsonl`),
+  a run dir's `progress.jsonl` first..last timestamp (for a run that never
+  ended), or a `claim-error` (research) or `blocked-attempts` (both roles)
+  record's `started`..`ended`; each plus 2 minutes of slack (both sides for
+  the two records, which carry no phase);
+- it starts with a prefix in `LOOP_COMMENT_PREFIXES`
+  (`src/core/loop-comments.ts`). Research: `✅ research-loop -`,
+  `❌ research-loop -`, and `dev-loop could not start this ticket:` (the
+  missing-fields claim comment), and `❌ dev-loop - blocked-attempts:` (the
+  attempt-cap comment, posted with the dev prefix for either role's cap).
+  Dev: `✅ dev-loop -`, `❌ dev-loop -`, and the same missing-fields line.
+
+A comment outside every window is never deleted, whatever it says. The table
+lists each comment it will delete (time and first line), so the prompt is the
+last check. If Jira refuses a delete, that row says `needs you` with the
+comment's link and the rest carry on.
+
+**Git safety.** The repo is `targetRepo.path`, else the v2 clone.
+
+- Worktrees: only names the pipeline makes under `.claude/worktrees/` are
+  removed: `<TICKET>-<RUN_ID>` (ticket-to-pr's run worktree), and its
+  `-ground` (ticket-refine), `-baseline` and `-fu` (ticket-to-pr) variants,
+  with `RUN_ID` like `20261117T035443Z`. Any other `<TICKET>-*` dir there (a
+  person's own, e.g. `TARS-1516-okta-spike`) is listed as `needs you: <name>
+  is not a pipeline worktree` and never removed, by this checklist or by the
+  whole-project/legacy plan. The row's detail lines name every worktree it
+  will remove.
+- Local branches: a branch is deleted only when it is not on origin
+  (`git ls-remote`), has no open PR (`gh`), and is 0 commits ahead of origin's
+  default branch. Reset never fetches (not even on `--dry-run`): it reads
+  origin's default-branch sha from `git ls-remote` and counts commits ahead of
+  that sha. If that sha is not in the local repo, every branch row is `needs
+  you: remote check failed: origin/<base> not fetched locally; run git fetch`.
+  A branch with unpushed commits is `needs you`. If the remote check fails,
+  every branch row is `needs you`. A branch checked out in the repo itself is
+  never deleted. The row's detail lines name every branch, `delete` or `keep`.
+  Branch names are free-form (`<TICKET>-<slug>`), so the name filter stays
+  `<TICKET>-*`; the not-on-origin, no-PR and 0-ahead checks are the guard.
+- Pushed branches and PRs are listed, never touched.
+
+**Sandbox.** Every adapter that `config.sandbox.adapter` selects or that has a
+sub-block in `config.sandbox` is surveyed, plus `--sandbox=<name>` (which
+needs `--ticket`). An adapter with no reset steps (`none`) adds no row. sbx
+lists the ticket's leftover sandboxes and removes them.
+
+**Mirror Issue.** Reset never edits, reopens or closes the Issue (only
+`--close-remote` closes it). It is at zero only when research would open a
+fresh one, that is when every mirror Issue is closed as not planned (for
+example `#585 (closed, not planned)`). An open Issue, or one closed as
+completed, would be reused with the old run's comments still on it, so the row
+says `needs you: close #<n> as not planned` (the one `pickMirrorIssue` would
+reuse). Research changes too: an Issue closed as not planned is never reused
+as the run's mirror. A fresh Issue is
+opened, linking `Previous attempt: #<n>`, and the old one is read as prior
+context only.
+
+**`--close-remote`** replaces the Jira status, label, comment and follow-up
+rows with close rows (close ticket, close mirror Issue, close PR). The
+local, git and sandbox rows still run, under the same single approval. The
+close summary and what each close does are unchanged (see the sections below).
+
+**Agents.** An agent's shell has no terminal. Run `--dry-run` first, show the
+user the table in chat, and rerun with `--yes` only after a yes. With
+`--close-remote`, confirm in chat first every time.
+
+**Whole project** (no `--ticket`) is unchanged and keeps its `--yes` gate.
+The rest of this file's 2.0.0 section describes what the local rows and the
+whole-project reset do.
+
+## 2.0.0: v2 state, `--role` (local rows and whole project)
 
 `npm run reset-project` (`src/core/reset-cli.ts` over
 `src/core/reset-project.ts`, wired up via
@@ -232,12 +377,10 @@ the other, the same error-isolation stance dev-loop's `reconcile.ts`
 already takes per-ticket.
 
 **Credentials**: `--close-remote` needs real `JIRA_BASE_URL`/
-`JIRA_EMAIL`/`JIRA_API_TOKEN` and `gh` auth — use
-`npm run reset-project:remote` (which loads `DEVLOOP_ENV_FILE`, default `.env`), not
-the plain `reset-project` script, which deliberately never loads `.env`
-so a purely local reset never needs credentials to exist at all. Real
-Jira/GitHub clients are constructed in `reset-cli.ts` only inside the
-`--close-remote` branch, never for a local-only run.
+`JIRA_EMAIL`/`JIRA_API_TOKEN` and `gh` auth. Since 2.2.0 both reset scripts load
+the env file (`--env-file-if-exists`), so `reset-project:remote` is the same
+script as `reset-project`. (Through 2.1.0 the plain script never loaded
+`.env`.)
 
 **Agent policy**: an agent invoking `--close-remote` for a real
 (non-`--dry-run`) run must always confirm with the human in chat first —
@@ -432,12 +575,10 @@ the other two, the same error-isolation stance `reconcile.ts` already
 takes per-ticket.
 
 **Credentials**: `--close-remote` needs real `JIRA_BASE_URL`/
-`JIRA_EMAIL`/`JIRA_API_TOKEN` and `gh` auth — use
-`npm run reset-project:remote` (which loads `DEVLOOP_ENV_FILE`, default `.env`), not
-the plain `reset-project` script, which deliberately never loads `.env`
-so a purely local reset never needs credentials to exist at all. Real
-Jira/GitHub clients are constructed in `reset-cli.ts` only inside the
-`--close-remote` branch, never for a local-only run.
+`JIRA_EMAIL`/`JIRA_API_TOKEN` and `gh` auth. Since 2.2.0 both reset scripts load
+the env file (`--env-file-if-exists`), so `reset-project:remote` is the same
+script as `reset-project`. (Through 2.1.0 the plain script never loaded
+`.env`.)
 
 **Agent policy**: an agent invoking `--close-remote` for a real
 (non-`--dry-run`) run must always confirm with the human in chat first —

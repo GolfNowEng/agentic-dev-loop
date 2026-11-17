@@ -22,6 +22,8 @@ export interface GitHubIssue {
   url: string;
   /** As reported by `gh issue list --json state`. */
   state: "OPEN" | "CLOSED";
+  /** Why it was closed, when `gh` reported it (`--json stateReason`). */
+  stateReason?: "COMPLETED" | "NOT_PLANNED" | "REOPENED" | null;
 }
 
 /** GitHub's own three close reasons -- state_reason on the API, --reason on gh. */
@@ -36,6 +38,13 @@ export interface GitHubClient {
    * avoid a duplicate Issue from a poll-loop race.
    */
   findIssueByJiraKey(jiraKey: string): Promise<GitHubIssue | null>;
+
+  /**
+   * Every Issue the findIssueByJiraKey search matches, with stateReason,
+   * sorted by number ascending. findIssueByJiraKey returns the first open
+   * one of these, else the first.
+   */
+  findIssuesByJiraKey(jiraKey: string): Promise<GitHubIssue[]>;
 
   /**
    * Create a new mirror Issue. Callers are responsible for calling
@@ -99,6 +108,10 @@ export class StubGitHubClient implements GitHubClient {
     throw new Error(UNCONFIGURED_MESSAGE("findIssueByJiraKey"));
   }
 
+  async findIssuesByJiraKey(_jiraKey: string): Promise<GitHubIssue[]> {
+    throw new Error(UNCONFIGURED_MESSAGE("findIssuesByJiraKey"));
+  }
+
   async createIssue(_params: {
     title: string;
     body: string;
@@ -127,6 +140,7 @@ interface GhIssueListEntry {
   number: number;
   url: string;
   state: "OPEN" | "CLOSED";
+  stateReason?: GitHubIssue["stateReason"];
 }
 
 /** gh's own --reason flag values use a literal space for "not planned", unlike the API's state_reason "not_planned". */
@@ -170,7 +184,7 @@ export class RealGitHubClient implements GitHubClient {
     this.execFn = execFn;
   }
 
-  async findIssueByJiraKey(jiraKey: string): Promise<GitHubIssue | null> {
+  async findIssuesByJiraKey(jiraKey: string): Promise<GitHubIssue[]> {
     const stdout = await this.execFn([
       "issue",
       "list",
@@ -181,12 +195,17 @@ export class RealGitHubClient implements GitHubClient {
       "--state",
       "all",
       "--json",
-      "number,url,state",
+      "number,url,state,stateReason",
     ]);
     const entries = JSON.parse(stdout) as GhIssueListEntry[];
-    const first = entries[0];
-    if (!first) return null;
-    return { number: first.number, url: first.url, state: first.state };
+    return entries
+      .map((e) => ({ number: e.number, url: e.url, state: e.state, stateReason: e.stateReason ?? null }))
+      .sort((a, b) => a.number - b.number);
+  }
+
+  async findIssueByJiraKey(jiraKey: string): Promise<GitHubIssue | null> {
+    const issues = await this.findIssuesByJiraKey(jiraKey);
+    return issues.find((i) => i.state === "OPEN") ?? issues[0] ?? null;
   }
 
   async createIssue(params: {
@@ -380,4 +399,28 @@ export async function realDefaultBranch(repo: string, exec: ExecGhFn = realExecG
   const name = (await exec(["repo", "view", repo, "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"])).trim();
   if (!name) throw new Error(`realDefaultBranch: gh returned no default branch for ${repo}`);
   return name;
+}
+
+/**
+ * Open PRs in `repo` whose head branch starts with `<KEY>-` (the pipeline's
+ * branch naming), via `gh pr list --state open --search "<KEY> in:title,body"`.
+ * The key is validated before gh runs.
+ */
+export function realOpenPrHeads(
+  repo: string,
+  exec: ExecGhFn = realExecGh(),
+): (ticketKey: string) => Promise<{ head: string; url: string }[]> {
+  return async (ticketKey) => {
+    if (typeof ticketKey !== "string" || !TICKET_KEY.test(ticketKey)) {
+      throw new Error(`realOpenPrHeads: invalid ticket key ${JSON.stringify(ticketKey)}`);
+    }
+    const stdout = await exec([
+      "pr", "list", "--repo", repo, "--state", "open", "--search", `${ticketKey} in:title,body`,
+      "--json", "headRefName,url",
+    ]);
+    const prs = JSON.parse(stdout) as Array<{ headRefName: string; url: string }>;
+    return prs
+      .filter((p) => p.headRefName.startsWith(`${ticketKey}-`))
+      .map((p) => ({ head: p.headRefName, url: p.url }));
+  };
 }

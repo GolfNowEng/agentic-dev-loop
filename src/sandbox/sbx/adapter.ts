@@ -4,6 +4,7 @@
 // "Verified before step 3").
 
 import { readdirSync, realpathSync } from "node:fs";
+import type { ResetStep } from "../../core/reset/step.ts";
 import type { SandboxAdapter, SandboxDenial, SandboxHandle } from "../types.ts";
 import { DEFAULT_ENV_ALLOW, validateSbxConfig, type SbxConfig } from "./config.ts";
 import type { SbxResult, SbxRunner } from "./run.ts";
@@ -156,6 +157,19 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
     throw new Error(`sbx rm failed (${why(r)}): ${firstLine(r.stderr)}`);
   }
 
+  /** Every sandbox name `sbx ls --json` reports. Throws "sbx ls failed: ..." on a failed or unparseable ls. */
+  async function listNames(): Promise<string[]> {
+    const r = await run(["ls", "--json"]);
+    if (r.code !== 0 || r.timedOut) throw new Error(`sbx ls failed: (${why(r)}) ${firstLine(r.stderr)}`);
+    try {
+      const list = JSON.parse(r.stdout) as unknown;
+      if (!Array.isArray(list)) throw new Error("not an array");
+      return list.flatMap((s) => (typeof s === "object" && s !== null && typeof (s as { name?: unknown }).name === "string" ? [(s as { name: string }).name] : []));
+    } catch (err) {
+      throw new Error(`sbx ls failed: unparseable --json output (${err instanceof Error ? err.message : String(err)})`);
+    }
+  }
+
   /** Every configured MCP server is registered with sbx and ready (signed in). Fails closed. */
   async function checkMcp(names: string[]): Promise<void> {
     const r = await run(["mcp", "ls", "--json"]);
@@ -271,17 +285,44 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
     },
 
     async cleanupOrphans({ prefix }) {
-      const r = await run(["ls", "--json"]);
-      if (r.code !== 0 || r.timedOut) throw new Error(`sbx ls failed: (${why(r)}) ${firstLine(r.stderr)}`);
-      let names: string[];
-      try {
-        const list = JSON.parse(r.stdout) as unknown;
-        if (!Array.isArray(list)) throw new Error("not an array");
-        names = list.flatMap((s) => (typeof s === "object" && s !== null && typeof (s as { name?: unknown }).name === "string" ? [(s as { name: string }).name] : []));
-      } catch (err) {
-        throw new Error(`sbx ls failed: unparseable --json output (${err instanceof Error ? err.message : String(err)})`);
-      }
+      const names = await listNames();
       for (const n of names) if (n.startsWith(prefix)) await remove(n);
+    },
+
+    resetSteps({ prefix, ticket }) {
+      const mine = `${prefix}${ticket}-`;
+      return [
+        {
+          area: "sandbox",
+          name: "leftover sandboxes",
+          async survey() {
+            let names: string[];
+            try {
+              names = (await listNames()).filter((n) => n.startsWith(mine));
+            } catch (err) {
+              // The message already starts "sbx ls failed:"; a missing binary arrives bare.
+              const m = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+              return { found: "unknown", action: null, needsYou: m.startsWith("sbx ls failed") ? m : `sbx ls failed: ${m}` };
+            }
+            if (names.length === 0) return { found: "none", action: null };
+            return {
+              found: names.join(", "),
+              action: `remove ${names.length}`,
+              async run() {
+                const failures: string[] = [];
+                for (const n of names) {
+                  try {
+                    await remove(n);
+                  } catch (err) {
+                    failures.push(`${n}: ${err instanceof Error ? err.message : String(err)}`);
+                  }
+                }
+                if (failures.length > 0) throw new Error(`could not remove ${failures.length} sandbox(es): ${failures.join("; ")}`);
+              },
+            };
+          },
+        } satisfies ResetStep,
+      ];
     },
 
     async prepare(spec) {

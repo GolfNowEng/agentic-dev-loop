@@ -4,7 +4,7 @@
 //     runs/v2/<project>.reset-archive.jsonl (append-only), never just deleted;
 //   - `<role>-<RUN_ID>` run dirs under .pipeline/v2/<project>/<session>/<ticket>/,
 //     in every session;
-//   - per-ticket only: leftover worktrees named for the ticket;
+//   - per-ticket only: leftover pipeline worktrees for the ticket (isPipelineWorktree);
 //   - the inFlight entry of a dead session lock (`*.lock` or unadopted
 //     `*.lock.stale-*`) naming a matching ticket and role: set to null, pid and
 //     start time kept, so the next worker start doesn't adopt and "resume" a run
@@ -27,7 +27,7 @@ import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import type { Config, Role } from "./types.ts";
 import { isProcessAlive } from "./session.ts";
-import { resolveRepoPath, RUN_ID, SESSION_ID, TICKET_KEY, UnsafePathError, v2CloneDir, v2ProjectDir, v2RunsArchive, v2RunsLog, v2SessionsDir } from "./paths.ts";
+import { isPipelineWorktree, resolveRepoPath, RUN_ID, SESSION_ID, TICKET_KEY, UnsafePathError, v2CloneDir, v2ProjectDir, v2RunsArchive, v2RunsLog, v2SessionsDir } from "./paths.ts";
 
 export type ResetRole = Role | "all";
 
@@ -47,6 +47,8 @@ export interface ResetOptions {
   ignoreLiveWorker?: boolean;
   /** Liveness of a lock holder (pid + start time, epoch s); defaults to session.ts's isProcessAlive. */
   isAlive?: (pid: number, started: number) => boolean;
+  /** Leave worktrees to another step: the plan lists none and has no worktrees dir (so nothing is deleted or pruned). Default false. */
+  skipWorktrees?: boolean;
 }
 
 /** A matching record a role-scoped reset leaves in place (the other role landed in it). */
@@ -105,7 +107,7 @@ export interface ResetSummary {
 }
 
 /** Display only: ~/... for paths under the home directory. */
-function shortenPath(path: string): string {
+export function shortenPath(path: string): string {
   const home = homedir();
   return path.startsWith(home) ? `~${path.slice(home.length)}` : path;
 }
@@ -262,12 +264,13 @@ export async function planReset(opts: ResetOptions): Promise<ResetPlan> {
 
   let worktreesDir: string | null = null;
   let worktreesToRemove: string[] = [];
-  if (ticket !== null) {
+  if (ticket !== null && !opts.skipWorktrees) {
     const base = opts.config?.targetRepo.path ?? (opts.config ? cloneDir : null);
     if (base) {
       worktreesDir = join(base, ".claude", "worktrees");
       worktreesToRemove = (await list(worktreesDir))
-        .filter((n) => n.startsWith(`${ticket}-`))
+        // Only the pipeline's own run worktrees; a person's `<TICKET>-okta-spike` is never removed.
+        .filter((n) => isPipelineWorktree(ticket, n))
         .filter((n) => role === "all" || (role === "research") === n.endsWith("-ground"))
         .map((n) => join(worktreesDir!, n));
     }

@@ -203,7 +203,7 @@ archived.
 
 One JSON line per ticket iteration (`src/core/iteration-log.ts`), append-only.
 `phases` has one entry per skill run (empty for `skipped-blocked` /
-`claim-error`). `detail` and `jira_sync_error` are redacted before writing.
+`claim-error`). `detail` and `jira_sync_error` are redacted before writing. `jira_status_changed: true` is set when the iteration changed the ticket's Jira status (a claim or transition); only such records hold the ticket back for the 2-minute recent window.
 Readers skip blank, truncated and malformed lines.
 
 Outcomes: `landed`, `bounced`, `error`, `killed`, `skipped-blocked`,
@@ -292,8 +292,10 @@ iteration writes nothing. The steps run in this order:
    record (no swap repeats). A failure writes one phase-less `handoff-pending`
    record, and only when the ticket's previous record isn't already one. It
    never pauses.
-2. **Exclude**. Every poll excludes `recentlyEnded` (10 min, read from the
-   log, so the exclusion survives restarts), tickets whose latest record is
+2. **Exclude**. Every poll excludes `recentlyEnded` (2 min, only records with
+   `jira_status_changed`, read from the log, so the exclusion survives
+   restarts; a skipped ticket logs `[worker] <KEY> skipped: a run on it ended
+   <N>s|<M>m ago`), tickets whose latest record is
    `parked`, and tickets at
    `maxAttemptsPerTicket` failed attempts of a role (`attempts.ts`). A ticket
    that has just reached the cap, for a role this process runs, gets a

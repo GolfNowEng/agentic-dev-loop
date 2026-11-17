@@ -38,7 +38,7 @@ export interface WorkerDeps {
   gate: WorkerGateDeps;
   /** Open PR for a ticket, for crash recovery (realFindOpenPrUrl in production). */
   findOpenPrUrl: (key: string) => Promise<string | null>;
-  /** Tickets with a record that ended this recently are not polled (Jira index lag). Default 600 000. */
+  /** Tickets whose latest status-changing record ended this recently are not polled (Jira index lag). Default 120 000. */
   recentWindowMs?: number;
   /** Which roles this process runs. Default both (worker mode); `--phase research|dev` passes one. */
   roles?: Role[];
@@ -66,6 +66,8 @@ export interface WorkerState {
   flightsRecorded: boolean;
   /** A self-heal done while recording flights, returned by the next iteration. */
   healed: WorkerIterationResult | null;
+  /** Tickets whose Jira status this process changed since their last record; append() flags the record and clears it. */
+  statusChanged: Set<string>;
 }
 
 const STATES = new WeakMap<object, WorkerState>();
@@ -74,7 +76,7 @@ export function workerState(deps: WorkerDeps): { state: WorkerState; first: bool
   let state = STATES.get(deps.session);
   if (state) return { state, first: false };
   const flights = [...(deps.session.inFlight ? [deps.session.inFlight] : []), ...deps.session.orphanedInFlight];
-  state = { flights, badKeys: new Set(), badIds: new Set(), flightsRecorded: false, healed: null };
+  state = { flights, badKeys: new Set(), badIds: new Set(), flightsRecorded: false, healed: null, statusChanged: new Set() };
   STATES.set(deps.session, state);
   return { state, first: true };
 }
@@ -98,9 +100,35 @@ export interface Ctx {
   handedOff: string[];
 }
 
+/** The Jira client, noting every ticket whose status a call changed (successful claim or transition). */
+function trackStatusChanges(jira: JiraClient, changed: Set<string>): JiraClient {
+  return new Proxy(jira, {
+    get(target, prop, receiver) {
+      const v = Reflect.get(target, prop, target) as unknown;
+      if (typeof v !== "function") return v;
+      const fn = v as (...a: unknown[]) => unknown;
+      if (prop === "claimTicket") {
+        return async (...a: unknown[]) => {
+          const ok = await fn.apply(target, a);
+          if (ok === true) changed.add(a[0] as string);
+          return ok;
+        };
+      }
+      if (prop === "transitionStatus") {
+        return async (...a: unknown[]) => {
+          await fn.apply(target, a);
+          changed.add(a[0] as string);
+        };
+      }
+      void receiver;
+      return fn.bind(target);
+    },
+  });
+}
+
 export function makeCtx(deps: WorkerDeps, state: WorkerState, records: IterationRecord[]): Ctx {
   return {
-    deps,
+    deps: { ...deps, jira: trackStatusChanges(deps.jira, state.statusChanged) },
     state,
     records,
     research: roleView(deps.config, "research"),
@@ -133,6 +161,7 @@ export async function append(
     outcome,
     phases,
     ...extra,
+    ...(ctx.state.statusChanged.delete(ticket) ? { jira_status_changed: true as const } : {}),
   };
   await appendIteration(ctx.deps.logPath, rec);
   ctx.records.push(rec);
