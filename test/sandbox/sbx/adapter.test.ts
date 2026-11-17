@@ -347,7 +347,7 @@ describe("sbx adapter: preflight", () => {
   });
 
   const pf = (exec: SbxResult, over = {}) =>
-    makeSbxAdapter({ run: fakeRunner(answer(exec)).run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(ctx(over));
+    makeSbxAdapter({ run: fakeRunner(answer(exec)).run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV, warn: () => {}, sleep: async () => {} }).preflight(ctx(over));
 
   it("a missing direnv names the template fix", async () => {
     await expect(pf(fail(127, "sh: 1: direnv: not found", `${BASE}dl-step:direnv\n`))).rejects.toThrow(
@@ -408,7 +408,67 @@ describe("sbx adapter: preflight", () => {
 
   it("any other GitHub failure names the step and the first stderr line", async () => {
     const r = fail(1, "boom\nmore", `${DIRENV}dl-step:git\ndl-step:gh\n`);
-    await expect(pf(r)).rejects.toThrow("sbx preflight failed (gh api): boom");
+    await expect(pf(r)).rejects.toThrow("sbx preflight failed (gh api) after 3 tries: boom");
+  });
+
+  it("direnv's own stderr lines (from the .envrc step) never stand in for the real error", async () => {
+    const noise = "direnv: loading /r/.envrc\ndirenv: export +FOO +BAR\n";
+    const r = fail(1, `${noise}gh: Bad credentials (HTTP 401)\nmore`, `${DIRENV}dl-step:envrc\ndl-step:git\ndl-step:gh\n`);
+    await expect(pf(r)).rejects.toThrow("sbx preflight failed (gh api) after 3 tries: gh: Bad credentials (HTTP 401)");
+    const shaded = fail(1, `\u001b[mdirenv: loading /r/.envrc\u001b[0m\nboom`, `${DIRENV}dl-step:git\ndl-step:gh\n`);
+    await expect(pf(shaded)).rejects.toThrow("sbx preflight failed (gh api) after 3 tries: boom");
+  });
+
+  it("with only direnv noise on stderr, says so and names the exit code", async () => {
+    const r = fail(4, "direnv: loading /r/.envrc\n", `${DIRENV}dl-step:git\ndl-step:gh\n`);
+    await expect(pf(r)).rejects.toThrow("sbx preflight failed (gh api) after 3 tries: exit 4, no error output");
+  });
+
+  describe("retrying a flaky GitHub step", () => {
+    const seq = (results: SbxResult[]) => {
+      let i = 0;
+      const f = fakeRunner((args) => (args[0] === "exec" ? results[Math.min(i++, results.length - 1)] : ok()));
+      const sleeps: number[] = [];
+      const a = makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV, warn: () => {}, sleep: async (ms) => void sleeps.push(ms) });
+      return { a, f, sleeps, execs: () => f.calls.filter((c) => c.args[0] === "exec").length };
+    };
+    const flaky = fail(1, "invalid character 's' looking for beginning of value", `${DIRENV}dl-step:git\ndl-step:gh\n`);
+    const gitFlaky = fail(128, "fatal: unable to access", `${DIRENV}dl-step:git\n`);
+    const cutOff = fail(null, "", `${DIRENV}dl-step:git\ndl-step:gh\n`);
+
+    it("passes when a later try succeeds, waiting between tries", async () => {
+      const { a, execs, sleeps } = seq([flaky, gitFlaky, GOOD]);
+      await expect(a.preflight(ctx())).resolves.toBeUndefined();
+      expect(execs()).toBe(3);
+      expect(sleeps).toEqual([2000, 2000]);
+    });
+
+    it("a process cut off with no exit code is retried too", async () => {
+      const { a, execs } = seq([cutOff, GOOD]);
+      await expect(a.preflight(ctx())).resolves.toBeUndefined();
+      expect(execs()).toBe(2);
+    });
+
+    it("fails after 3 tries with the last try's error, and still removes the instance once", async () => {
+      const { a, f, execs } = seq([flaky, flaky, flaky, GOOD]);
+      await expect(a.preflight(ctx())).rejects.toThrow("sbx preflight failed (gh api) after 3 tries: invalid character 's' looking for beginning of value");
+      expect(execs()).toBe(3);
+      expect(f.calls.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+    });
+
+    it("never retries a diagnosed failure: blocked host, missing repo, SSH, non-GitHub steps", async () => {
+      for (const r of [
+        fail(1, 'non-200 OK status code: 403 Forbidden body: "Approval required for api.github.com:443.', `${DIRENV}dl-step:git\ndl-step:gh\n`),
+        fail(1, "gh: Not Found (HTTP 404)", `${DIRENV}dl-step:git\ndl-step:gh\n`),
+        fail(128, "git@github.com: Permission denied (publickey).", `${DIRENV}dl-step:git\n`),
+        fail(127, "sh: 1: direnv: not found", `${BASE}dl-step:direnv\n`),
+        ok("v22.1.0\n"),
+      ]) {
+        const { a, execs } = seq([r, GOOD]);
+        await expect(a.preflight(ctx())).rejects.toThrow();
+        expect(execs()).toBe(1);
+      }
+    });
   });
 
   it("without a githubRepo, skips the GitHub checks", async () => {

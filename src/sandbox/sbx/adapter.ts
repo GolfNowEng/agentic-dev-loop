@@ -32,6 +32,13 @@ const githubCheck = (repo: string): string =>
 /** Root-level env files a sandboxed agent could read; `*.example` templates are fine. */
 const ENV_FILE = /^\.env(rc)?(\..+)?$/;
 const isEnvFile = (n: string): boolean => ENV_FILE.test(n) && !n.endsWith(".example");
+/**
+ * The sandbox's proxy to GitHub is intermittently flaky (2026-11-17: ~3 in 11
+ * checks failed after ~12 s, the host never did): a garbled reply, a git exit
+ * 128, a cut-off exec. Only an undiagnosed GitHub-step failure is retried.
+ */
+export const GITHUB_TRIES = 3;
+export const GITHUB_RETRY_MS = 2000;
 /** sbx exec's own failure (e.g. a missing sandbox); the inner command's code passes through otherwise. */
 const EXEC_INFRA_EXIT = 125;
 
@@ -45,9 +52,19 @@ export interface SbxAdapterDeps {
   warn?: (m: string) => void;
   /** The dashboard opener's dependencies (default: the real Terminal/osascript ones). */
   dashboardDeps?: (log: (m: string) => void) => DashboardDeps;
+  /** Waits between preflight GitHub retries (default: setTimeout). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
-const firstLine = (s: string): string => s.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
+// eslint-disable-next-line no-control-regex
+const ANSI = /\u001b\[[0-9;]*m/g;
+/** direnv's own status lines (loading/export/unloading), which the .envrc step prints on success. */
+const DIRENV_NOISE = /^direnv: (loading|export|unloading|using)\b/;
+const firstLine = (s: string): string =>
+  s
+    .split("\n")
+    .map((l) => l.replace(ANSI, "").trim())
+    .find((l) => l !== "" && !DIRENV_NOISE.test(l)) ?? "";
 const why = (r: SbxResult): string => (r.timedOut ? "timeout" : String(r.code));
 
 /** The validated sub-block select.ts passed through. Defensive: a missing kitDir is a wiring bug. */
@@ -123,6 +140,7 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
   const hostNodeMajor = deps.hostNodeMajor ?? Number(process.versions.node.split(".")[0]);
   const env = deps.env ?? process.env;
   const warn = deps.warn ?? ((m: string) => console.error(m));
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((res) => setTimeout(res, ms)));
   // The handle type is adapter-neutral, so prepare remembers each handle's envAllow here for wrap.
   const handleEnvAllow = new WeakMap<SandboxHandle, string[]>();
 
@@ -221,7 +239,13 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
         }
         const repo = ctx.githubRepo;
         const check = [TOOLS_CHECK, ...envrcDirs.map(envrcCheck), ...(repo === undefined ? [] : [githubCheck(repo)])].join(" && ");
-        const r = await run(["exec", name, "sh", "-c", check]);
+        let r = await run(["exec", name, "sh", "-c", check]);
+        for (let tryNo = 1; tryNo < GITHUB_TRIES && repo !== undefined && flakyGithubStep(r) !== undefined; tryNo++) {
+          warn(`note: sandbox GitHub check (${flakyGithubStep(r)}) failed on try ${tryNo} of ${GITHUB_TRIES}: ${firstLine(r.stderr) || "no error output"}; retrying`);
+          await sleep(GITHUB_RETRY_MS);
+          r = await run(["exec", name, "sh", "-c", check]);
+        }
+        const tries = repo !== undefined && flakyGithubStep(r) !== undefined ? GITHUB_TRIES : 1;
         if (r.code === 0 && !r.timedOut && nodeMajor(r.stdout) === hostNodeMajor) return;
         if (r.timedOut || r.code === EXEC_INFRA_EXIT) throw new Error(`sbx preflight failed: ${firstLine(r.stderr)}`);
         if (nodeMajor(r.stdout) !== hostNodeMajor) {
@@ -236,7 +260,7 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
           );
         }
         const step = last === "gh" ? "gh api" : last === "git" ? "git" : undefined;
-        if (step !== undefined && repo !== undefined) throw new Error(githubFailure(step, repo, r.stderr));
+        if (step !== undefined && repo !== undefined) throw new Error(githubFailure(step, repo, r.stderr, r.code, tries));
         if (/^git version /m.test(r.stdout)) {
           throw new Error("sandbox image has no jq: add jq to the template (see docs/sandbox-sbx.md)");
         }
@@ -309,7 +333,20 @@ function listDir(dir: string): string[] {
 }
 
 /** Turns a failed GitHub step into the fix: firewall, token access, or the SSH rewrite. */
-function githubFailure(step: "git" | "gh api", repo: string, stderr: string): string {
+/** The GitHub step a failed check stopped at, when the failure is not one githubFailure diagnoses. */
+function flakyGithubStep(r: SbxResult): "git" | "gh api" | undefined {
+  if (r.code === 0 && !r.timedOut) return undefined;
+  if (r.code === EXEC_INFRA_EXIT) return undefined;
+  const last = [...r.stdout.matchAll(/^dl-step:(\w+)$/gm)].at(-1)?.[1];
+  const step = last === "gh" ? "gh api" : last === "git" ? "git" : undefined;
+  if (step === undefined) return undefined;
+  return DIAGNOSED.some((re) => re.test(r.stderr)) ? undefined : step;
+}
+
+/** Failures githubFailure names a specific fix for: retrying never helps them. */
+const DIAGNOSED = [/Approval required for/, /Not Found|HTTP 404|repository not found/i, /Permission denied \(publickey\)|Host key verification failed|ssh:/i];
+
+function githubFailure(step: "git" | "gh api", repo: string, stderr: string, code?: number | null, tries = 1): string {
   const blocked = /Approval required for ([A-Za-z0-9.-]+)/.exec(stderr);
   if (blocked) {
     const host = blocked[1];
@@ -321,7 +358,8 @@ function githubFailure(step: "git" | "gh api", repo: string, stderr: string): st
   if (/Permission denied \(publickey\)|Host key verification failed|ssh:/i.test(stderr)) {
     return 'git uses SSH inside the sandbox: add git config --global url."https://github.com/".insteadOf git@github.com: to the template (see docs/sandbox-sbx.md)';
   }
-  return `sbx preflight failed (${step}): ${firstLine(stderr)}`;
+  const after = tries > 1 ? ` after ${tries} tries` : "";
+  return `sbx preflight failed (${step})${after}: ${firstLine(stderr) || `exit ${code ?? "?"}, no error output`}`;
 }
 
 function nodeMajor(stdout: string): number | undefined {
