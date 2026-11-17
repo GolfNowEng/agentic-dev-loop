@@ -222,6 +222,8 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
       return Object.fromEntries(sbxConfig(config).hostSkills.map((n) => [n, `${sandboxSkillDir(n)}/SKILL.md`]));
     },
 
+    hostPush: () => true,
+
     onRunStart(ctx) {
       if (!ctx.dashboard) return;
       openSbxDashboard(ctx.repoRoot, (deps.dashboardDeps ?? realDashboardDeps)(ctx.log));

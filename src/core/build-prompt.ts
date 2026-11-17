@@ -26,11 +26,13 @@ export interface SkillPromptArgs {
   repoDir: string;
   /** Skill name -> absolute SKILL.md path inside a sandbox; omitted or empty outside one. */
   hostSkills?: Record<string, string>;
+  /** Dev only: the loop signs and pushes on the host, so the agent stops at ready_to_push (appends ` push=host`). */
+  hostPush?: boolean;
 }
 
 /** A host skill name as an argument key: a plain skill folder name that is not one of the fixed keys. */
 const HOST_SKILL_KEY = /^[a-z0-9][a-z0-9-]*$/;
-const RESERVED_KEYS = new Set(["run-dir", "repo-dir"]);
+const RESERVED_KEYS = new Set(["run-dir", "repo-dir", "push"]);
 
 /**
  * Characters a path in the prompt may contain. The skills paste REPO_DIR and
@@ -75,12 +77,13 @@ export function checkRepoDirPlacement(repoDir: string, devLoopRoot: string, clon
   return repoDir;
 }
 
-export function buildSkillPrompt({ role, ticketKey, runDir, repoDir, hostSkills = {} }: SkillPromptArgs): string {
+export function buildSkillPrompt({ role, ticketKey, runDir, repoDir, hostSkills = {}, hostPush = false }: SkillPromptArgs): string {
   const skill = SKILL_NAME[role];
   if (skill === undefined) throw new UnsafePathError(`role ${JSON.stringify(role)} has no skill`);
   if (typeof ticketKey !== "string" || !TICKET_KEY.test(ticketKey)) {
     throw new UnsafePathError(`ticket key ${JSON.stringify(ticketKey)} must match ${TICKET_KEY}`);
   }
+  if (hostPush && role !== "dev") throw new UnsafePathError("push=host is dev-only");
   checkAbsPath("run-dir", runDir);
   checkAbsPath("repo-dir", repoDir);
   if (!runDir.includes("/.pipeline/v2/")) {
@@ -96,11 +99,11 @@ export function buildSkillPrompt({ role, ticketKey, runDir, repoDir, hostSkills 
     .sort()
     .map((name) => {
       if (!HOST_SKILL_KEY.test(name) || RESERVED_KEYS.has(name)) {
-        throw new UnsafePathError(`host skill name ${JSON.stringify(name)} must be a plain skill name other than run-dir/repo-dir`);
+        throw new UnsafePathError(`host skill name ${JSON.stringify(name)} must be a plain skill name other than run-dir/repo-dir/push`);
       }
       return ` ${name}=${checkAbsPath(name, hostSkills[name]!)}`;
     });
-  return `/${skill} ${ticketKey} run-dir=${runDir} repo-dir=${repoDir}${pointers.join("")}`;
+  return `/${skill} ${ticketKey} run-dir=${runDir} repo-dir=${repoDir}${pointers.join("")}${hostPush ? " push=host" : ""}`;
 }
 
 /** REPO_DIR: `targetRepo.path` when set, else the absolute v2 clone dir (the skill clones it if missing). */

@@ -684,6 +684,10 @@ describe("sbx adapter: host skills (sandbox.sbx.hostSkills)", () => {
     expect(adapter().hostSkillPaths?.(CFG)).toEqual({});
   });
 
+  it("hostPush is true: the loop signs and pushes on the host", () => {
+    expect(adapter().hostPush?.(cfg)).toBe(true);
+  });
+
   it("prepare mounts each host skill folder read-only at that spot", async () => {
     const f = fakeRunner();
     await adapter(f.run).prepare({ instanceName: N, mounts: ["/abs/root"], config: cfg });
