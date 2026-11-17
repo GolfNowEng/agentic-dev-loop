@@ -204,6 +204,47 @@ describe("git reset steps", () => {
     expect(branches()).toContain("TARS-1-a");
   });
 
+  it("never fetches, on survey or run", async () => {
+    g(repo, "branch", "TARS-1-a");
+    const calls: string[][] = [];
+    const logged = (args: string[], cwd: string) => { calls.push(args); return git(args, cwd); };
+    const s = (await surveyAll(ctx({ git: logged })))[1];
+    expect(s.action).toBe("delete 1");
+    await s.run!();
+    expect(calls.filter((a) => a[0] === "fetch")).toEqual([]);
+    expect(branches()).toEqual(["master"]);
+  });
+
+  it("origin/<base> not fetched locally: needs you, deletes nothing", async () => {
+    g(repo, "branch", "TARS-1-a");
+    g(tmp, "clone", "-q", join(tmp, "origin.git"), "other");
+    await writeFile(join(tmp, "other", "b.txt"), "b\n");
+    g(join(tmp, "other"), "add", "b.txt");
+    g(join(tmp, "other"), "commit", "-q", "-m", "moved");
+    g(join(tmp, "other"), "push", "-q", "origin", "master");
+    const s = (await surveyAll(ctx()))[1];
+    expect(s).toMatchObject({ action: null, needsYou: "remote check failed: origin/master not fetched locally; run git fetch" });
+    expect(s.run).toBeUndefined();
+    expect(branches()).toContain("TARS-1-a");
+  });
+
+  it("a local branch named origin/<base> cannot shadow the ahead check", async () => {
+    await commitOn("TARS-1-b");
+    g(repo, "branch", "origin/master", "TARS-1-b");
+    const s = (await surveyAll(ctx()))[1];
+    expect(s).toMatchObject({ action: null, needsYou: "TARS-1-b has 1 unpushed commit(s)" });
+    expect(s.run).toBeUndefined();
+  });
+
+  it("a non-numeric ahead count is a failed remote check", async () => {
+    g(repo, "branch", "TARS-1-a");
+    const odd = (args: string[], cwd: string) => (args[0] === "rev-list" ? Promise.resolve("warning: x\n") : git(args, cwd));
+    const s = (await surveyAll(ctx({ git: odd })))[1];
+    expect(s).toMatchObject({ action: null });
+    expect(s.needsYou).toMatch(/^remote check failed: /);
+    expect(s.run).toBeUndefined();
+  });
+
   it("re-checks before delete and fails naming a branch pushed since the survey", async () => {
     g(repo, "branch", "TARS-1-a");
     g(repo, "branch", "TARS-1-c");

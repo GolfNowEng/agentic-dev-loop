@@ -32,15 +32,16 @@ function assertUnder(path: string, base: string): void {
   }
 }
 
-/** `refs/heads/<b>` names from `git ls-remote --heads origin` output. */
-function remoteHeads(out: string): Set<string> {
-  const heads = new Set<string>();
+/** `refs/heads/<b>` name -> sha from `git ls-remote --heads origin` output. */
+function remoteHeadShas(out: string): Map<string, string> {
+  const heads = new Map<string, string>();
   for (const line of out.split("\n")) {
-    const ref = line.split("\t")[1]?.trim();
-    if (ref?.startsWith("refs/heads/")) heads.add(ref.slice("refs/heads/".length));
+    const [sha, ref] = line.split("\t").map((x) => x?.trim());
+    if (sha && ref?.startsWith("refs/heads/")) heads.set(ref.slice("refs/heads/".length), sha);
   }
   return heads;
 }
+const remoteHeads = (out: string): Set<string> => new Set(remoteHeadShas(out).keys());
 
 export function gitSteps(ctx: ResetCtx): ResetStep[] {
   if (!TICKET_KEY.test(ctx.ticket)) throw new UnsafePathError(`ticket ${JSON.stringify(ctx.ticket)} must match ${TICKET_KEY}`);
@@ -125,30 +126,43 @@ export function gitSteps(ctx: ResetCtx): ResetStep[] {
         .split("\n").map((s) => s.trim()).filter(ours);
       if (names.length === 0) return { found: "none", action: null };
 
-      let onOrigin: Set<string>;
-      let prHeads: Set<string>;
-      try {
+      // Never fetches (survey runs on --dry-run too): origin's base sha comes
+      // from ls-remote and must already be in the local object store.
+      // Commits ahead of a sha, not of `origin/<base>`, so a local branch
+      // named `origin/<base>` can never shadow the check.
+      const remoteState = async (): Promise<{ onOrigin: Set<string>; prHeads: Set<string>; ahead: (b: string) => Promise<number> }> => {
         if (ctx.openPrHeads === null) throw new Error("no GitHub credentials");
-        await git(["fetch", "--quiet", "origin", base], repo);
-        onOrigin = remoteHeads(await git(["ls-remote", "--heads", "origin"], repo));
-        prHeads = new Set((await ctx.openPrHeads(ctx.ticket)).map((p) => p.head));
-      } catch (e) {
-        return { found: names.join(", "), action: null, needsYou: `remote check failed: ${firstLine(e)}` };
-      }
-      const head = (await git(["symbolic-ref", "--quiet", "--short", "HEAD"], repo).catch(() => "")).trim();
-      const ahead = async (b: string) => Number((await git(["rev-list", "--count", `origin/${base}..refs/heads/${b}`], repo)).trim());
+        const shas = remoteHeadShas(await git(["ls-remote", "--heads", "origin"], repo));
+        const baseSha = shas.get(base);
+        if (baseSha === undefined || !/^[0-9a-f]{40,64}$/.test(baseSha)) throw new Error(`origin has no ${base} branch`);
+        const local = await git(["cat-file", "-e", `${baseSha}^{commit}`], repo).then(() => true, () => false);
+        if (!local) throw new Error(`origin/${base} not fetched locally; run git fetch`);
+        const prHeads = new Set((await ctx.openPrHeads(ctx.ticket)).map((p) => p.head));
+        const ahead = async (b: string): Promise<number> => {
+          const out = (await git(["rev-list", "--count", `${baseSha}..refs/heads/${b}`], repo)).trim();
+          if (!/^\d+$/.test(out)) throw new Error(`could not count ${b}'s commits ahead of origin/${base}`);
+          return Number(out);
+        };
+        return { onOrigin: new Set(shas.keys()), prHeads, ahead };
+      };
 
       const found: string[] = [];
       const deletable: string[] = [];
       const blocked: string[] = [];
-      for (const b of names) {
-        if (onOrigin.has(b)) { found.push(`${b} (on origin)`); continue; }
-        if (prHeads.has(b)) { found.push(`${b} (open PR)`); continue; }
-        if (b === head) { found.push(`${b} (checked out)`); blocked.push(`${b} is checked out in ${basename(repo)}`); continue; }
-        const n = await ahead(b);
-        if (n === 0) { found.push(`${b} (0 ahead)`); deletable.push(b); continue; }
-        found.push(`${b} (${n} unpushed)`);
-        blocked.push(`${b} has ${n} unpushed commit(s)`);
+      try {
+        const st = await remoteState();
+        const head = (await git(["symbolic-ref", "--quiet", "--short", "HEAD"], repo).catch(() => "")).trim();
+        for (const b of names) {
+          if (st.onOrigin.has(b)) { found.push(`${b} (on origin)`); continue; }
+          if (st.prHeads.has(b)) { found.push(`${b} (open PR)`); continue; }
+          if (b === head) { found.push(`${b} (checked out)`); blocked.push(`${b} is checked out in ${basename(repo)}`); continue; }
+          const n = await st.ahead(b);
+          if (n === 0) { found.push(`${b} (0 ahead)`); deletable.push(b); continue; }
+          found.push(`${b} (${n} unpushed)`);
+          blocked.push(`${b} has ${n} unpushed commit(s)`);
+        }
+      } catch (e) {
+        return { found: names.join(", "), action: null, needsYou: `remote check failed: ${firstLine(e)}` };
       }
 
       if (deletable.length === 0) {
@@ -158,9 +172,9 @@ export function gitSteps(ctx: ResetCtx): ResetStep[] {
       const listing = found.map((f) => (deletable.some((b) => f === `${b} (0 ahead)`) ? `delete ${f}` : `keep ${f}`));
       const run = async (): Promise<void> => {
         const skipped: string[] = [];
-        await git(["fetch", "--quiet", "origin", base], repo);
-        const remote = remoteHeads(await git(["ls-remote", "--heads", "origin"], repo));
-        const prs = new Set((await ctx.openPrHeads!(ctx.ticket)).map((p) => p.head));
+        const st = await remoteState();
+        const remote = st.onOrigin;
+        const prs = st.prHeads;
         const nowHead = (await git(["symbolic-ref", "--quiet", "--short", "HEAD"], repo).catch(() => "")).trim();
         for (const b of deletable) {
           const why = await (async (): Promise<string | null> => {
@@ -169,7 +183,7 @@ export function gitSteps(ctx: ResetCtx): ResetStep[] {
             if (remote.has(b)) return "now on origin";
             if (prs.has(b)) return "now has an open PR";
             if (b === nowHead) return `checked out in ${basename(repo)}`;
-            const n = await ahead(b);
+            const n = await st.ahead(b);
             return n === 0 ? null : `now ${n} ahead`;
           })();
           if (why !== null) { skipped.push(`${b} (${why})`); continue; }
