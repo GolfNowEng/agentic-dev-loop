@@ -155,7 +155,11 @@ deleted; inspect it by hand.
 3. Leftover worktrees under `<targetRepo.path>/.claude/worktrees/` (or the
    v2 clone's when `targetRepo.path` is unset) named `<TICKET>-*`:
    `--role=research` only the `-ground` ones (`ticket-refine`'s Ground
-   step), `--role=dev` only the others, `all` both.
+   step), `--role=dev` only the others, `all` both; then
+   `git worktree prune` in that repo, so the branch can be deleted.
+4. The in-flight entry of a dead session lock that names the ticket and
+   role (set to `null`), so the next worker start doesn't try to resume a
+   run whose dir was just deleted. A live holder's lock is never touched.
 
 ## What gets deleted locally (whole-project, no `--ticket`)
 

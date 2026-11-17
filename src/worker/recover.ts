@@ -187,7 +187,26 @@ export function pendingResumes(ctx: Ctx): Array<{ ticket: string; role: Role; ru
 }
 
 /** Resume one pending run (dev: self-heal if a PR is open now), or null when there is none. */
+/** True for a resume-dropped result: bookkeeping only (no run, no Jira or git write), so the iteration goes on. */
+export function isDroppedResume(r: WorkerIterationResult | null): boolean {
+  return r !== null && r.kind === "did" && r.record.outcome === "resume-dropped";
+}
+
+/**
+ * Resume the first pending run whose ticket is still claimed. A dropped
+ * resume is resolved and the next one is tried, so a stale resume never
+ * uses up the iteration (`--once` would otherwise exit without polling).
+ */
 export async function resumeNext(ctx: Ctx, researchThenDev: Runner, devOnly: Runner): Promise<WorkerIterationResult | null> {
+  // Each drop appends a record that resolves its resume, so pendingResumes shrinks; the bound is a guard.
+  for (let i = 0; i < 1000; i++) {
+    const r = await resumeOne(ctx, researchThenDev, devOnly);
+    if (!isDroppedResume(r)) return r;
+  }
+  return null;
+}
+
+async function resumeOne(ctx: Ctx, researchThenDev: Runner, devOnly: Runner): Promise<WorkerIterationResult | null> {
   const next = pendingResumes(ctx)[0];
   if (!next) return null;
   let status: string;

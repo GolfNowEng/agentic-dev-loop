@@ -5,6 +5,10 @@
 //   - `<role>-<RUN_ID>` run dirs under .pipeline/v2/<project>/<session>/<ticket>/,
 //     in every session;
 //   - per-ticket only: leftover worktrees named for the ticket;
+//   - the inFlight entry of a dead session lock (`*.lock` or unadopted
+//     `*.lock.stale-*`) naming a matching ticket and role: set to null, pid and
+//     start time kept, so the next worker start doesn't adopt and "resume" a run
+//     whose dir this reset just deleted;
 //   - whole-project, role all only: session-dir leftovers (.lock.adopted-*,
 //     .acquire.stale-*/reclaim-*/release-*, .tmp-*), never a *.lock,
 //     *.lock.stale-* (unadopted in-flight records) or the .acquire mutex.
@@ -18,7 +22,8 @@
 // the real run does.
 
 import { appendFile, lstat, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import type { Config, Role } from "./types.ts";
 import { isProcessAlive } from "./session.ts";
@@ -75,6 +80,8 @@ export interface ResetPlan {
   worktreesDir: string | null;
   /** `<name>.lock` files in the sessions dir: a worker may be running; reset doesn't stop it. */
   liveLocks: string[];
+  /** Dead session locks whose inFlight names a matching ticket and role: executeReset nulls it. */
+  flightsToClear: string[];
   /** The subset of liveLocks whose holder process is alive: executeReset refuses unless ignoreLiveWorker. */
   liveWorkerLocks: string[];
   ignoreLiveWorker: boolean;
@@ -92,6 +99,9 @@ export interface ResetSummary {
   runDirsDeleted: string[];
   sessionLeftoversDeleted: string[];
   worktreesDeleted: string[];
+  flightsCleared: string[];
+  /** `git worktree prune` ran in the worktrees' repo after deleting them (false: none deleted, or no git repo there). */
+  worktreesPruned: boolean;
 }
 
 /** Display only: ~/... for paths under the home directory. */
@@ -128,6 +138,20 @@ function runDirMatches(name: string, role: ResetRole): boolean {
 const LEFTOVER = [/\.lock\.adopted-/, /^\.acquire\.stale-/, /^\.acquire\.reclaim-/, /^\.acquire\.release-/, /^\.tmp-/];
 const isLeftover = (name: string) => LEFTOVER.some((re) => re.test(name));
 const isLock = (name: string) => name.endsWith(".lock") && !name.startsWith(".");
+/** A lock a worker start may adopt an inFlight from: a lock, or an unadopted stale one. */
+const mayHoldFlight = (name: string) => !name.startsWith(".") && (name.endsWith(".lock") || name.includes(".lock.stale-"));
+
+/** True when the lock's holder is dead and its inFlight names `ticket` (any, when null) and `role`. */
+function staleFlight(raw: string, ticket: string | null, role: ResetRole, isAlive: (pid: number, started: number) => boolean): boolean {
+  if (liveHolder(raw, isAlive)) return false;
+  try {
+    const f = (JSON.parse(raw) as { inFlight?: { ticket?: unknown; role?: unknown } | null }).inFlight;
+    if (!f || typeof f !== "object") return false;
+    return (ticket === null || f.ticket === ticket) && (role === "all" || f.role === role);
+  } catch {
+    return false;
+  }
+}
 
 type Phaseish = { role?: unknown; outcome?: unknown; pr?: unknown };
 
@@ -229,6 +253,12 @@ export async function planReset(opts: ResetOptions): Promise<ResetPlan> {
     const raw = await readFile(l, "utf8").catch(() => "");
     if (liveHolder(raw, isAlive)) liveWorkerLocks.push(l);
   }
+  const flightsToClear: string[] = [];
+  for (const f of sessionFiles.filter(mayHoldFlight)) {
+    const l = join(sessionsDir, f);
+    if ((await kind(l)) !== "other") continue;
+    if (staleFlight(await readFile(l, "utf8").catch(() => ""), ticket, role, isAlive)) flightsToClear.push(l);
+  }
 
   let worktreesDir: string | null = null;
   let worktreesToRemove: string[] = [];
@@ -259,6 +289,7 @@ export async function planReset(opts: ResetOptions): Promise<ResetPlan> {
     worktreesDir,
     liveLocks,
     liveWorkerLocks,
+    flightsToClear,
     ignoreLiveWorker: opts.ignoreLiveWorker ?? false,
     includeCrossRole,
     refusedRecords,
@@ -288,6 +319,7 @@ export async function executeReset(plan: ResetPlan): Promise<ResetSummary> {
   const sessionsDir = resolve(plan.root, v2SessionsDir(plan.project));
   for (const d of plan.runDirsToRemove) assertUnder(d, projectDir, "run dir");
   for (const f of plan.sessionLeftoversToRemove) assertUnder(f, sessionsDir, "session leftover");
+  for (const f of plan.flightsToClear) assertUnder(f, sessionsDir, "session lock");
   for (const w of plan.worktreesToRemove) {
     if (!plan.worktreesDir) throw new UnsafePathError(`refusing to delete ${JSON.stringify(w)}: no worktrees dir in the plan`);
     assertUnder(w, plan.worktreesDir, "worktree");
@@ -299,6 +331,27 @@ export async function executeReset(plan: ResetPlan): Promise<ResetSummary> {
   for (const d of plan.runDirsToRemove) await rm(d, { recursive: true, force: true });
   for (const f of plan.sessionLeftoversToRemove) await rm(f, { force: true });
   for (const w of plan.worktreesToRemove) await rm(w, { recursive: true, force: true });
+  // rm leaves git's worktree entry behind ("branch is checked out at <deleted dir>"): prune it.
+  let worktreesPruned = false;
+  if (plan.worktreesToRemove.length > 0 && plan.worktreesDir) {
+    try {
+      execFileSync("git", ["-C", dirname(dirname(plan.worktreesDir)), "worktree", "prune"], { stdio: "ignore" });
+      worktreesPruned = true;
+    } catch {
+      // Not a git repo (or no git): nothing registered to prune.
+    }
+  }
+  const flightsCleared: string[] = [];
+  for (const f of plan.flightsToClear) {
+    // Re-read and re-check liveness: a worker may have started since the plan (it would rename
+    // this lock away, or write a live one at the same path). Rewritten via temp file + rename.
+    const raw = await readFile(f, "utf8").catch(() => "");
+    if (!staleFlight(raw, plan.ticketKey, plan.role, isProcessAlive)) continue;
+    const tmp = join(sessionsDir, `.tmp-reset-${process.pid}`);
+    await writeFile(tmp, JSON.stringify({ ...JSON.parse(raw), inFlight: null }), "utf8");
+    await rename(tmp, f);
+    flightsCleared.push(f);
+  }
 
   const summary: ResetSummary = {
     recordsArchived: 0,
@@ -307,6 +360,8 @@ export async function executeReset(plan: ResetPlan): Promise<ResetSummary> {
     runDirsDeleted: plan.runDirsToRemove,
     sessionLeftoversDeleted: plan.sessionLeftoversToRemove,
     worktreesDeleted: plan.worktreesToRemove,
+    flightsCleared,
+    worktreesPruned,
   };
 
   const lines = plan.runsLogExists ? await readLines(plan.runsLogPath) : null;
@@ -355,6 +410,11 @@ export function describeResetPlan(plan: ResetPlan): string {
         : "- worktrees: none matching (or no config to find them)",
     );
   }
+  if (plan.flightsToClear.length > 0) {
+    lines.push(
+      `- clear the in-flight ${plan.ticketKey ?? "matching"}${plan.role === "all" ? "" : ` ${plan.role}`} run recorded in ${plan.flightsToClear.length} dead session lock(s): ${plan.flightsToClear.map(shortenPath).join(", ")}`,
+    );
+  }
   for (const r of plan.refusedRecords) {
     lines.push(`- REFUSED (${r.reason}): a ${r.ticket} record stays in the live log; --include-cross-role archives it`);
   }
@@ -385,9 +445,12 @@ export function describeResetSummary(summary: ResetSummary): string {
   if (summary.sessionLeftoversDeleted.length > 0) {
     lines.push(`- ${summary.sessionLeftoversDeleted.length} session leftover(s) deleted`);
   }
+  if (summary.flightsCleared.length > 0) {
+    lines.push(`- ${summary.flightsCleared.length} stale in-flight run(s) cleared from dead session lock(s)`);
+  }
   lines.push(
     summary.worktreesDeleted.length > 0
-      ? `- ${summary.worktreesDeleted.length} worktree(s) deleted: ${summary.worktreesDeleted.map(shortenPath).join(", ")}`
+      ? `- ${summary.worktreesDeleted.length} worktree(s) deleted: ${summary.worktreesDeleted.map(shortenPath).join(", ")}${summary.worktreesPruned ? " (git worktree prune run)" : ""}`
       : "- no worktrees deleted",
   );
   return lines.join("\n");
