@@ -19,6 +19,23 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[core]` reset-project, per ticket, is a checklist: it surveys local files,
+  git, Jira, GitHub and the sandbox adapters, prints one table, asks
+  `Proceed? [y/N]` once (`--yes` when there is no terminal), runs the rows
+  (sandbox, git, local, Jira/GitHub), then prints `Ran` and `After reset`
+  tables and ends `<KEY> is at zero` or the steps that need you. It now also
+  resets the Jira status and label and deletes the loop's own comments (a
+  loop prefix AND created inside a recorded run window), removes unpushed
+  stale worktrees and branches, and removes leftover sandboxes of every
+  configured adapter (`--sandbox=<name>` adds one). Both reset scripts load
+  the env file; without credentials the Jira/GitHub rows say needs you. The
+  reset-project skill tells agents to `--dry-run`, show the table, and rerun
+  with `--yes` only after a yes. Whole-project reset is unchanged. Docs:
+  `docs/reset.md`.
+- `[core]` The "recently ended" poll hold is now 2 minutes (was 10) and only
+  follows a run that changed the ticket's Jira status (`jira_status_changed`
+  on the record). A skipped ticket logs `[worker] <KEY> skipped: a run on it
+  ended <N>s|<M>m ago`.
 - `[research]` A mirror Issue closed as "not planned" (what a reset leaves) is
   never reused. `main.ts` opens a fresh Issue whose body ends with
   `Previous attempt: #<n>` lines, and ticket-refine Step 0.5 reads the old
@@ -30,8 +47,9 @@ sbx adapter, not yet dogfooded). Design:
   longer In Progress) and exited without polling. A `resume-dropped` is
   bookkeeping only, so the worker now resolves every stale resume and goes
   on to poll in the same iteration. It also no longer puts the ticket in the
-  10-minute "recently ended" hold (that hold covers Jira's index lag after a
-  write, and a dropped resume writes nothing), which kept the rerun idle.
+  "recently ended" hold (that hold covers Jira's index lag after a status
+  write, and a dropped resume writes nothing), which kept the rerun idle. The
+  hold has since been cut to 2 minutes and to status-changing runs only.
 - `[core]` reset-project clears a dead session lock's in-flight entry for
   the reset ticket and role (so a reset run isn't "resumed"), and runs
   `git worktree prune` after deleting worktrees (the branch was otherwise
