@@ -1,3 +1,5 @@
+import { allowedToolsFor } from "../../core/atlassian-tools.ts";
+
 /**
  * --allowedTools for the research role's `claude -p` (ticket-refine), moved
  * verbatim from research-loop's v1 src/main.ts. Never unioned with dev's.
@@ -25,18 +27,8 @@
  * references prior art or a linked doc, and their absence produced a
  * real agent_error (verdict.json never written) on TARS-1391's first
  * attempt on 2026-09-02, confirmed via that run's own permission_denials.
+ *
+ * The Atlassian names come from src/core/atlassian-tools.ts (the one list the
+ * hooks are tested against); this is the host-connector form.
  */
-export const ALLOWED_TOOLS = [
-  "mcp__atlassian__getAccessibleAtlassianResources",
-  "mcp__atlassian__getJiraIssue",
-  "mcp__atlassian__searchJiraIssuesUsingJql",
-  "mcp__atlassian__addCommentToJiraIssue",
-  "mcp__atlassian__editJiraIssue",
-  "mcp__atlassian__search",
-  "mcp__atlassian__getConfluencePage",
-  "mcp__atlassian__searchConfluenceUsingCql",
-  "Bash",
-  "Read",
-  "Grep",
-  "Glob",
-].join(",");
+export const ALLOWED_TOOLS = allowedToolsFor("research");

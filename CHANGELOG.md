@@ -19,6 +19,18 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[core]` `[hooks]` sbx: the sandboxed agent's Atlassian tools are named
+  `mcp__mcp-gateway__*` with Atlassian's v2 names, but the allowlist only
+  named `mcp__atlassian__*`, so the second TARS-1634 run was denied
+  `getAccessibleAtlassianResources` at intake. `src/core/atlassian-tools.ts`
+  is now the one list of Atlassian tools; each role's allowlist comes from
+  it, in the gateway form when the adapter says it proxies Atlassian
+  (`atlassianMcp`). Same tools only; generic/destructive gateway tools stay
+  denied. The secret-scan, comment-edit and eval-boundary hooks now match
+  any MCP server name (they let an unknown name through silently before), the
+  comment-edit rule covers v2's `addOrEditJiraIssueComment`, and a test ties
+  the hook matcher to the list. `sbx:smoke` makes one read-only Jira call by
+  the gateway name.
 - `[core]` sbx: `sandbox.sbx.mcp` (webtarsthree: `["atlassian"]`) passes
   `--static-mcp`, so the sandboxed agent has Jira tools. The first sandboxed
   run (TARS-1634) failed at intake with "MCP gateway permission denied":

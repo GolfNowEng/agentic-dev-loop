@@ -161,16 +161,16 @@ withNoJqPath((dir) => {
   check("secret nested in MCP tool_input.fields: exit code is 2", result.status === 2, `got ${result.status}`);
 }
 
-// Table-driven: every tool name in the merged mcp__atlassian__(...) matcher
+// Table-driven: every tool name in the merged mcp__.+__(...) matcher, under
+// both the host and the sbx gateway server names,
 // denies a seeded fake secret. Names come from .claude/settings.json itself,
 // so a tool added to the matcher is covered without editing this file.
 {
   const settings = JSON.parse(readFileSync(join(REPO_ROOT, ".claude", "settings.json"), "utf8"));
-  const matcher = (settings.hooks?.PreToolUse ?? []).map((e) => e.matcher).find((m) => m?.startsWith("mcp__atlassian__"));
-  const names = /^mcp__atlassian__\((.+)\)$/.exec(matcher ?? "")?.[1]?.split("|") ?? [];
-  check("settings.json has an mcp__atlassian__(...) matcher with tool names", names.length > 0, String(matcher));
-  for (const name of names) {
-    const tool = `mcp__atlassian__${name}`;
+  const matcher = (settings.hooks?.PreToolUse ?? []).map((e) => e.matcher).find((m) => m?.startsWith("mcp__.+__("));
+  const names = /^mcp__\.\+__\((.+)\)$/.exec(matcher ?? "")?.[1]?.split("|") ?? [];
+  check("settings.json has an mcp__.+__(...) matcher with tool names (any server)", names.length > 0, String(matcher));
+  for (const tool of names.flatMap((n) => ["atlassian", "mcp-gateway"].map((s) => `mcp__${s}__${n}`))) {
     const result = run(mcp(tool, { cloudId: "x", body: `note: ${SECRET}`, commentBody: `note: ${SECRET}` }));
     check(`table: ${tool} with a seeded secret: exit code is 2`, result.status === 2, `got ${result.status}`);
     const clean = run(mcp(tool, { cloudId: "x", body: "clean", commentBody: "clean" }));

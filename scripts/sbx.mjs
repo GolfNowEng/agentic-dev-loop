@@ -5,7 +5,8 @@
 //   npm run sbx:dashboard                    sbx's live TUI (watch the loop's sandboxes come and go)
 //   npm run sbx:cleanup [-- --project=webtarsthree]   remove this project's leftover dl-* sandboxes
 //   npm run sbx:smoke   [-- --project=webtarsthree]   one sandbox built from the loop's create args,
-//                                            one tiny `claude -p` inside it, then removed (a few cents)
+//                                            one tiny `claude -p` inside it, plus one read-only Jira
+//                                            call when sandbox.sbx.mcp lists atlassian, then removed (a few cents)
 //   npm run sbx:template -- --tag=v3         explain the template rebuild
 //   npm run sbx:template:build -- --tag=v3 [--node=26]   rebuild it: build sandbox, sandbox/sbx/template.sh,
 //                                            save, remove (packages live in that script)
@@ -23,6 +24,7 @@ import { fillModelEnvFromClaudeSettings } from "../src/core/claude-settings-env.
 import { repoSlugFromUrl } from "../src/core/config.ts";
 import { allowHintLines, createArgs, rootEnvFiles } from "../src/sandbox/sbx/adapter.ts";
 import { validateSbxConfig } from "../src/sandbox/sbx/config.ts";
+import { sbxAdapter } from "../src/sandbox/sbx/index.ts";
 import { sandboxInstancePrefix } from "../src/worker/skill-runner.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -169,6 +171,20 @@ switch (cmd) {
       if (sbx(create) !== 0) throw new Error("sbx create failed");
       const envArgs = cfg.envAllow.filter((n) => process.env[n]).flatMap((n) => ["-e", n]);
       code = sbx(["exec", "-w", ROOT, ...envArgs, name, "claude", "-p", "--model", "haiku", "Reply with exactly: sandbox ok"]);
+      // The loop's allowlist uses the adapter's Atlassian tool names; prove one is callable by that name.
+      const mcp = code === 0 ? sbxAdapter.atlassianMcp?.(cfg) : undefined;
+      if (mcp) {
+        const tool = `mcp__${mcp.server}__getAccessibleAtlassianResources`;
+        console.log(`\nJira check: calling ${tool} (read-only)...`);
+        const ask = `Call the tool ${tool} once. If it returns at least one Atlassian site, reply with exactly: jira ok. Otherwise reply with exactly: jira failed, then one line saying why.`;
+        const r = spawnSync("sbx", ["exec", "-w", ROOT, ...envArgs, name, "claude", "-p", "--model", "haiku", `--allowedTools=${tool}`, ask], { encoding: "utf8" });
+        const out = (r.stdout ?? "").trim();
+        console.log(out || (r.stderr ?? "").trim());
+        if (r.status !== 0 || !/^jira ok\b/m.test(out)) {
+          code = r.status || 1;
+          console.log(`Jira check failed: the sandbox could not call ${tool}. Check: sbx mcp ls (atlassian must be ready), then docs/sandbox-sbx.md section 9.`);
+        }
+      }
       console.log(code === 0 ? "\nSmoke test passed." : `\nSmoke test failed (exit ${code}). Check: npm run sbx:status`);
     } catch (err) {
       console.error(String(err.message ?? err));

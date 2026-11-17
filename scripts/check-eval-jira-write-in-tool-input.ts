@@ -6,7 +6,10 @@
  * guarantee that a `claude -p` spawned during an eval writes to no Jira
  * ticket except the eval's own.
  *
- * Rules, for `mcp__atlassian__*` tools only (anything else is allowed):
+ * Rules, for Atlassian MCP tools only (anything else is allowed). A tool is
+ * Atlassian when its server is `atlassian` or `mcp-gateway` (the sbx sandbox's
+ * proxy), or its bare name is a known Atlassian tool under any server; both
+ * the host (v1) and Atlassian's /v2/mcp tool names are known:
  *   - a read tool (READ_TOOLS) is always allowed;
  *   - a keyed write (KEYED_WRITE_TOOLS) is allowed only when every key it
  *     names (`issueIdOrKey`, `issueKey`; at least one) is in the list;
@@ -36,41 +39,68 @@ export const EVAL_SUMMARY_PREFIX = "[dev-loop-eval]";
 export const EVAL_LABEL = "dev-loop-eval";
 export const EVAL_PROJECT_KEY = "TARS";
 
-const P = "mcp__atlassian__";
+/** Servers whose every tool is treated as Atlassian (unknown ones are denied while active). */
+const ATLASSIAN_SERVERS: ReadonlySet<string> = new Set(["atlassian", "mcp-gateway"]);
 
-export const READ_TOOLS: ReadonlySet<string> = new Set(
-  [
-    "atlassianUserInfo",
-    "fetch",
-    "getAccessibleAtlassianResources",
-    "getConfluenceCommentChildren",
-    "getConfluencePage",
-    "getConfluencePageDescendants",
-    "getConfluencePageFooterComments",
-    "getConfluencePageInlineComments",
-    "getConfluenceSpaces",
-    "getContentFormatGuide",
-    "getIssueLinkTypes",
-    "getJiraIssue",
-    "getJiraIssueRemoteIssueLinks",
-    "getJiraIssueTypeMetaWithFields",
-    "getJiraProjectIssueTypesMetadata",
-    "getPagesInConfluenceSpace",
-    "getTransitionsForJiraIssue",
-    "getVisibleJiraProjects",
-    "lookupJiraAccountId",
-    "search",
-    "searchConfluenceUsingCql",
-    "searchJiraIssuesUsingJql",
-  ].map((t) => P + t),
-);
+export const READ_TOOLS: ReadonlySet<string> = new Set([
+  // v1 (host connector)
+  "atlassianUserInfo",
+  "fetch",
+  "getAccessibleAtlassianResources",
+  "getConfluenceCommentChildren",
+  "getConfluencePage",
+  "getConfluencePageDescendants",
+  "getConfluencePageFooterComments",
+  "getConfluencePageInlineComments",
+  "getConfluenceSpaces",
+  "getContentFormatGuide",
+  "getIssueLinkTypes",
+  "getJiraIssue",
+  "getJiraIssueRemoteIssueLinks",
+  "getJiraIssueTypeMetaWithFields",
+  "getJiraProjectIssueTypesMetadata",
+  "getPagesInConfluenceSpace",
+  "getTransitionsForJiraIssue",
+  "getVisibleJiraProjects",
+  "lookupJiraAccountId",
+  "search",
+  "searchConfluenceUsingCql",
+  "searchJiraIssuesUsingJql",
+  // v2 (/v2/mcp, e.g. through the sbx MCP gateway)
+  "discover",
+  "executeRead",
+  "getCollaborators",
+  "getConfluenceContent",
+  "getGraphContext",
+  "getGraphObject",
+  "getLoomObjectsContent",
+  "getPeopleInfo",
+  "getWorkActivity",
+  "getWorkPortfolio",
+  "listJiraIssueComments",
+  "searchConfluence",
+]);
 
-export const KEYED_WRITE_TOOLS: ReadonlySet<string> = new Set(
-  ["addCommentToJiraIssue", "editJiraIssue", "transitionJiraIssue", "addWorklogToJiraIssue"].map((t) => P + t),
-);
+export const KEYED_WRITE_TOOLS: ReadonlySet<string> = new Set([
+  "addCommentToJiraIssue",
+  "addOrEditJiraIssueComment",
+  "editJiraIssue",
+  "transitionJiraIssue",
+  "addWorklogToJiraIssue",
+]);
 
-const LINK_TOOL = `${P}createIssueLink`;
-const CREATE_TOOL = `${P}createJiraIssue`;
+const LINK_TOOL = "createIssueLink";
+const CREATE_TOOL = "createJiraIssue";
+
+const KNOWN: ReadonlySet<string> = new Set([...READ_TOOLS, ...KEYED_WRITE_TOOLS, LINK_TOOL, CREATE_TOOL]);
+
+/** The bare Atlassian tool name, or undefined for a tool this hook does not police. */
+function atlassianName(toolName: string): string | undefined {
+  const m = /^mcp__(.+?)__(.+)$/.exec(toolName);
+  if (!m) return undefined;
+  const [, server, name] = m;
+  return ATLASSIAN_SERVERS.has(server) || KNOWN.has(name) ? name : undefined;
+}
 
 export function parseKeys(raw: string): Set<string> {
   return new Set(
@@ -118,23 +148,24 @@ export function decideExitCode(stdin: string, keysEnv: string): 0 | 1 | 2 {
     const record = payload as Record<string, unknown>;
     const toolName = record.tool_name;
     if (typeof toolName !== "string" || toolName.length === 0) return 2;
-    if (!toolName.startsWith(P)) return 0;
-    if (READ_TOOLS.has(toolName)) return 0;
+    const name = atlassianName(toolName);
+    if (name === undefined) return 0;
+    if (READ_TOOLS.has(name)) return 0;
 
     const input = record.tool_input;
     if (typeof input !== "object" || input === null || Array.isArray(input)) return 2;
     const ti = input as Record<string, unknown>;
     const keys = parseKeys(keysEnv);
 
-    if (KEYED_WRITE_TOOLS.has(toolName)) {
+    if (KEYED_WRITE_TOOLS.has(name)) {
       const named = ["issueIdOrKey", "issueKey"].filter((f) => f in ti).map((f) => ti[f]);
       if (named.length === 0) return 1;
       return named.every((k) => listed(keys, k)) ? 0 : 1;
     }
-    if (toolName === LINK_TOOL) {
+    if (name === LINK_TOOL) {
       return listed(keys, ti.inwardIssue) && listed(keys, ti.outwardIssue) ? 0 : 1;
     }
-    if (toolName === CREATE_TOOL) return allowedCreate(ti, keys) ? 0 : 1;
+    if (name === CREATE_TOOL) return allowedCreate(ti, keys) ? 0 : 1;
     return 1;
   } catch {
     return 2;

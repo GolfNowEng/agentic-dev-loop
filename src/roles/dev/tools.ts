@@ -1,3 +1,5 @@
+import { allowedToolsFor } from "../../core/atlassian-tools.ts";
+
 /**
  * --allowedTools for the dev role's `claude -p` (ticket-to-pr), moved
  * verbatim from dev-loop's v1 src/main.ts. Never unioned with research's.
@@ -21,14 +23,8 @@
  * Edit itself refuses to touch a file that hasn't been Read first in-
  * session -- confirmed live on TARS-1341, which exhausted its retries
  * stuck on exactly that Read prompt and exited with no verdict.json.
+ *
+ * The Atlassian names come from src/core/atlassian-tools.ts (the one list the
+ * hooks are tested against); this is the host-connector form.
  */
-export const ALLOWED_TOOLS = [
-  "mcp__atlassian__getAccessibleAtlassianResources",
-  "mcp__atlassian__getJiraIssue",
-  "mcp__atlassian__createJiraIssue",
-  "mcp__atlassian__createIssueLink",
-  "Bash",
-  "Read",
-  "Grep",
-  "Glob",
-].join(",");
+export const ALLOWED_TOOLS = allowedToolsFor("dev");

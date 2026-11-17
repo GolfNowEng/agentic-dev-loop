@@ -12,7 +12,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "mcp__atlassian__(addCommentToJiraIssue|editJiraIssue|addWorklogToJiraIssue|createIssueLink|createJiraIssue|createConfluencePage|updateConfluencePage|createConfluenceFooterComment|createConfluenceInlineComment)",
+        "matcher": "mcp__.+__(addCommentToJiraIssue|editJiraIssue|addWorklogToJiraIssue|createIssueLink|createJiraIssue|createConfluencePage|updateConfluencePage|createConfluenceFooterComment|createConfluenceInlineComment|transitionJiraIssue|addOrEditJiraIssueComment|createConfluenceContent|updateConfluenceContent|addGraphContext|executeWrite|executeDestructive)",
         "hooks": [
           {
             "type": "command",
@@ -46,7 +46,7 @@
         ]
       },
       {
-        "matcher": "mcp__atlassian__.*",
+        "matcher": "mcp__.*",
         "hooks": [
           {
             "type": "command",

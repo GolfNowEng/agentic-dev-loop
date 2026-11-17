@@ -188,3 +188,20 @@ is missing or not ready. Without it, research fails at intake with "Jira
 access unavailable (MCP gateway permission denied)" (seen on the first
 run, 2026-11-16). Verified: a haiku `claude -p` in a sandbox read
 TARS-1634 through it.
+
+**Tool names inside the sandbox.** sbx serves every static MCP server as one
+server named `mcp-gateway`, and Atlassian's `/v2/mcp` renamed some tools, so
+the agent sees `mcp__mcp-gateway__addOrEditJiraIssueComment` where your host
+session sees `mcp__atlassian__addCommentToJiraIssue`. The second sandboxed
+run (TARS-1634, 2026-11-16) failed at intake because the allowlist only named
+the host form. `src/core/atlassian-tools.ts` is now the one list of Atlassian
+tools: each role's allowlist is built from it, in the host form or, when the
+adapter proxies Atlassian (`atlassianMcp`), the gateway form. Only the same
+tools are allowed under either name; the generic `executeWrite` /
+`executeDestructive` / `transitionJiraIssue` are never allowed. Dev's
+`createIssueLink` has no v2 tool, so a sandboxed dev run can file a follow-up
+ticket but not link it. The hooks in `.claude/settings.json` match the tool
+name under any server (`mcp__.+__(...)`), and `test/core/atlassian-tools.test.ts`
+fails if a write tool is missing from them. `npm run sbx:smoke` calls
+`getAccessibleAtlassianResources` by its gateway name, so a mismatch shows up
+there for a few cents.
