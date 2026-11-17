@@ -9,18 +9,23 @@
 // here before posting a comment with it.
 import type { Role } from "./types.ts";
 
+/** src/worker/cycle-steps.ts reportMissingFields: posted by the research claim (Ruling R9: a loop comment). */
+const MISSING_FIELDS = "dev-loop could not start this ticket:";
+
 export const LOOP_COMMENT_PREFIXES: Record<Role, readonly string[]> = {
   // ticket-refine's pass pointer and bounce comment (CONTRACT in src/core/contract.ts).
-  research: ["✅ research-loop", "❌ research-loop"],
+  research: ["✅ research-loop -", "❌ research-loop -", MISSING_FIELDS],
   // src/roles/dev/code-review.ts buildBounceCommentAdf, src/worker/attempts.ts buildAttemptsCommentAdf.
-  dev: ["✅ dev-loop", "❌ dev-loop"],
+  dev: ["✅ dev-loop -", "❌ dev-loop -", MISSING_FIELDS],
 };
 
-/** The role whose loop prefix opens `firstLine` (leading `#`s and spaces ignored), else null. */
-export function loopCommentRole(firstLine: string): Role | null {
+/** Every role whose loop prefix opens `firstLine` (leading `#`s and spaces ignored). */
+export function loopCommentRoles(firstLine: string): Role[] {
   const line = firstLine.replace(/^[#\s]+/, "");
-  for (const role of ["research", "dev"] as const) {
-    if (LOOP_COMMENT_PREFIXES[role].some((p) => line.startsWith(p))) return role;
-  }
-  return null;
+  return (["research", "dev"] as const).filter((role) => LOOP_COMMENT_PREFIXES[role].some((p) => line.startsWith(p)));
+}
+
+/** The first role whose loop prefix opens `firstLine`, else null. */
+export function loopCommentRole(firstLine: string): Role | null {
+  return loopCommentRoles(firstLine)[0] ?? null;
 }

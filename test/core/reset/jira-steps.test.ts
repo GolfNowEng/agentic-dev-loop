@@ -39,8 +39,8 @@ class FakeJira {
     this.labels = [...this.labels.filter((l) => l !== from && l !== to), to];
   }
   async removeLabel(k: string, l: string) { this.writes.push(`removeLabel ${k} ${l}`); this.labels = this.labels.filter((x) => x !== l); }
-  add(id: string, at: number, firstLine: string) {
-    this.comments.push({ id, created: iso(at), firstLine, url: `https://jira.example/browse/TARS-1?focusedCommentId=${id}` });
+  add(id: string, at: number | string, firstLine: string) {
+    this.comments.push({ id, created: typeof at === "string" ? at : iso(at), firstLine, url: `https://jira.example/browse/TARS-1?focusedCommentId=${id}` });
   }
 }
 
@@ -132,6 +132,34 @@ describe("jira reset steps", () => {
     const s = jiraSteps(ctx(), async () => (calls++ === 0 ? [researchWin] : [])).find((x) => x.name === "loop comments")!;
     await expect((await s.survey()).run!()).rejects.toThrow("could not delete");
     expect(await s.survey()).toMatchObject({ found: "1 (1 research, 0 dev)", needsYou: expect.stringContaining(": 404") });
+  });
+
+  it("deletes a missing-fields claim comment in a window and keeps it outside every window", async () => {
+    jira.add("1", BASE + 60_000, "dev-loop could not start this ticket: moving it to In Progress requires Story Points.");
+    jira.add("2", BASE - 60_000, "dev-loop could not start this ticket: moving it to In Progress requires Story Points.");
+    const sv = await step(ctx(), "loop comments", [researchWin]).survey();
+    expect(sv).toMatchObject({ found: "1 (1 research, 0 dev)", action: "delete 1" });
+    await sv.run!();
+    expect(jira.writes).toEqual(["deleteComment TARS-1 1"]);
+    // Shared by both roles: a dev window also matches it, and a dev reset deletes it there.
+    jira.add("3", BASE + 2 * H + 60_000, "dev-loop could not start this ticket: x");
+    expect(await step(ctx({ role: "dev" }), "loop comments").survey()).toMatchObject({ found: "1 (0 research, 1 dev)" });
+  });
+
+  it("never matches a look-alike of a loop prefix", async () => {
+    jira.add("1", BASE + 60_000, "✅ research-loopX looks done");
+    jira.add("2", BASE + 2 * H + 60_000, "✅ dev-loop looks good");
+    jira.add("3", BASE + 2 * H + 90_000, "❌ dev-loop");
+    expect(await step(ctx(), "loop comments").survey()).toEqual({ found: "none", action: null });
+  });
+
+  it("parses a -0800 created time at the window edge", async () => {
+    // researchWin ends at 11:00Z = 03:00-0800.
+    jira.add("1", "2026-11-16T02:59:00.000-0800", "✅ research-loop - in by a minute");
+    jira.add("2", "2026-11-16T03:01:00.000-0800", "✅ research-loop - out by a minute");
+    const sv = await step(ctx(), "loop comments", [researchWin]).survey();
+    expect(sv).toMatchObject({ found: "1 (1 research, 0 dev)", action: "delete 1" });
+    expect(sv.details![0]).toMatch(/ ✅ research-loop - in by a minute$/);
   });
 
   it("status moves to claimStatus.from", async () => {

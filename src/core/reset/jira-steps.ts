@@ -5,7 +5,7 @@
 // window of that same role. Nothing else is ever deleted. Only the two
 // pipeline labels (roles.research.triggerLabel / handoffLabel) are touched.
 import { readIterations } from "../iteration-log.ts";
-import { loopCommentRole } from "../loop-comments.ts";
+import { loopCommentRoles } from "../loop-comments.ts";
 import { v2RunsArchive, v2RunsLog } from "../paths.ts";
 import type { JiraClient, JiraComment } from "../jira-client.ts";
 import type { Role } from "../types.ts";
@@ -81,11 +81,12 @@ export function jiraSteps(ctx: ResetCtx, windows: () => Promise<RunWindow[]>): R
       const all = await jira.listComments(key);
       const picked: { c: JiraComment; role: Role }[] = [];
       for (const c of all) {
-        const role = loopCommentRole(c.firstLine);
-        if (role === null || !inScope(role)) continue;
         const at = Date.parse(c.created);
-        const inWindow = Number.isFinite(at) && ws.some((w) => w.role === role && at >= w.from && at <= w.to);
-        if (inWindow || listed.get(c.id) === role) picked.push({ c, role });
+        // A prefix shared by both roles counts for whichever in-scope role's window holds the comment.
+        const role = loopCommentRoles(c.firstLine).filter(inScope).find(
+          (r) => listed.get(c.id) === r || (Number.isFinite(at) && ws.some((w) => w.role === r && at >= w.from && at <= w.to)),
+        );
+        if (role !== undefined) picked.push({ c, role });
       }
       if (picked.length === 0) return { found: "none", action: null };
       for (const { c, role } of picked) listed.set(c.id, role);

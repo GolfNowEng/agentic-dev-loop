@@ -1,6 +1,7 @@
 // The ticket's run windows: when each of its runs could have posted to Jira.
 // From every phase in the live runs log and the reset archive
-// ([started, ended + 2 min]) and from every run dir of the ticket, any
+// ([started, ended + 2 min]), every claim-error record (research,
+// [started - 2 min, ended + 2 min]) and from every run dir of the ticket, any
 // session, with a progress.jsonl ([first ts, last ts + 2 min]), so a run
 // stopped mid-way with no record still has a window. Read before anything is
 // archived or deleted (the runner surveys every row before running any).
@@ -38,6 +39,13 @@ export async function runWindows(ctx: ResetCtx): Promise<RunWindow[]> {
   for (const rel of [v2RunsLog(ctx.slug), v2RunsArchive(ctx.slug)]) {
     for (const rec of await readIterations(resetPath(ctx, rel))) {
       if (rec.ticket !== ctx.ticket) continue;
+      // The research claim posts its missing-fields comment just before this
+      // phase-less record is appended, so its window has slack on both sides.
+      if (rec.outcome === "claim-error") {
+        const from = Date.parse(rec.started);
+        const to = Date.parse(rec.ended);
+        if (Number.isFinite(from) && Number.isFinite(to)) out.push({ role: "research", from: from - WINDOW_SLACK_MS, to: to + WINDOW_SLACK_MS });
+      }
       for (const p of rec.phases) {
         const from = Date.parse(p.started);
         const to = Date.parse(p.ended);

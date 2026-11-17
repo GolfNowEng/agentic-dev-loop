@@ -45,6 +45,14 @@ describe("runWindows", () => {
     expect(w).toHaveLength(2);
   });
 
+  it("a claim-error record makes a research window with slack on both sides", async () => {
+    const r = JSON.stringify({ ticket: "TARS-1", session: "s1", started: "2026-11-16T10:00:00Z", ended: "2026-11-16T10:00:01Z", outcome: "claim-error", phases: [] });
+    await writeFile(join(root, "runs/v2/proj.jsonl"), r + "\n");
+    expect(await runWindows(ctx())).toEqual([
+      { role: "research", from: t("2026-11-16T10:00:00Z") - SLACK, to: t("2026-11-16T10:00:01Z") + SLACK },
+    ]);
+  });
+
   it("a run dir's progress.jsonl makes a window", async () => {
     await runDir("s9", "TARS-1", "dev-20261116T120000Z", [
       JSON.stringify({ ts: "2026-11-16T12:00:05Z", phase: "intake", event: "phase_start" }),
