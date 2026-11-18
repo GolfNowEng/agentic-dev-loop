@@ -23,6 +23,9 @@
   --mac: #efeaf6; --mac-edge: #7656a8;
   --ext: #e8f2e5; --ext-edge: #3f8a4b;
   --key: #c98a1c; --bad: #b4473b; --un: #f8e9e6; --chip: #ffffff; --chip-on: #1d2420; --chip-on-ink: #f6f7f4;
+  --a-loop: #1f6f78; --a-loop-bg: #e2f1f2; --a-robot: #a8457a; --a-robot-bg: #f7e6ef;
+  --a-you: #8a5a12; --a-you-bg: #f6ecd9; --a-sbx: #3d67a3; --a-sbx-bg: #e3ebf6;
+  --ans-yes: #2f7d3e; --ans-no: #6b7570; --ans-soft: #a86a0c;
   --display: "Fraunces", Georgia, serif;
   --body: "Atkinson Hyperlegible", system-ui, sans-serif;
   color-scheme: light;
@@ -32,6 +35,9 @@
     --bg: #151a17; --ink: #e6ebe7; --muted: #9aa69f; --line: #34403a; --card: #1b221e;
     --room: #1d2a3a; --room-edge: #7fa3d4; --mac: #241e30; --mac-edge: #b39ae2;
     --ext: #1b2a1e; --ext-edge: #7dc28a; --key: #e3a83c; --bad: #e07a6e; --un: #2e1d1b;
+    --a-loop: #6cc4cc; --a-loop-bg: #15302f; --a-robot: #e48bbb; --a-robot-bg: #35192a;
+    --a-you: #e0b062; --a-you-bg: #33270f; --a-sbx: #8fb2e3; --a-sbx-bg: #1b2a3e;
+    --ans-yes: #7dc28a; --ans-no: #a3ada8; --ans-soft: #e8a83a;
     --chip: #1b221e; --chip-on: #e6ebe7; --chip-on-ink: #151a17; color-scheme: dark;
   }
 }
@@ -39,6 +45,9 @@
   --bg: #151a17; --ink: #e6ebe7; --muted: #9aa69f; --line: #34403a; --card: #1b221e;
   --room: #1d2a3a; --room-edge: #7fa3d4; --mac: #241e30; --mac-edge: #b39ae2;
   --ext: #1b2a1e; --ext-edge: #7dc28a; --key: #e3a83c; --bad: #e07a6e; --un: #2e1d1b;
+  --a-loop: #6cc4cc; --a-loop-bg: #15302f; --a-robot: #e48bbb; --a-robot-bg: #35192a;
+  --a-you: #e0b062; --a-you-bg: #33270f; --a-sbx: #8fb2e3; --a-sbx-bg: #1b2a3e;
+  --ans-yes: #7dc28a; --ans-no: #a3ada8; --ans-soft: #e8a83a;
   --chip: #1b221e; --chip-on: #e6ebe7; --chip-on-ink: #151a17; color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -159,15 +168,25 @@ h1 code.name { font-weight: 700; }
 #envtable tbody.g-repo th.place { border-left-color: var(--ext-edge); background: var(--ext); }
 #envtable tbody.g-sbx th.place { border-left-color: var(--room-edge); background: var(--room); }
 #envtable tbody tr > td:first-of-type { white-space: nowrap; }
-.can { font-weight: 700; white-space: nowrap; }
-.can-no { color: var(--muted); }
-.can-warn, .can-soft { color: var(--key); }
-.why-txt { color: var(--muted); }
-.by { display: inline-block; font-size: .78rem; font-weight: 700; border-radius: 999px; padding: 0 9px; border: 1.5px solid; white-space: nowrap; }
-.by-loop { color: var(--mac-edge); border-color: var(--mac-edge); }
-.by-you { color: var(--key); border-color: var(--key); }
-.by-robot { color: var(--ink); border-color: var(--muted); }
-.by-sbx { color: var(--room-edge); border-color: var(--room-edge); }
+.ico { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.by { display: inline-flex; align-items: center; gap: 5px; font-size: .8rem; font-weight: 700; border-radius: 999px; padding: 2px 10px 2px 8px; white-space: nowrap; }
+.by-loop { color: var(--a-loop); background: var(--a-loop-bg); }
+.by-robot { color: var(--a-robot); background: var(--a-robot-bg); }
+.by-you { color: var(--a-you); background: var(--a-you-bg); }
+.by-sbx { color: var(--a-sbx); background: var(--a-sbx-bg); }
+.ans { display: grid; gap: 2px; }
+.ans-word { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; white-space: nowrap; }
+.ans-word .ico { width: 16px; height: 16px; stroke-width: 2.4; }
+.ans-yes .ans-word { color: var(--ans-yes); }
+.ans-no .ans-word { color: var(--ans-no); }
+.ans-soft .ans-word { color: var(--ans-soft); }
+.ans-why { color: var(--muted); font-size: .88rem; line-height: 1.4; padding-left: 22px; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px 28px; max-width: 1040px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.legend-group { display: grid; gap: 8px; min-width: 0; }
+.legend-group > .where { margin: 0; }
+.legend-items { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.legend-item { display: inline-flex; align-items: center; gap: 8px; font-size: .88rem; color: var(--muted); }
+.legend-item .ans-word { font-size: .9rem; }
 #envtable code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; white-space: nowrap; }
 .dash-btn { cursor: pointer; }
 .dash-btn rect { fill: var(--card); stroke: var(--room-edge); stroke-width: 1.4; }
@@ -301,6 +320,7 @@ th { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color:
   <section class="envsec" aria-labelledby="env-h">
     <h2 id="env-h">Where settings and secrets live</h2>
     <p class="sub" id="env-sub"></p>
+    <div class="legend" id="env-legend" aria-label="Key for the table"></div>
     <div class="tablewrap"><table id="envtable"></table></div>
   </section>
 
@@ -625,15 +645,46 @@ function drawRepos() {
   t.innerHTML = `<thead><tr><th>Repo</th><th>On GitHub</th><th>Safety room</th></tr></thead><tbody>${rows}</tbody>`;
 }
 
+/* small line icons for the settings table (stroke = currentColor) */
+const svg = (d) => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+const ICON = {
+  loop: svg('<path d="M20 12a8 8 0 0 1-13.7 5.7"/><path d="M4 12a8 8 0 0 1 13.7-5.7"/><path d="M18 2v4.5h-4.5"/><path d="M6 22v-4.5h4.5"/>'),
+  robot: svg('<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1"/><circle cx="9" cy="14" r="1.2"/><circle cx="15" cy="14" r="1.2"/>'),
+  you: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
+  sbx: svg('<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4"/><path d="M12 11v10"/>'),
+};
+const ANS = {
+  yes: { t: "Yes", icon: svg('<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/>') },
+  no: { t: "No", icon: svg('<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>') },
+  soft: { t: "No, by rule only", icon: svg('<path d="M12 3l9.5 17h-19z"/><path d="M12 10v4.5"/><path d="M12 17.5v.01"/>') },
+};
+
+function drawLegend() {
+  const sb = state.sandbox !== "none";
+  const who = [
+    ["loop", "dev-loop", "the loop on your Mac"],
+    ["robot", "robot", sb ? "Claude, inside sbx" : "Claude, running as you"],
+    ["you", "you / your git", "you, or git acting for you"],
+    ...(sb ? [["sbx", "sbx", "the safety room"]] : []),
+  ];
+  const ans = [["yes", "the robot can read it"], ["no", "it can't"], ...(sb ? [] : [["soft", "a rule blocks it, not a wall"]])];
+  document.getElementById("env-legend").innerHTML =
+    `<div class="legend-group"><span class="where">Used by</span><div class="legend-items">` +
+    who.map(([k, t, d]) => `<span class="legend-item"><span class="by by-${k}">${ICON[k]}${t}</span>${d}</span>`).join("") + `</div></div>` +
+    `<div class="legend-group"><span class="where">Can the robot read it?</span><div class="legend-items">` +
+    ans.map(([k, d]) => `<span class="legend-item ans-${k}"><span class="ans-word">${ANS[k].icon}${ANS[k].t}</span>${d}</span>`).join("") + `</div></div>`;
+}
+
 /* Where each setting lives, grouped by place (docs/sandbox-sbx.md §2, §5, §6, §9; src/core/spawn-claude.ts childEnv). */
 function drawEnv() {
   const sb = state.sandbox !== "none";
   const r = repo();
   const c = (x) => `<code>${x}</code>`;
-  // can the robot read it? plain yes/no with the reason; "warn" = yes, and it matters
+  // can the robot read it? the answer on top, the reason under it
   // "soft" = no, but only by a rule the robot could get around
-  const can = (k, why) => `<span class="can can-${k}">${k === "no" ? "No" : k === "warn" ? "\u26a0\ufe0f Yes" : k === "soft" ? "\u26a0\ufe0f No, by rule only" : "Yes"}</span> <span class="why-txt">${why}</span>`;
-  const by = (x) => `<span class="by by-${x.cls}">${x.t}</span>`;
+  // "soft" = no, but only by a rule the robot could get around
+  const can = (k, why) => `<div class="ans ans-${k}"><span class="ans-word">${ANS[k].icon}${ANS[k].t}</span><span class="ans-why">${why}</span></div>`;
+  const by = (x) => `<span class="by by-${x.cls}">${ICON[x.cls]}${x.t}</span>`;
   const LOOP = { cls: "loop", t: "dev-loop" }, ROBOT = { cls: "robot", t: "robot" }, GIT = { cls: "you", t: "your git" }, SBX = { cls: "sbx", t: "sbx" }, YOU = { cls: "you", t: "you" };
   // groups: [place, zone class, note, rows: [setting, where, used by, can the robot read it]]
   const groups = [
@@ -704,6 +755,7 @@ function render() {
   }).join(", then ");
   drawPickup();
   drawEnv();
+  drawLegend();
   document.getElementById("env-sub").textContent = state.sandbox !== "none" ? "Grouped by where each one lives. With sbx, the robot can read only the two folders it works in; sbx adds every token on the way out, so the robot never holds one. It gets fake settings instead of the real .envrc." : "Grouped by where each one lives. With no safety room, the robot runs as you, so it could read what you can, except dev-loop\u2019s Jira login. It gets fake settings instead of the real .envrc.";
   drawDiagram();
   drawSteps();
