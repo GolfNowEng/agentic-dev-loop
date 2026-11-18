@@ -5,3 +5,6 @@ dist
 runs/
 .pipeline/
 evals/.state/
+
+# macOS folder metadata
+.DS_Store
