@@ -326,6 +326,26 @@ ol.steps li.note-item { border-left: 3px dashed var(--line); }
 .step-title b { font-size: 1rem; color: var(--ink); }
 .more { margin-top: 4px; line-height: 1.55; }
 .stepbar { align-items: center; }
+
+/* Play */
+.chip.play { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px 6px 11px; }
+.chip.play .ico { width: 15px; height: 15px; fill: currentColor; stroke: none; }
+.chip.play[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-ink); border-color: var(--chip-on); }
+.progress { height: 3px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.progress span { display: block; height: 100%; width: 100%; background: var(--ink); transform-origin: left; transform: scaleX(0); }
+.progress span.run { animation: fill var(--dur, 4s) linear forwards; }
+@keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+/* smooth size changes and a soft fade when the step text changes */
+.steps-wrap { overflow: hidden; }
+ol.steps li.rest { opacity: .45; }
+@media (prefers-reduced-motion: no-preference) {
+  .steps-wrap { transition: height .32s ease; }
+  ol.steps li { transition: opacity .25s ease; }
+  ol.steps li.enter, ol.steps .more.enter { animation: rise .32s ease backwards; }
+  #diagram .step rect { transition: stroke .2s, stroke-width .2s; }
+  #diagram .step, #diagram .tag, #diagram .link, #diagram .bounce, #diagram .gate-g { transition: opacity .3s; }
+}
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 </style>
 </head>
 <body>
@@ -384,13 +404,15 @@ ol.steps li.note-item { border-left: 3px dashed var(--line); }
         <div class="stepbar">
           <h3 id="steps-h">What happens</h3>
           <div class="stepnav">
+            <button type="button" class="chip play" id="play" aria-pressed="false"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path id="play-ico" d="M7 4.5v15l12-7.5z"/></svg><span id="play-t">Play</span></button>
             <button type="button" class="chip nav" id="prev" aria-label="Previous step">&larr;</button>
             <span id="stepcount" class="count" aria-live="polite">Step through it</span>
             <button type="button" class="chip nav" id="next" aria-label="Next step">&rarr;</button>
             <button type="button" class="chip" id="viewall" aria-pressed="false" aria-controls="steps">View all</button>
           </div>
         </div>
-        <ol class="steps" id="steps"></ol>
+        <div class="progress" id="progress" hidden><span id="progress-bar"></span></div>
+        <div class="steps-wrap" id="steps-wrap"><ol class="steps" id="steps"></ol></div>
       </section>
     </div>
 
@@ -470,6 +492,8 @@ const DATA = {
 const state = { repo: "webtarsthree", phase: "worker", sandbox: "none", mode: "single" };
 let current = 0; /* the step shown and highlighted */
 let viewAll = false; /* false: one step at a time; true: the whole list */
+let playing = false; /* Play: steps advance on their own, in either view */
+let timer = null;
 /* #sbx opens the page with the safety room picked (a shareable link). */
 if (location.hash === "#sbx") state.sandbox = "sbx";
 
@@ -851,42 +875,95 @@ function render() {
   document.getElementById("env-sub").textContent = state.sandbox !== "none" ? "Grouped by where each one lives. With sbx, the robot can read only the two folders it works in; sbx adds every token on the way out, so the robot never holds one. It gets fake settings instead of the real .envrc." : "Grouped by where each one lives. With no safety room, the robot runs as you, so it could read what you can, except dev-loop\u2019s Jira login. It gets fake settings instead of the real .envrc.";
   drawDiagram();
   drawSteps();
+  if (playing) setPlaying(false);
   select(0);
 }
 
 /* Clicking a step (box or list item) shows it on its own, step by step. */
-function pick(i) { viewAll = false; select(i); }
+function pick(i) { if (playing) setPlaying(false); viewAll = false; select(i); }
 /* Step-through: highlight one step in the diagram and the list. */
 function select(i) {
   const steps = stepsFor();
+  const prev = current;
   current = Math.max(0, Math.min(i, steps.length - 1));
-  // view all: every box lit, none picked; one at a time: the current one picked, the rest dimmed
+  // focus: one step picked (step by step, or view all while playing); else every box lit
+  const focus = !viewAll || playing;
   document.querySelectorAll("#diagram [data-i]").forEach((n) => {
     const mine = Number(n.getAttribute("data-i")) === current;
-    n.classList.toggle("on", !viewAll && mine && n.classList.contains("step"));
-    n.classList.toggle("dim", !viewAll && !mine);
+    n.classList.toggle("on", focus && mine && n.classList.contains("step"));
+    n.classList.toggle("dim", focus && !mine);
   });
+  const wrap = document.getElementById("steps-wrap");
+  const from = wrap.getBoundingClientRect().height;
   document.querySelectorAll("#steps li").forEach((li) => {
     const isStep = li.dataset.i !== undefined;
     const mine = isStep && Number(li.dataset.i) === current;
-    li.classList.toggle("cur", !viewAll && mine);
+    li.classList.toggle("cur", focus && mine);
+    li.classList.toggle("rest", viewAll && playing && !mine);
     // step by step: only the current step, with its detail; view all: every step, titles only
+    // (while playing, view all opens the current step's detail too)
+    const wasHidden = li.hidden;
     li.hidden = !viewAll && !mine;
     const more = li.querySelector(".more");
-    if (more) more.hidden = viewAll || !mine;
+    const moreWasHidden = more ? more.hidden : true;
+    if (more) more.hidden = !(focus && mine);
+    // fade in what just appeared
+    const appeared = (wasHidden && !li.hidden) ? li : (more && moreWasHidden && !more.hidden && viewAll) ? more : null;
+    if (appeared && (prev !== current || wasHidden)) { appeared.classList.remove("enter"); void appeared.offsetWidth; appeared.classList.add("enter"); }
   });
+  // grow or shrink the list smoothly instead of jumping
+  wrap.style.height = "auto";
+  const to = wrap.getBoundingClientRect().height;
+  if (from && Math.abs(from - to) > 1 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    wrap.style.height = `${from}px`;
+    void wrap.offsetHeight;
+    wrap.style.height = `${to}px`;
+    wrap.addEventListener("transitionend", function done(e) { if (e.target !== wrap) return; wrap.style.height = "auto"; wrap.removeEventListener("transitionend", done); });
+  }
   document.getElementById("stepcount").textContent = `Step ${current + 1} of ${steps.length}`;
   // the arrows and the count belong to step-by-step only
-  for (const id of ["prev", "stepcount", "next"]) document.getElementById(id).hidden = viewAll;
+  for (const id of ["prev", "next"]) document.getElementById(id).hidden = viewAll;
+  document.getElementById("stepcount").hidden = viewAll && !playing;
   document.getElementById("prev").disabled = current <= 0;
   document.getElementById("next").disabled = current >= steps.length - 1;
   const va = document.getElementById("viewall");
   va.textContent = viewAll ? "Step by step" : "View all";
   va.setAttribute("aria-pressed", String(viewAll));
+  if (playing) schedule(steps[current]);
 }
+
+/* Play: wait long enough to read the step, then move on; stop on the last one. */
+function schedule(step) {
+  clearTimeout(timer);
+  const words = ((step.more ?? "") + " " + (step.why ?? "")).split(/\s+/).length;
+  const ms = Math.min(11000, 2600 + words * 140);
+  const bar = document.getElementById("progress-bar");
+  bar.style.setProperty("--dur", `${ms}ms`);
+  bar.classList.remove("run"); void bar.offsetWidth; bar.classList.add("run");
+  timer = setTimeout(() => {
+    if (current >= stepsFor().length - 1) { setPlaying(false, true); return; }
+    select(current + 1);
+  }, ms);
+}
+function setPlaying(on, ended = false) {
+  playing = on;
+  clearTimeout(timer);
+  const b = document.getElementById("play");
+  b.setAttribute("aria-pressed", String(on));
+  document.getElementById("play-t").textContent = on ? "Pause" : ended ? "Replay" : "Play";
+  document.getElementById("play-ico").setAttribute("d", on ? "M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" : "M7 4.5v15l12-7.5z");
+  document.getElementById("progress").hidden = !on;
+  document.getElementById("progress-bar").classList.remove("run");
+  select(current);
+}
+document.getElementById("play").addEventListener("click", () => {
+  if (playing) return setPlaying(false);
+  if (current >= stepsFor().length - 1) current = 0;
+  setPlaying(true);
+});
 document.getElementById("viewall").addEventListener("click", () => { viewAll = !viewAll; select(current); });
-for (const id of ["prev"]) document.getElementById(id).addEventListener("click", () => select(Math.max(0, current - 1)));
-for (const id of ["next"]) document.getElementById(id).addEventListener("click", () => select(current + 1));
+document.getElementById("prev").addEventListener("click", () => { if (playing) setPlaying(false); select(Math.max(0, current - 1)); });
+document.getElementById("next").addEventListener("click", () => { if (playing) setPlaying(false); select(current + 1); });
 document.getElementById("copy").addEventListener("click", (e) => {
   const b = e.currentTarget, t = document.getElementById("cmd").textContent;
   const done = (msg) => { b.textContent = msg; setTimeout(() => (b.textContent = "Copy"), 1400); };
@@ -901,8 +978,8 @@ document.addEventListener("keydown", (e) => {
   if (dash.open) return;
   if (e.target.closest && e.target.closest("button, input, [role=button]")) return;
   if (viewAll) return;
-  if (e.key === "ArrowRight") select(current + 1);
-  if (e.key === "ArrowLeft") select(Math.max(0, current - 1));
+  if (e.key === "ArrowRight") { if (playing) setPlaying(false); select(current + 1); }
+  if (e.key === "ArrowLeft") { if (playing) setPlaying(false); select(Math.max(0, current - 1)); }
 });
 
 drawRepos();
