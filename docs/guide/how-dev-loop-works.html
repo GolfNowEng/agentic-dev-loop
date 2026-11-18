@@ -632,8 +632,8 @@ function drawDiagram() {
     if (st.key) g.appendChild(el("text", { x: x + boxW - 8, y: y + 23, "text-anchor": "end", "font-size": 12 }, "\u{1F511}"));
     g.appendChild(el("text", { x: x + 16, y: y + 28, "font-size": 14.5, "font-weight": 700 }, st.title));
     [].concat(st.sub).forEach((line, k) => g.appendChild(el("text", { x: x + 16, y: y + 52 + k * 18, class: "small" }, line)));
-    g.addEventListener("click", () => select(i));
-    g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(i); } });
+    g.addEventListener("click", () => pick(i));
+    g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(i); } });
     stepG.push(g);
   });
 
@@ -716,7 +716,7 @@ function drawSteps() {
     li.className = s.zone;
     li.dataset.i = String(ol.children.length);
     li.dataset.n = String(ol.children.length + 1);
-    li.addEventListener("click", () => select(Number(li.dataset.i)));
+    li.addEventListener("click", () => pick(Number(li.dataset.i)));
     const sub = [].concat(s.sub).join(s.decision ? " \u00b7 " : " ");
     li.innerHTML = `<div><span class="where w-${s.zone}">Step ${Number(li.dataset.n)} \u00b7 ${s.zone === "room" ? "Safety room" : "Your Mac"}${s.uses ? ` \u00b7 uses ${s.uses.replace(" (through the gate)", ", through the gate")}` : ""}</span><span class="step-title"><b>${s.title}</b> <span class="step-sub">${sub}</span></span><span class="more" hidden>${s.more ?? ""}${s.why ? `<span class="why">${s.why}</span>` : ""}</span></div>`;
     ol.appendChild(li);
@@ -854,29 +854,34 @@ function render() {
   select(0);
 }
 
+/* Clicking a step (box or list item) shows it on its own, step by step. */
+function pick(i) { viewAll = false; select(i); }
 /* Step-through: highlight one step in the diagram and the list. */
 function select(i) {
   const steps = stepsFor();
   current = Math.max(0, Math.min(i, steps.length - 1));
+  // view all: every box lit, none picked; one at a time: the current one picked, the rest dimmed
   document.querySelectorAll("#diagram [data-i]").forEach((n) => {
     const mine = Number(n.getAttribute("data-i")) === current;
-    n.classList.toggle("on", mine && n.classList.contains("step"));
-    n.classList.toggle("dim", !mine);
+    n.classList.toggle("on", !viewAll && mine && n.classList.contains("step"));
+    n.classList.toggle("dim", !viewAll && !mine);
   });
   document.querySelectorAll("#steps li").forEach((li) => {
     const isStep = li.dataset.i !== undefined;
     const mine = isStep && Number(li.dataset.i) === current;
-    li.classList.toggle("cur", mine);
-    // one at a time: only the current step; view all: every item
+    li.classList.toggle("cur", !viewAll && mine);
+    // step by step: only the current step, with its detail; view all: every step, titles only
     li.hidden = !viewAll && !mine;
     const more = li.querySelector(".more");
-    if (more) more.hidden = !mine;
+    if (more) more.hidden = viewAll || !mine;
   });
   document.getElementById("stepcount").textContent = `Step ${current + 1} of ${steps.length}`;
+  // the arrows and the count belong to step-by-step only
+  for (const id of ["prev", "stepcount", "next"]) document.getElementById(id).hidden = viewAll;
   document.getElementById("prev").disabled = current <= 0;
   document.getElementById("next").disabled = current >= steps.length - 1;
   const va = document.getElementById("viewall");
-  va.textContent = viewAll ? "One at a time" : "View all";
+  va.textContent = viewAll ? "Step by step" : "View all";
   va.setAttribute("aria-pressed", String(viewAll));
 }
 document.getElementById("viewall").addEventListener("click", () => { viewAll = !viewAll; select(current); });
@@ -895,6 +900,7 @@ dash.addEventListener("click", (e) => { if (e.target === dash) dash.close(); });
 document.addEventListener("keydown", (e) => {
   if (dash.open) return;
   if (e.target.closest && e.target.closest("button, input, [role=button]")) return;
+  if (viewAll) return;
   if (e.key === "ArrowRight") select(current + 1);
   if (e.key === "ArrowLeft") select(Math.max(0, current - 1));
 });
