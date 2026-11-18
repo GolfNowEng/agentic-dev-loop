@@ -1,0 +1,42 @@
+# Publishes the plain-language guide (docs/guide/) to GitHub Pages
+# whenever it changes on main. Only docs/guide is published, nothing else
+# under docs/. Needs Settings > Pages > Source = "GitHub Actions".
+name: Deploy guide to Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/guide/**"
+      - ".github/workflows/guide-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the site from docs/guide
+        run: |
+          mkdir _site
+          cp -R docs/guide/. _site/
+          cp _site/how-dev-loop-works.html _site/index.html
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

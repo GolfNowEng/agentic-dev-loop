@@ -65,6 +65,8 @@ loop, with option chips for repo, job, sandbox and mode. **Update it in the
 same change** when you change a CLI flag, a sandbox adapter, a supported
 repo (`pipeline.*.config.json`), a phase's steps, or what runs where. Its
 facts live in the `DATA` block at the top of its script.
+A push to main that touches `docs/guide/` republishes it to GitHub Pages
+(`.github/workflows/guide-pages.yml`): https://justinchan-fd.github.io/dev-loop/
 
 ## Both phases
 
