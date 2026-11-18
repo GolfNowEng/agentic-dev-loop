@@ -312,7 +312,9 @@ figure.band figcaption { color: var(--muted); font-size: .88rem; }
 /* The step note: a quiet caption for the diagram, not a card. */
 ol.steps { min-height: 0; gap: 10px; }
 ol.steps li { display: block; background: transparent; border: 0; border-left: 3px solid var(--line); border-radius: 0; padding: 2px 0 2px 16px; font-size: .95rem; color: var(--muted); max-width: 80ch; }
-ol.steps li::before { content: none; }
+ol.steps li::before, ol.steps li.note-item::before { content: none; }
+ol.steps .where { display: block; }
+ol.steps li.note-item { padding-block: 6px; }
 ol.steps li.mac { border-left-color: var(--mac-edge); }
 ol.steps li.room { border-left-color: var(--room-edge); }
 ol.steps li:hover, ol.steps li.cur { border-color: inherit; }
