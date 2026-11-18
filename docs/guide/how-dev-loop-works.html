@@ -26,7 +26,7 @@
   --hover: #eef1ee; --field-edge: #a9b3ad; --shadow: 0 1px 2px rgba(29, 36, 32, .08); --chip: #ffffff; --chip-on: #1d2420; --chip-on-ink: #f6f7f4;
   --a-loop: #1f6f78; --a-loop-bg: #e2f1f2; --a-robot: #a8457a; --a-robot-bg: #f7e6ef;
   --a-you: #8a5a12; --a-you-bg: #f6ecd9; --a-sbx: #3d67a3; --a-sbx-bg: #e3ebf6;
-  --ans-yes: #2f7d3e; --ans-no: #6b7570; --ans-soft: #a86a0c;
+  --ans-yes: #2f7d3e; --ans-no: #b4473b; --ans-soft: #a86a0c;
   --display: "Fraunces", Georgia, serif;
   --body: "Atkinson Hyperlegible", system-ui, sans-serif;
   color-scheme: light;
@@ -38,7 +38,7 @@
     --ext: #1b2a1e; --ext-edge: #7dc28a; --key: #e3a83c; --bad: #e07a6e; --un: #2e1d1b;
     --a-loop: #6cc4cc; --a-loop-bg: #15302f; --a-robot: #e48bbb; --a-robot-bg: #35192a;
     --a-you: #e0b062; --a-you-bg: #33270f; --a-sbx: #8fb2e3; --a-sbx-bg: #1b2a3e;
-    --ans-yes: #7dc28a; --ans-no: #a3ada8; --ans-soft: #e8a83a;
+    --ans-yes: #7dc28a; --ans-no: #e07a6e; --ans-soft: #e8a83a;
     --hover: #232c27; --field-edge: #56635c; --shadow: 0 1px 2px rgba(0, 0, 0, .4);
     --chip: #1b221e; --chip-on: #e6ebe7; --chip-on-ink: #151a17; color-scheme: dark;
   }
@@ -49,7 +49,7 @@
   --ext: #1b2a1e; --ext-edge: #7dc28a; --key: #e3a83c; --bad: #e07a6e; --un: #2e1d1b;
   --a-loop: #6cc4cc; --a-loop-bg: #15302f; --a-robot: #e48bbb; --a-robot-bg: #35192a;
   --a-you: #e0b062; --a-you-bg: #33270f; --a-sbx: #8fb2e3; --a-sbx-bg: #1b2a3e;
-  --ans-yes: #7dc28a; --ans-no: #a3ada8; --ans-soft: #e8a83a;
+  --ans-yes: #7dc28a; --ans-no: #e07a6e; --ans-soft: #e8a83a;
   --hover: #232c27; --field-edge: #56635c; --shadow: 0 1px 2px rgba(0, 0, 0, .4);
     --chip: #1b221e; --chip-on: #e6ebe7; --chip-on-ink: #151a17; color-scheme: dark;
 }
@@ -175,6 +175,7 @@ h1 code.name { font-weight: 700; }
 #envtable tbody.g-repo th.place { border-left-color: var(--ext-edge); background: var(--card); }
 #envtable tbody.g-sbx th.place { border-left-color: var(--room-edge); background: var(--card); }
 #envtable tbody tr > td:first-of-type { white-space: nowrap; }
+#envtable td:last-child { min-width: 280px; }
 .ico { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .by { display: inline-flex; align-items: center; gap: 5px; font-size: .8rem; font-weight: 700; border-radius: 999px; padding: 2px 10px 2px 8px; white-space: nowrap; }
 .by-loop { color: var(--a-loop); background: var(--a-loop-bg); }
@@ -188,11 +189,14 @@ h1 code.name { font-weight: 700; }
 .ans-no .ans-word { color: var(--ans-no); }
 .ans-soft .ans-word { color: var(--ans-soft); }
 .ans-why { color: var(--muted); font-size: .88rem; line-height: 1.4; padding-left: 22px; }
-.legend { display: flex; flex-wrap: wrap; gap: 10px 28px; max-width: 1040px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
-.legend-group { display: grid; gap: 8px; min-width: 0; }
-.legend-group > .where { margin: 0; }
-.legend-items { display: flex; flex-wrap: wrap; gap: 8px 16px; }
-.legend-item { display: inline-flex; align-items: center; gap: 8px; font-size: .88rem; color: var(--muted); }
+.legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0; max-width: 1040px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); overflow: hidden; }
+.legend-group { display: grid; align-content: start; gap: 10px; min-width: 0; padding: 14px 18px 16px; }
+.legend-group + .legend-group { border-left: 1px solid var(--line); }
+.legend-group > .where { margin: 0; font-weight: 700; }
+.legend-items { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.legend-item { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 12px; font-size: .9rem; color: var(--muted); }
+.legend-item > :first-child { justify-self: start; }
+@media (max-width: 680px) { .legend-group + .legend-group { border-left: 0; border-top: 1px solid var(--line); } .legend-item { grid-template-columns: 130px minmax(0, 1fr); } }
 .legend-item .ans-word { font-size: .9rem; }
 #envtable code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; white-space: nowrap; }
 .dash-btn { cursor: pointer; }
@@ -727,12 +731,12 @@ function drawLegend() {
     ["you", "you / your git", "you, or git acting for you"],
     ...(sb ? [["sbx", "sbx", "the safety room"]] : []),
   ];
-  const ans = [["yes", "the robot can read it"], ["no", "it can't"], ...(sb ? [] : [["soft", "a rule blocks it, not a wall"]])];
+  const ans = [["yes", "the robot can read it"], ["no", "it can't: it isn't there for the robot to read"], ...(sb ? [] : [["soft", "a rule blocks it, but a shell command could get around it"]])];
   document.getElementById("env-legend").innerHTML =
-    `<div class="legend-group"><span class="where">Used by</span><div class="legend-items">` +
-    who.map(([k, t, d]) => `<span class="legend-item"><span class="by by-${k}">${ICON[k]}${t}</span>${d}</span>`).join("") + `</div></div>` +
-    `<div class="legend-group"><span class="where">Can the robot read it?</span><div class="legend-items">` +
-    ans.map(([k, d]) => `<span class="legend-item ans-${k}"><span class="ans-word">${ANS[k].icon}${ANS[k].t}</span>${d}</span>`).join("") + `</div></div>`;
+    `<div class="legend-group"><span class="where">Used by</span><ul class="legend-items">` +
+    who.map(([k, t, d]) => `<li class="legend-item"><span class="by by-${k}">${ICON[k]}${t}</span><span>${d}</span></li>`).join("") + `</ul></div>` +
+    `<div class="legend-group"><span class="where">Can the robot read it?</span><ul class="legend-items">` +
+    ans.map(([k, d]) => `<li class="legend-item ans-${k}"><span class="ans-word">${ANS[k].icon}${ANS[k].t}</span><span>${d}</span></li>`).join("") + `</ul></div>`;
 }
 
 /* Where each setting lives, grouped by place (docs/sandbox-sbx.md §2, §5, §6, §9; src/core/spawn-claude.ts childEnv). */
@@ -749,28 +753,28 @@ function drawEnv() {
   // groups: [place, zone class, note, rows: [setting, where, used by, can the robot read it]]
   const groups = [
     ["Your Mac", "mac", "your home folder, outside every repo", [
-      ["Jira login", c("~/.config/dev-loop/.env"), LOOP, sb ? can("no", "it stays on your Mac with dev-loop") : can("no", "dev-loop takes it out before it starts the robot")],
-      ["Model names", c("~/.claude/settings.json"), sb ? LOOP : ROBOT, can("yes", sb ? "just the names; dev-loop passes them in" : "just the names, no keys")],
-      ["Signing key", c("~/.ssh"), GIT, sb ? can("no", "it stays on your Mac; dev-loop signs the commits after") : can("yes", "the robot runs as you, so git signs with your key")],
-      ["GitHub login", c("gh") + " login", sb ? GIT : ROBOT, sb ? can("no", "it stays on your Mac; used only for the push") : can("yes", "it pushes and opens the PR")],
+      ["Jira API token", c("~/.config/dev-loop/.env"), LOOP, sb ? can("no", "it stays on your Mac with dev-loop") : can("no", "dev-loop takes it out before it starts the robot")],
+      ["Claude model names", c("~/.claude/settings.json"), sb ? LOOP : ROBOT, can("yes", sb ? "just the names; dev-loop passes them in" : "just the names, no keys")],
+      ["Git signing key", c("~/.ssh"), GIT, sb ? can("no", "it stays on your Mac; dev-loop signs the commits after") : can("yes", "the robot runs as you, so git signs with your key")],
+      ["GitHub CLI login", c("gh") + " login", sb ? GIT : ROBOT, sb ? can("no", "it stays on your Mac; used only for the push") : can("yes", "it pushes and opens the PR")],
       ...(sb ? [] : [
-        ["Bedrock (AI)", "your Claude setup", ROBOT, can("yes", "it is how the robot thinks")],
-        ["Jira for the robot", "your Claude Atlassian sign-in", ROBOT, can("yes", "it reads and comments on the ticket")],
+        ["AWS Bedrock token", "your Claude setup", ROBOT, can("yes", "it is how the robot thinks")],
+        ["Jira MCP sign-in", "your Claude Atlassian sign-in", ROBOT, can("yes", "it reads and comments on the ticket")],
       ]),
     ]],
     ["dev-loop's folder", "loop", "this repo", [
-      ["Pipeline settings", c(`pipeline.${r.id}.config.json`), LOOP, can("yes", "no secrets in it")],
+      ["dev-loop pipeline settings", c(`pipeline.${r.id}.config.json`), LOOP, can("yes", "no secrets in it")],
     ]],
     [`The target repo`, "repo", r.name, [
-      ["Repo settings", c(".envrc"), YOU, sb
+      [`${r.name} env settings`, c(".envrc"), YOU, sb
         ? can("no", "it stays on your Mac, for when you run the app yourself")
         : can("soft", "a shell command could still read it, so keep it to INT values")],
-      ["Fake settings", c(".claude/worktrees/.envrc"), ROBOT, can("yes", "placeholder values from .envrc.example, so tests still run")],
+      [`${r.name} fake env settings`, c(".claude/worktrees/.envrc"), ROBOT, can("yes", "placeholder values from .envrc.example, so tests still run")],
     ]],
     ...(sb ? [["sbx", "sbx", "Docker's own store on your Mac", [
-      ["GitHub token", c("sbx secret set github"), SBX, can("no", "sbx adds it to each request on the way out")],
-      ["Bedrock token", "Keystone kit", SBX, can("no", "sbx adds it on the way out")],
-      ["Jira for the robot", c("sbx mcp add atlassian"), SBX, can("no", "sbx signs in for it")],
+      ["GitHub API token", c("sbx secret set github"), SBX, can("no", "sbx adds it to each request on the way out")],
+      ["AWS Bedrock token", "Keystone kit", SBX, can("no", "sbx adds it on the way out")],
+      ["Jira MCP sign-in", c("sbx mcp add atlassian"), SBX, can("no", "sbx signs in for it")],
     ]]] : []),
   ];
   // one table: the place is its own first column, spanning its rows
