@@ -81,8 +81,10 @@ Leave **Workflows** off, so a push that touches `.github/workflows/` is
 refused: a free safety net. Leave admin, secrets, variables, environments,
 webhooks, deployments, pages and every account permission off.
 
-The org requires approval ("Generate token and request access"). Until it
-is approved, private repos answer 404 and preflight says "the sandbox's
+The org requires approval ("Generate token and request access"). The
+`dev-loop-sbx` token was approved on 2026-11-17 and regenerated the same
+day; it expires **2027-11-18**. Until a token is
+approved, private repos answer 404 and preflight says "the sandbox's
 GitHub token cannot see ...". Personal repos are out of reach; dev-loop
 works only on fandango repos. When the token expires, preflight fails the
 same way: renew it and run `sbx secret set github` again.
@@ -93,10 +95,6 @@ Alternatives if a fine-grained token is not possible:
   It works at once, but reaches every repo your `gh` login can reach.
   Only for attended runs.
 - **Classic token** with only `repo`: no repo limit either.
-
-**Follow-up:** while the fine-grained token waited for org approval, we
-weighed the host `gh` login as a stopgap and chose to wait. If that wait
-blocks a run, use the stopgap for attended runs only, then switch back.
 
 ## 3. Network: allow GitHub
 
@@ -260,3 +258,14 @@ polls, and won't start if either fails. The target repo's `.envrc` must be
 allowed (`direnv status` shows `Found RC allowed 0`; no `.envrc` is fine).
 The loop never allows it for you: run `direnv allow <repoDir>` yourself
 once. And `~/.claude/skills/push-branch/SKILL.md` must exist.
+
+## 11. Tests run inside the sandbox
+
+The sandbox is Linux; your checkout's `node_modules` are macOS builds. So
+dev installs the packages in its own worktree (`npm ci`, ticket-to-pr
+"Install the target repo's packages") and never reuses the checkout's.
+Checked live 2026-11-17: in a sandbox on a fresh webtarsthree worktree,
+`npm ci` pulled the Linux build of rollup from `nexus3.mgo.com`, and
+`vitest run` ran 8013 tests (7844 passed, 1 known failure on master:
+`placements-body-limit.integration.test.js`). The TARS-1634 run that called
+vitest "not runnable" had skipped this install.

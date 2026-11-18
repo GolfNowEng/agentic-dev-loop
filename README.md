@@ -13,6 +13,17 @@ One live worker per project (`--session=<name>`, default `dev-<n>`); a second
 start on the same project names the live session and exits 1. See
 `CLAUDE.md` for working rules and `docs/` for how the pieces fit together.
 
+**New here? Start with the picture.** [`docs/guide/how-dev-loop-works.html`](docs/guide/how-dev-loop-works.html)
+is a plain-language, interactive guide to the loop. Pick a repo, a job
+(research, build or both), a safety room (none or sbx) and a mode, and it
+redraws what runs where, step by step: what the robot does, what your Mac
+does, which outside services each step reaches, and what sbx blocks. It also
+shows the command to run, how the loop finds tickets in Jira, and the repos
+it supports. Open it in a browser (`open docs/guide/how-dev-loop-works.html`);
+GitHub shows only its source. It is kept current with the code: `CLAUDE.md`
+("The guide page") requires updating it in the same change as a flag,
+adapter, repo or phase change.
+
 ## Phase: research (the skeptic)
 
 Per spec sections 5.0/5.1. For each ticket it pulls from Jira, it:

@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>How dev-loop Works</title>
+<!--
+  KEEP THIS FILE CURRENT. It is the plain-language picture of dev-loop.
+  Update it in the same change whenever you change: a CLI flag, a sandbox
+  adapter, a supported repo (pipeline.*.config.json), the steps a phase
+  runs, or what runs where (sandbox vs host). CLAUDE.md says so too.
+  All facts live in the DATA block in the script below; the page draws
+  itself from it. Batch mode is not built yet: it is listed, disabled.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+/* Layout: one column; filter chips on top, a diagram that redraws below, then plain steps. */
+:root {
+  --bg: #f6f7f4; --ink: #1d2420; --muted: #5d6862; --line: #c9d0cb; --card: #ffffff;
+  --room: #e3ebf6; --room-edge: #5b82b8;
+  --mac: #efeaf6; --mac-edge: #7656a8;
+  --ext: #e8f2e5; --ext-edge: #3f8a4b;
+  --key: #c98a1c; --bad: #b4473b; --un: #f8e9e6; --chip: #ffffff; --chip-on: #1d2420; --chip-on-ink: #f6f7f4;
+  --display: "Fraunces", Georgia, serif;
+  --body: "Atkinson Hyperlegible", system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151a17; --ink: #e6ebe7; --muted: #9aa69f; --line: #34403a; --card: #1b221e;
+    --room: #1d2a3a; --room-edge: #7fa3d4; --mac: #241e30; --mac-edge: #b39ae2;
+    --ext: #1b2a1e; --ext-edge: #7dc28a; --key: #e3a83c; --bad: #e07a6e; --un: #2e1d1b;
+    --chip: #1b221e; --chip-on: #e6ebe7; --chip-on-ink: #151a17; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151a17; --ink: #e6ebe7; --muted: #9aa69f; --line: #34403a; --card: #1b221e;
+  --room: #1d2a3a; --room-edge: #7fa3d4; --mac: #241e30; --mac-edge: #b39ae2;
+  --ext: #1b2a1e; --ext-edge: #7dc28a; --key: #e3a83c; --bad: #e07a6e; --un: #2e1d1b;
+  --chip: #1b221e; --chip-on: #e6ebe7; --chip-on-ink: #151a17; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.55 var(--body); }
+.col {
+  max-width: calc(1364px + 32px); margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px;
+}
+body > .col { padding-block: 36px 8px; }
+.workflow > .col, main > .col { width: 100%; box-sizing: border-box; }
+main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 36px; padding-block: 20px 56px; }
+.workflow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; }
+.workflow > .col { gap: 14px; }
+.stack { display: grid; gap: 14px; }
+figure { margin: 0; display: grid; gap: 8px; min-width: 0; }
+figure.band { width: 100%; }
+figure.band figcaption { text-align: center; }
+.figure { width: 100%; }
+.sub { color: var(--muted); margin: 0; }
+.sub code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 5px; padding: 0 4px; white-space: nowrap; }
+h3 { font-family: var(--display); font-weight: 600; font-size: 1.15rem; margin: 0; }
+h1, h2 { font-family: var(--display); font-weight: 600; margin: 0; text-wrap: balance; }
+h1 { font-size: 2.1rem; line-height: 1.15; }
+h2 { font-size: 1.3rem; }
+p { margin: 0; max-width: 70ch; }
+.col > * { min-width: 0; }
+.pillars-sec { gap: 12px; }
+.pillars { margin: 0; padding-left: 1.4em; display: grid; gap: 8px; max-width: 70ch; }
+.pillars li::marker { font-family: var(--display); font-weight: 600; color: var(--mac-edge); }
+.facts code { font-family: ui-monospace, Menlo, monospace; font-size: .85em; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 0 4px; white-space: nowrap; }
+body > .col > header { display: grid; gap: 14px; justify-items: start; }
+.lead { color: var(--muted); font-size: 1.1rem; margin: 0; max-width: 70ch; }
+code.name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; font-size: .86em; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: .3em; padding: .02em .32em; }
+h1 code.name { font-weight: 700; }
+
+.filters { display: grid; gap: 14px; padding: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+.group { display: grid; gap: 6px; }
+.group-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.selects { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.filters select {
+  font: inherit; font-size: .95rem; color: var(--ink); background: var(--chip); width: 100%;
+  border: 1.5px solid var(--line); border-radius: 10px; padding: 7px 34px 7px 12px; cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%; background-size: 5px 5px; background-repeat: no-repeat;
+}
+.filters select:focus-visible { outline: 3px solid var(--key); outline-offset: 2px; }
+.facts { margin: 0; display: grid; gap: 6px; font-size: .88rem; }
+.facts > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.facts dt { font-size: .72rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.facts dd { margin: 0; color: var(--muted); }
+.chip {
+  font: inherit; font-size: .95rem; cursor: pointer;
+  padding: 6px 14px; border-radius: 999px;
+  border: 1.5px solid var(--line); background: var(--chip); color: var(--ink);
+}
+.chip[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-ink); border-color: var(--chip-on); }
+.chip:disabled { opacity: .45; cursor: not-allowed; }
+.chip:focus-visible { outline: 3px solid var(--key); outline-offset: 2px; }
+.cmd { font-family: ui-monospace, Menlo, monospace; font-size: .85rem; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }
+
+.figure { overflow-x: auto; }
+#diagram { display: block; margin: 0 auto; width: 100%; height: auto; min-width: 760px; }
+.band { box-sizing: border-box; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.figure { max-width: 1364px; margin: 0 auto; overflow-x: auto; }
+#diagram text { font-family: var(--body); fill: var(--ink); }
+#diagram .small { fill: var(--muted); font-size: 12.5px; }
+#diagram .zone-title { font-weight: 700; font-size: 14px; }
+.z-room { fill: var(--room); stroke: var(--room-edge); }
+.z-mac { fill: var(--mac); stroke: var(--mac-edge); }
+.z-ext { fill: var(--ext); stroke: var(--ext-edge); stroke-dasharray: 7 5; }
+.t-room { fill: var(--room-edge); }
+.t-mac { fill: var(--mac-edge); }
+#diagram .t-ext { fill: var(--ext-edge); }
+.box { fill: var(--card); stroke: var(--line); }
+.flow { stroke: var(--muted); fill: none; stroke-width: 2; }
+.link { stroke: var(--ext-edge); fill: none; stroke-width: 1.6; stroke-dasharray: 5 4; }
+.head-link { fill: var(--ext-edge); }
+.box-decide { fill: var(--card); stroke: var(--muted); stroke-dasharray: 0; }
+.bounce { stroke: var(--bad); fill: none; stroke-width: 1.6; stroke-dasharray: 3 4; }
+.blocked-tag { fill: var(--card); stroke: var(--bad); stroke-width: 1.5; }
+.head-bounce { fill: var(--bad); }
+#diagram .bounce-text { fill: var(--bad); font-size: 11.5px; font-weight: 700; }
+#diagram .bounce.dim, #diagram .bounce-text.dim { opacity: .25; }
+.z-project { fill: var(--bg); stroke: var(--line); }
+.gate { fill: var(--room-edge); }
+#diagram .gate-text { fill: var(--bg); font-size: 11px; font-weight: 700; }
+.head { fill: var(--muted); }
+.z-un { fill: var(--un); stroke: var(--bad); stroke-dasharray: 7 5; }
+#diagram .t-un { fill: var(--bad); }
+#diagram .halo-ext { paint-order: stroke; stroke: var(--ext); stroke-width: 6px; stroke-linejoin: round; }
+#diagram .halo-un { paint-order: stroke; stroke: var(--un); stroke-width: 6px; stroke-linejoin: round; }
+#diagram .un-on { fill: var(--ink); font-weight: 700; }
+.pickup { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.pickup b { color: var(--ink); font-weight: 700; margin-right: 4px; }
+.pickup .every { font-style: italic; }
+.pickup .lbl { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; white-space: nowrap; }
+.repo-link { display: inline-flex; align-items: center; gap: 8px; width: fit-content; color: var(--ink); text-decoration: none; font-weight: 700; font-size: .95rem; border: 1.5px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 14px; }
+.repo-link:hover { border-color: var(--ink); }
+.repo-link:focus-visible { outline: 3px solid var(--key); outline-offset: 2px; }
+.repo-link .ext { color: var(--muted); }
+.envsec { display: grid; gap: 12px; }
+#envtable td:first-of-type { font-weight: 700; }
+#envtable { max-width: 1040px; }
+#envtable { border-collapse: separate; border-spacing: 0; }
+#envtable td, #envtable th.place { border-bottom: 0; vertical-align: middle; }
+#envtable thead th { border-bottom: 2px solid var(--line); }
+#envtable tbody.g:last-child tr:last-child td, #envtable tbody.g:last-child th.place { border-bottom: 2px solid var(--line); }
+#envtable tbody.g + tbody.g tr:first-child td, #envtable tbody.g + tbody.g th.place { border-top: 2px solid var(--line); }
+#envtable tbody.g tr + tr td { border-top: 1px dotted var(--line); }
+#envtable th.place { vertical-align: top; text-align: left; text-transform: none; letter-spacing: 0; font-size: .95rem; color: var(--ink); width: 170px; padding: 10px 14px; border-left: 4px solid var(--muted); vertical-align: top; }
+#envtable th.place span { display: block; font-weight: 400; color: var(--muted); font-size: .8rem; margin-top: 2px; }
+#envtable tbody.g-mac th.place { border-left-color: var(--mac-edge); background: var(--mac); }
+#envtable tbody.g-loop th.place { border-left-color: var(--muted); background: var(--card); }
+#envtable tbody.g-repo th.place { border-left-color: var(--ext-edge); background: var(--ext); }
+#envtable tbody.g-sbx th.place { border-left-color: var(--room-edge); background: var(--room); }
+#envtable tbody tr > td:first-of-type { white-space: nowrap; }
+.can { font-weight: 700; white-space: nowrap; }
+.can-no { color: var(--muted); }
+.can-warn { color: var(--key); }
+.why-txt { color: var(--muted); }
+.by { display: inline-block; font-size: .78rem; font-weight: 700; border-radius: 999px; padding: 0 9px; border: 1.5px solid; white-space: nowrap; }
+.by-loop { color: var(--mac-edge); border-color: var(--mac-edge); }
+.by-you { color: var(--key); border-color: var(--key); }
+.by-robot { color: var(--ink); border-color: var(--muted); }
+.by-sbx { color: var(--room-edge); border-color: var(--room-edge); }
+#envtable code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; white-space: nowrap; }
+.dash-btn { cursor: pointer; }
+.dash-btn rect { fill: var(--card); stroke: var(--room-edge); stroke-width: 1.4; }
+#diagram .dash-btn text { fill: var(--room-edge); font-size: 12px; font-weight: 700; }
+.dash-btn:hover rect, .dash-btn:focus-visible rect { fill: var(--room); stroke-width: 2.2; }
+.dash-btn:focus { outline: none; }
+dialog.dash { border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--card); color: var(--ink); width: min(1400px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+dialog.dash::backdrop { background: rgba(10, 14, 12, .62); }
+dialog.dash .dash-in { display: grid; gap: 12px; padding: 18px 20px 20px; }
+dialog.dash header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+dialog.dash h3 { margin: 0; font-family: var(--display); font-size: 1.15rem; }
+dialog.dash img { width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); }
+dialog.dash p { margin: 0; color: var(--muted); font-size: .95rem; max-width: 70ch; }
+dialog.dash button { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
+
+ol.steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; counter-reset: s; }
+ol.steps li { display: grid; grid-template-columns: 34px 1fr; gap: 12px; }
+ol.steps li::before {
+  content: attr(data-n); font-family: var(--display); width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center; border: 2px solid var(--line);
+}
+ol.steps li.room::before { border-color: var(--room-edge); }
+ol.steps li.mac::before { border-color: var(--mac-edge); }
+ol.steps li.note-item { cursor: default; }
+ol.steps li.note-item::before { content: ""; border: 0; }
+.stepbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.stepnav { display: flex; align-items: center; gap: 10px; font-size: .95rem; color: var(--muted); }
+.chip.nav { padding: 4px 14px; font-size: 1.1rem; line-height: 1.2; }
+.more { display: block; margin-top: 6px; color: var(--muted); }
+.why { display: block; margin-top: 8px; padding-left: 10px; border-left: 3px solid var(--mac-edge); }
+[hidden] { display: none !important; }
+.detail { background: var(--card); border: 1.5px solid var(--key); border-radius: 10px; padding: 12px 14px; max-width: none; }
+ol.steps li { border-radius: 10px; padding: 6px 8px; cursor: pointer; }
+ol.steps { min-height: 7.5rem; align-content: start; }
+ol.steps li.on { background: var(--card); outline: 2px solid var(--ext-edge); }
+#diagram .step { cursor: pointer; }
+#diagram .step.dim { opacity: .35; }
+#diagram .step.on rect { stroke: var(--ext-edge); stroke-width: 3; }
+#diagram .tag.dim, #diagram .link.dim, #diagram .gate-g.dim { opacity: .25; }
+@media (prefers-reduced-motion: no-preference) { #diagram .step, #diagram .tag, #diagram .link { transition: opacity .2s; } }
+.where { display: block; font-size: .75rem; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+
+table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+.tablewrap { overflow-x: auto; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; }
+.yes { color: var(--ext-edge); font-weight: 700; }
+.no { color: var(--muted); }
+.note { color: var(--muted); font-size: .92rem; }
+</style>
+</head>
+<body>
+<div class="col">
+  <header>
+    <h1>How <code class="name">dev-loop</code> works</h1>
+    <p class="lead"><code class="name">dev-loop</code> is a Node.js program that runs on your Mac and turns a Jira ticket into a tested, signed pull request. It isn't a skill itself: it wraps the robot's skills (research, then build), starts each one, and does the routine steps around them.</p>
+    <a class="repo-link" href="https://github.com/JustinChan-fd/dev-loop" target="_blank" rel="noopener noreferrer" aria-label="dev-loop on GitHub: JustinChan-fd/dev-loop (opens in a new tab)">
+      <svg class="gh" viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      <span>JustinChan-fd/dev-loop</span>
+      <svg class="ext" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M9.5 2.5h4v4M13.5 2.5 7 9M12 9.5v3.25c0 .41-.34.75-.75.75h-8c-.41 0-.75-.34-.75-.75v-8c0-.41.34-.75.75-.75H6.5"/></svg>
+    </a>
+  </header>
+</div>
+<main>
+  <section class="col pillars-sec" aria-labelledby="pillars-h">
+    <h2 id="pillars-h">Key pillars</h2>
+    <ol class="pillars">
+      <li><b>The robot thinks, the loop does the routine.</b> The robot (its skills) reads, plans and writes code. dev-loop's own code does the fixed steps: Jira, GitHub, signing, cleanup.</li>
+      <li><b>Tests first, always.</b> Every requirement gets a failing test before any code is written.</li>
+      <li><b>A bounce beats a guess.</b> If something is unclear or won't work, the robot stops and says why instead of guessing.</li>
+      <li><b>Your key stays with you.</b> Only your Mac signs and sends. The robot never holds your key.</li>
+      <li><b>Locked down when you want it.</b> With a safety room, the robot reaches only approved services.</li>
+    </ol>
+  </section>
+
+  <section class="workflow" aria-labelledby="workflow-h">
+    <div class="col">
+      <h2 id="workflow-h">See it work</h2>
+      <p class="sub">Pick options. The picture changes to show what happens.</p>
+    <form class="filters" aria-label="Options" onsubmit="return false">
+      <div class="selects">
+        <label class="group"><span class="group-label">Repo</span><select data-group="repo"></select></label>
+        <label class="group"><span class="group-label">Job</span><select data-group="phase"></select></label>
+        <label class="group"><span class="group-label">Safety room</span><select data-group="sandbox"></select></label>
+        <label class="group"><span class="group-label">Mode</span><select data-group="mode"></select></label>
+      </div>
+      <div class="group">
+        <span class="group-label">The command</span>
+        <div class="cmd" id="cmd"></div>
+      </div>
+      <dl class="facts">
+        <div><dt>Runs</dt><dd id="job-skills" aria-live="polite"></dd></div>
+        <div><dt title="Every minute it asks Jira for tickets that match all of these">Picks up</dt><dd><ul class="pickup" id="pickup"></ul></dd></div>
+      </dl>
+    </form>
+    </div>
+
+    <div class="col">
+      <section aria-labelledby="steps-h" class="stack">
+        <div class="stepbar">
+          <h3 id="steps-h">What happens</h3>
+          <div class="stepnav">
+            <button type="button" class="chip nav" id="prev" aria-label="Previous step">&larr;</button>
+            <span id="stepcount" aria-live="polite">Step through it</span>
+            <button type="button" class="chip nav" id="next" aria-label="Next step">&rarr;</button>
+            <button type="button" class="chip" id="viewall" aria-pressed="false" aria-controls="steps">View all</button>
+          </div>
+        </div>
+        <ol class="steps" id="steps"></ol>
+      </section>
+    </div>
+
+    <dialog class="dash" id="dash" aria-labelledby="dash-title">
+      <div class="dash-in">
+        <header><h3 id="dash-title">The sbx dashboard, beside a running loop</h3><button type="button" id="dash-close">Close</button></header>
+        <a href="img/sbx-dashboard.png" target="_blank" rel="noopener" title="Open full size"><img src="img/sbx-dashboard.png" alt="Two Terminal windows side by side. Left: sbx's dashboard showing the sandbox dl-12-webtarsthree-tars-1634-research and its network log of 6 hosts, all allowed: api.anthropic.com, the Bedrock gateway, mcp-gateway.docker.internal, deb.debian.org, deb.nodesource.com and dhi.io. Right: npm run loop with --sandbox=sbx, which opened the dashboard, picked up TARS-1634, created its GitHub Issue and started the research phase in that sandbox."></a>
+        <p class="small-note">Click the picture to open it full size.</p>
+        <p><b>Left:</b> sbx's dashboard. <b>Right:</b> the loop that started it. With <code>--sandbox=sbx</code>, dev-loop opens the dashboard in a new Terminal window (skip it with <code>--no-dashboard</code>, or open it yourself with <code>npm run sbx:dashboard</code>). Each safety room shows up here while it runs, with every host it tried and whether sbx let it through.</p>
+        <p>Some hosts here are sbx's own, not dev-loop's: when a safety room starts, sbx's Claude setup refreshes its package lists (<code>deb.debian.org</code>, <code>dhi.io</code>, <code>deb.nodesource.com</code>) and checks in with <code>api.anthropic.com</code>. <code>mcp-gateway.docker.internal</code> is sbx's link back to your Mac for tools. The robot's AI work itself goes through Bedrock.</p>
+      </div>
+    </dialog>
+
+    <figure class="band">
+      <div class="figure" role="img" id="figure-wrap">
+        <svg id="diagram" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </figure>
+  </section>
+
+  <div class="col">
+  <section class="envsec" aria-labelledby="env-h">
+    <h2 id="env-h">Where settings and secrets live</h2>
+    <p class="sub" id="env-sub"></p>
+    <div class="tablewrap"><table id="envtable"></table></div>
+  </section>
+
+  <section style="display:grid;gap:12px">
+    <h2>Repos we support</h2>
+    <p class="sub">Adding a repo needs no code. Copy one of the <code>pipeline.&lt;repo&gt;.config.json</code> files at the root of <code>dev-loop</code>, fill in the new repo's GitHub name, Jira labels and statuses, then run <code>npm run loop -- --project=&lt;repo&gt;</code>. Steps are in <code>docs/config.md</code>.</p>
+    <div class="tablewrap"><table id="repos"></table></div>
+  </section>
+
+
+  <p class="note" id="updated"></p>
+  </div>
+</main>
+
+<script>
+/* ===== DATA: the only place facts live. Update when dev-loop changes. ===== */
+const DATA = {
+  updated: "2026-11-17",
+  /* Jira statuses every repo's config uses (jira.claimStatus / statusNames). */
+  status: { todo: "To Do", bounced: "Blocked", prOpen: "Code Review" },
+  repos: [
+    { id: "webtarsthree", jira: "repo:webtarsthree", name: "webtarsthree", gh: "fandango/webtarsthree", sandboxes: ["sbx"], sandboxMode: "discover",
+      find: { research: "pipeline:v2", dev: "pipeline:v2:dev", extra: { not: "dev-loop-eval" } } },
+    { id: "catalog-ui-management", jira: "repo:catalog-ui-management", name: "catalog-ui-management", gh: "fandango/catalog-ui-management", sandboxes: [],
+      find: { research: "pipeline:research", dev: "pipeline:dev", devAssignee: true } },
+    { id: "catalog-ui-public", jira: "repo:catalog-ui-public", name: "catalog-ui-public", gh: "fandango/catalog-ui-public", sandboxes: [],
+      find: { research: "pipeline:research", dev: "pipeline:dev", devAssignee: true } },
+    { id: "eval", jira: "repo:webtarsthree", name: "eval (test repo)", gh: "JustinChan-fd/dev-loop-eval-sandbox", sandboxes: [],
+      find: { research: "pipeline:v2", dev: "pipeline:v2:dev", extra: { has: "dev-loop-eval" } } },
+  ],
+  phases: [
+    { id: "worker", label: "Both (default)", flag: "", skills: ["ticket-refine", "ticket-to-pr"] },
+    { id: "research", label: "Research only", flag: "--phase=research", skills: ["ticket-refine"] },
+    { id: "dev", label: "Build only", flag: "--phase=dev", skills: ["ticket-to-pr"] },
+  ],
+  /* What each skill is, and the helper agents it calls (.claude/skills, .claude/agents). */
+  skills: {
+    "ticket-refine": { job: "research", helpers: ["recon-agent", "devils-advocate-agent", "verifier-agent"] },
+    "ticket-to-pr": { job: "build", helpers: ["qa-agent"], uses: "push-branch" },
+  },
+  /* A host the safety room tried that sbx has not approved (sbx policy log). */
+  blockedExample: { host: "cognito-idp.us-west-2.amazonaws.com", when: "TARS-1634's build, 2026-11-17" },
+  sandboxes: [
+    { id: "none", label: "None", flag: "" },
+    { id: "sbx", label: "sbx (Docker)", flag: "--sandbox=sbx" },
+  ],
+  modes: [
+    { id: "single", label: "One ticket at a time", flag: "" },
+    { id: "batch", label: "Batch (coming later)", flag: "", disabled: true },
+  ],
+};
+/* ======================================================================== */
+
+const state = { repo: "webtarsthree", phase: "worker", sandbox: "none", mode: "single" };
+let current = 0; /* the step shown and highlighted */
+let viewAll = false; /* false: one step at a time; true: the whole list */
+/* #sbx opens the page with the safety room picked (a shareable link). */
+if (location.hash === "#sbx") state.sandbox = "sbx";
+
+function chips(group, items) {
+  const sel = document.querySelector(`select[data-group="${group}"]`);
+  sel.innerHTML = "";
+  for (const it of items) {
+    const o = document.createElement("option");
+    o.value = it.id; o.textContent = it.label + (it.disabled && it.reason ? ` (${it.reason})` : "");
+    o.disabled = !!it.disabled;
+    o.selected = state[group] === it.id;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => { state[group] = sel.value; render(); };
+}
+
+function repo() { return DATA.repos.find((r) => r.id === state.repo); }
+
+/* Steps for the current choice. zone: "room" (sandbox) or "mac" (host).
+   uses: the outside service the step talks to (shown inside its box, no crossing lines). */
+function stepsFor() {
+  const sb = state.sandbox !== "none";
+  const robot = sb ? "room" : "mac";
+  const viaGate = sb ? " (through the gate)" : "";
+  const unapprovedNote = sb ? " If it reaches for a service sbx hasn't approved, sbx refuses it (the red band at the bottom)." : "";
+  const out = [];
+  out.push({ zone: "mac", title: "Track it", sub: ["opens the ticket's", "GitHub Issue"], uses: "GitHub Issue",
+    more: "When the loop picks up a ticket, your Mac opens (or reuses) a GitHub Issue for it. Every step posts its progress there. Jira is for project management only." });
+  if (state.phase !== "dev") {
+    out.push({ zone: robot, title: "Check ticket", sub: ["is it clear", "enough to build?"], uses: "AI (Bedrock)" + viaGate,
+      more: "The robot reads the ticket and the code, and checks the ticket is clear enough to build. Its thinking happens on Fandango's Bedrock AI gateway." + unapprovedNote });
+    out.push({ zone: "mac", title: "Post result", sub: ["\u2705 go on", "\u274c bounce"], uses: "Jira + Issue", decision: true,
+      more: "Your Mac posts the robot's findings: the full write-up on the GitHub Issue, and a short comment on Jira that links to it. \u2705 the ticket is clear, so it moves on to building. \u274c it bounces: the ticket goes to Blocked with the reason, for a person to fix. Then the loop picks it up again." });
+  }
+  if (state.phase !== "research") {
+    out.push({ zone: robot, title: "Get packages", sub: ["downloads the", "code's parts"], uses: "nexus3" + viaGate,
+      more: "The robot installs the project's packages from Fandango's package store (nexus3.mgo.com), so it can run the tests." });
+    out.push({ zone: robot, title: "Write code", sub: ["tests first,", "then the code"], uses: "AI (Bedrock)" + viaGate,
+      more: "The robot writes a failing test for each requirement, then the code that makes it pass, then runs every test." + unapprovedNote });
+    if (sb) {
+      out.push({ zone: "room", title: "Hand over", sub: ["\u2705 pack it up", "\u274c bounce"], decision: true,
+        more: "The robot stops and packs up its work for the loop on your Mac: the branch with its commits, the PR title and description, the QA notes for Jira, and how the tests went. It writes these into one handover file and can't send anything out itself. \u274c it bounces with the reason instead (for example, the tests won't run): your Mac posts it on the Issue and Jira, and moves the ticket to Blocked." });
+      out.push({ zone: "mac", title: "Double-check", sub: ["runs the tests,", "signs with your key"], uses: "nexus3", key: true,
+        more: "Your Mac doesn't just trust the safety room. It takes its own copy of the code, downloads its own packages from nexus3 (the safety room's only work on Linux), and runs the tests again. If they pass, it signs the work with your key, so GitHub knows it came from you. The robot never touches your key. If anything fails, it bounces." });
+      out.push({ zone: "mac", title: "Send it", sub: ["opens the PR,", "moves the ticket"], uses: "PR + Jira + Issue",
+        more: "Two helpers on your Mac. A small, cheap AI (haiku) runs your /push-branch skill with the title and description the robot already wrote: it pushes the branch and opens the PR, with nothing left to decide. Then dev-loop's own code checks the branch really reached GitHub, moves the Jira ticket to Code Review with the QA notes, and posts the PR link on the Issue.",
+        why: "Why not the robot? Its commits must be signed with your key (GitHub refuses unsigned ones), and your key never goes in the safety room. So the push moved out to your Mac, after the signing. /push-branch stays the one copy of how a push and a PR are done, so a small AI follows it as written instead of dev-loop copying it. Jira and the Issue are fixed steps, so plain code does them, never an AI." });
+    } else {
+      out.push({ zone: "mac", title: "Ready?", sub: ["\u2705 tests pass", "\u274c bounce"], decision: true,
+        more: "\u2705 the tests pass, so on to sending. \u274c it bounces with the reason: your Mac posts it on the Issue and Jira, and moves the ticket to Blocked." });
+      out.push({ zone: "mac", title: "Sign + send", sub: ["signs, opens the PR,", "moves the ticket"], uses: "PR + Jira + Issue", key: true,
+        more: "With no safety room, the robot runs your /push-branch skill itself: your Mac's git signs each commit with your key, and it pushes and opens the PR. Then dev-loop's own code moves the Jira ticket to Code Review and posts the PR link on the Issue." });
+    }
+  }
+  return out;
+}
+
+/* Drawing width = 8 steps of 138 + 7 gaps of 24 + frames; the page column matches it. */
+const DIAGRAM_W = 8 * 138 + 7 * 24 + 44 + 32 + 16;
+const NS = "http://www.w3.org/2000/svg";
+function el(name, attrs, text) {
+  const e = document.createElementNS(NS, name);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+/* Wrap a short phrase onto at most two lines of ~max chars. */
+function wrap2(text, max) {
+  if (text.length <= max) return [text];
+  const words = text.split(" ");
+  let first = "";
+  while (words.length && (first + " " + words[0]).trim().length <= max) first = (first + " " + words.shift()).trim();
+  return [first, words.join(" ")];
+}
+
+/*
+ Horizontal flow. Your Mac is the outer box: the loop runs there, for one
+ project, on your copy of its code. The safety room runs inside the project
+ (on your Mac). Outside services are not on your Mac, so they sit beneath it,
+ named for this project. Each step has its own column, so its service line
+ runs straight down with nothing to cross.
+*/
+function drawDiagram() {
+  const svg = document.getElementById("diagram");
+  svg.innerHTML = "";
+  const sb = state.sandbox !== "none";
+  const steps = stepsFor();
+  const r = repo();
+  // One fixed drawing width for every choice (the widest flow, 7 steps), so
+  // text never rescales. Fewer steps spread out; boxes stay a fixed size.
+  const W = DIAGRAM_W, boxW = 138, boxH = 88;
+  const n = steps.length;
+  const macX = 8, projX = macX + 16;
+  const macW = W - macX * 2, projW = macW - 32;
+  const inner = projW - 44;
+  // Up to 7 steps keep their natural gap; a shorter flow is centered, not stretched.
+  const colGap = Math.min(64, n > 1 ? (inner - n * boxW) / (n - 1) : 0);
+  const rowW = n * boxW + (n - 1) * colGap;
+  const stepX0 = projX + 22 + (inner - rowW) / 2;
+
+  // rows (y)
+  const macY = 8, projY = macY + 42;
+  const roomH = boxH + 90;
+  const roomY = projY + 42;
+  const roomRowY = roomY + 68;
+  const projRowY = sb ? roomY + roomH + 28 : projY + 46;
+  const projH = projRowY + boxH + 24 - projY;
+  const macH = projY + projH + 18 - macY;
+  const hasBounce = steps.some((x) => x.decision);
+  const extY = macY + macH + 34, extH = hasBounce ? 150 : 112;
+  const unY = extY + extH + 16, unH = 141;
+  const H = sb ? unY + unH + 8 : extY + extH + 8;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.style.maxWidth = `${W}px`;
+
+  const defs = el("defs", {});
+  const m = el("marker", { id: "h", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" });
+  m.appendChild(el("path", { d: "M0,0 L10,5 L0,10 z", class: "head" }));
+  defs.appendChild(m);
+  const m2 = el("marker", { id: "hl", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" });
+  m2.appendChild(el("path", { d: "M0,0 L10,5 L0,10 z", class: "head-link" }));
+  defs.appendChild(m2);
+  const m3 = el("marker", { id: "hb", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" });
+  m3.appendChild(el("path", { d: "M0,0 L10,5 L0,10 z", class: "head-bounce" }));
+  defs.appendChild(m3);
+  svg.appendChild(defs);
+
+  // your Mac (outer)
+  svg.appendChild(el("rect", { x: macX, y: macY, width: macW, height: macH, rx: 16, class: "z-mac", "stroke-width": 2 }));
+  svg.appendChild(el("text", { x: macX + 18, y: macY + 27, class: "zone-title t-mac" }, "Your Mac"));
+  svg.appendChild(el("text", { x: macX + macW - 18, y: macY + 27, class: "small", "text-anchor": "end" }, "where dev-loop runs"));
+  // project (inside your Mac)
+  svg.appendChild(el("rect", { x: projX, y: projY, width: projW, height: projH, rx: 12, class: "z-project", "stroke-width": 1.5 }));
+  svg.appendChild(el("text", { x: projX + 16, y: projY + 26, class: "zone-title" }, `Project: ${r.name}`));
+  svg.appendChild(el("text", { x: projX + projW - 16, y: projY + 26, class: "small", "text-anchor": "end" }, "your copy of its code"));
+  // safety room (inside the project)
+  if (sb) {
+    svg.appendChild(el("rect", { x: projX + 10, y: roomY, width: projW - 20, height: roomH, rx: 12, class: "z-room", "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: projX + projW - 26, y: roomY + 26, class: "zone-title t-room", "text-anchor": "end" }, "Safety room (sbx)"));
+    // button under the title: opens a screenshot of sbx's live dashboard
+    const bw = 172, bx = projX + projW - 26 - bw, by = roomY + 36;
+    const btn = el("g", { class: "dash-btn", role: "button", tabindex: "0", "aria-label": "See the sbx dashboard (opens a picture)" });
+    btn.appendChild(el("rect", { x: bx, y: by, width: bw, height: 22, rx: 11 }));
+    btn.appendChild(el("text", { x: bx + bw / 2, y: by + 15, "text-anchor": "middle" }, "See the sbx dashboard \u2197"));
+    btn.addEventListener("click", openDash);
+    btn.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDash(); } });
+    svg.appendChild(btn);
+  }
+  // outside services (beneath, not on your Mac)
+  svg.appendChild(el("rect", { x: macX, y: extY, width: macW, height: extH, rx: 14, class: "z-ext", "stroke-width": 2 }));
+  svg.appendChild(el("text", { x: macX + 18, y: extY + extH - 36, class: "zone-title t-ext halo-ext" }, sb ? "Approved outside services (not on your Mac; sbx policy approved these)" : "Outside services (not on your Mac)"));
+  svg.appendChild(el("text", { x: macX + 18, y: extY + extH - 15, class: "small halo-ext" }, `GitHub ${r.gh} \u00b7 Jira ${r.jira} \u00b7 AI: Bedrock \u00b7 packages: nexus3.mgo.com`));
+
+  const pos = steps.map((st, i) => ({ st, x: stepX0 + i * (boxW + colGap), y: st.zone === "room" ? roomRowY : projRowY }));
+  const stepG = [];
+  pos.forEach(({ st, x, y }, i) => {
+    const g = el("g", { class: "step", "data-i": i, tabindex: "0", role: "button", "aria-label": `Step ${i + 1}: ${st.title}` });
+    g.appendChild(el("rect", { x, y, width: boxW, height: boxH, rx: st.decision ? 22 : 10, class: st.decision ? "box-decide" : "box", "stroke-width": 1.5 }));
+    if (st.key) g.appendChild(el("text", { x: x + boxW - 8, y: y + 23, "text-anchor": "end", "font-size": 12 }, "\u{1F511}"));
+    g.appendChild(el("text", { x: x + 16, y: y + 28, "font-size": 14.5, "font-weight": 700 }, st.title));
+    [].concat(st.sub).forEach((line, k) => g.appendChild(el("text", { x: x + 16, y: y + 52 + k * 18, class: "small" }, line)));
+    g.addEventListener("click", () => select(i));
+    g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(i); } });
+    stepG.push(g);
+  });
+
+  // service lines: straight down from the step to its tag in the outside band
+  pos.forEach(({ st, x, y }, i) => {
+    if (!st.uses) return;
+    const cx = x + boxW / 2;
+    const tagY = extY + 18, tagH = 30;
+    const base = st.uses.replace(" (through the gate)", "");
+    const label = base;
+    const tw = Math.min(boxW, label.length * 7.4 + 22);
+    svg.appendChild(el("path", { d: `M${cx} ${y + boxH} V${tagY - 3}`, class: "link", "data-i": i, "marker-end": "url(#hl)" }));
+    const tg = el("g", { class: "tag", "data-i": i });
+    tg.appendChild(el("rect", { x: cx - tw / 2, y: tagY, width: tw, height: tagH, rx: 15, class: "box", "stroke-width": 1.5 }));
+    tg.appendChild(el("text", { x: cx, y: tagY + 20, "text-anchor": "middle", "font-size": 13, "font-weight": 700 }, label));
+    svg.appendChild(tg);
+    if (st.zone === "room") {
+      const gg = el("g", { class: "gate-g", "data-i": i });
+      gg.appendChild(el("rect", { x: cx - 24, y: roomY + roomH - 9, width: 48, height: 18, rx: 9, class: "gate" }));
+      gg.appendChild(el("text", { x: cx, y: roomY + roomH + 4, "text-anchor": "middle", class: "gate-text" }, "gate"));
+      svg.appendChild(gg);
+    }
+  });
+
+  // flow arrows: right out of a step, turn in the gap, right into the next
+  for (let i = 0; i < pos.length - 1; i++) {
+    const a = pos[i], b = pos[i + 1];
+    const ay = a.y + boxH / 2, by = b.y + boxH / 2;
+    const ax = a.x + boxW, bx = b.x, mid = ax + colGap / 2;
+    const d = ay === by ? `M${ax} ${ay} H${bx - 3}` : `M${ax} ${ay} H${mid} V${by} H${bx - 3}`;
+    svg.appendChild(el("path", { d, class: "flow", "marker-end": "url(#h)" }));
+  }
+  // bounce: every decision gets the same red pill, "❌ Blocked", on its own row
+  // under the tags, in the decision's own column, with a red dashed line to it.
+  pos.forEach(({ st, x, y }, i) => {
+    if (!st.decision) return;
+    const cx = x + boxW / 2, pillY = extY + 62, pw = 112;
+    const fromY = st.uses ? extY + 18 + 30 : y + boxH;
+    svg.appendChild(el("path", { d: `M${cx} ${fromY} V${pillY - 3}`, class: "bounce", "data-i": i, "marker-end": "url(#hb)" }));
+    const g = el("g", { class: "tag", "data-i": i });
+    g.appendChild(el("rect", { x: cx - pw / 2, y: pillY, width: pw, height: 28, rx: 14, class: "blocked-tag" }));
+    g.appendChild(el("text", { x: cx, y: pillY + 19, "text-anchor": "middle", class: "bounce-text" }, "\u274c Jira: Blocked"));
+    svg.appendChild(g);
+  });
+  // unapproved services (sbx only): a long band under the approved one. Each
+  // AI (Bedrock) pill points down to it: the robot may try a host sbx has not
+  // approved; it is refused at the edge, and what happens next depends on the mode.
+  if (sb) {
+    svg.appendChild(el("rect", { x: macX, y: unY, width: macW, height: unH, rx: 14, class: "z-un", "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: macX + 18, y: unY + 68, class: "zone-title t-un halo-un" }, "Unapproved services (anything sbx hasn't approved)"));
+    const mode = r.sandboxMode ?? "discover";
+    const ex = DATA.blockedExample;
+    const lines = [
+      [mode === "discover", `Discover mode${mode === "discover" ? ` (${r.name} today)` : ""}: the robot gets a \u201cno\u201d (403) and carries on. Afterwards, npm run sandbox:approvals lists each host with the line that would approve it. You decide; dev-loop never approves.`],
+      [mode === "enforce", `Enforce mode${mode === "enforce" ? ` (${r.name} today)` : ""}: the run stops and the ticket is parked (not Blocked). Approve the host yourself, then npm run sandbox:approvals -- --clear=<KEY> picks it up again.`],
+    ];
+    lines.forEach(([on, t], k) => svg.appendChild(el("text", { x: macX + 18, y: unY + 92 + k * 17, class: `small halo-un${on ? " un-on" : ""}` }, t)));
+    svg.appendChild(el("text", { x: macX + 18, y: unY + unH - 15, class: "small halo-un" }, `Seen for real: ${ex.host}, during ${ex.when}.`));
+    pos.forEach(({ st, x }, i) => {
+      if (!st.uses || !st.uses.startsWith("AI (Bedrock)")) return;
+      const cx = x + boxW / 2, fromY = extY + 18 + 30, pillY = unY + 14, pw = 124;
+      svg.appendChild(el("path", { d: `M${cx} ${fromY} V${pillY - 3}`, class: "bounce", "data-i": i, "marker-end": "url(#hb)" }));
+      const g = el("g", { class: "tag", "data-i": i });
+      g.appendChild(el("rect", { x: cx - pw / 2, y: pillY, width: pw, height: 28, rx: 14, class: "blocked-tag" }));
+      g.appendChild(el("text", { x: cx, y: pillY + 19, "text-anchor": "middle", class: "bounce-text" }, "\u274c sbx: blocked"));
+      svg.appendChild(g);
+    });
+  }
+  stepG.forEach((g) => svg.appendChild(g));
+
+  document.getElementById("figure-wrap").setAttribute("aria-label",
+    `Diagram: on your Mac, project ${r.name}: ` + steps.map((st) => `${st.title} (${st.zone === "room" ? "safety room" : "your Mac"}${st.uses ? ", uses " + st.uses : ""})`).join(", then ") + (sb ? ". Below: unapproved services, which sbx blocks." : ""));
+}
+
+function drawSteps() {
+  const ol = document.getElementById("steps");
+  ol.innerHTML = "";
+  for (const s of stepsFor()) {
+    const li = document.createElement("li");
+    li.className = s.zone;
+    li.dataset.i = String(ol.children.length);
+    li.dataset.n = String(ol.children.length + 1);
+    li.addEventListener("click", () => select(Number(li.dataset.i)));
+    const join = (a, b) => (/[?.!]$/.test(a) ? `${a} ${b}` : `${a}: ${b}`);
+    const end = (t) => (/[?.!]$/.test(t) ? t : `${t}.`);
+    li.innerHTML = `<div><span class="where">${s.zone === "room" ? "Safety room" : "Your Mac"}</span>${end(join(s.title, [].concat(s.sub).join(s.decision ? " \u00b7 " : " ")))}${s.uses ? ` Uses ${s.uses}.` : ""}<span class="more" hidden>${s.more ?? ""}${s.why ? `<span class="why">${s.why}</span>` : ""}</span></div>`;
+    ol.appendChild(li);
+  }
+  if (state.sandbox !== "none") {
+    // a note, not a step: shown under the list, unnumbered
+    const li = document.createElement("li");
+    li.className = "note-item";
+    li.innerHTML = `<div><span class="where">Why two places</span>The robot never holds your key. Your Mac only does fixed steps.</div>`;
+    ol.appendChild(li);
+  }
+}
+
+function drawRepos() {
+  const t = document.getElementById("repos");
+  const rows = DATA.repos.map((r) =>
+    `<tr><td><b>${r.name}</b></td><td>${r.gh}</td><td>${r.sandboxes.length ? `<span class="yes">${r.sandboxes.join(", ")}</span>` : `<span class="no">none yet</span>`}</td></tr>`).join("");
+  t.innerHTML = `<thead><tr><th>Repo</th><th>On GitHub</th><th>Safety room</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+/* Where each setting lives, grouped by place (docs/sandbox-sbx.md §2, §5, §6, §9; src/core/spawn-claude.ts childEnv). */
+function drawEnv() {
+  const sb = state.sandbox !== "none";
+  const r = repo();
+  const c = (x) => `<code>${x}</code>`;
+  // can the robot read it? plain yes/no with the reason; "warn" = yes, and it matters
+  const can = (k, why) => `<span class="can can-${k}">${k === "no" ? "No" : k === "warn" ? "\u26a0\ufe0f Yes" : "Yes"}</span> <span class="why-txt">${why}</span>`;
+  const by = (x) => `<span class="by by-${x.cls}">${x.t}</span>`;
+  const LOOP = { cls: "loop", t: "dev-loop" }, ROBOT = { cls: "robot", t: "robot" }, GIT = { cls: "you", t: "your git" }, SBX = { cls: "sbx", t: "sbx" };
+  // groups: [place, zone class, note, rows: [setting, where, used by, can the robot read it]]
+  const groups = [
+    ["Your Mac", "mac", "your home folder, outside every repo", [
+      ["Jira login", c("~/.config/dev-loop/.env"), LOOP, sb ? can("no", "it stays on your Mac with dev-loop") : can("no", "dev-loop takes it out before it starts the robot")],
+      ["Model names", c("~/.claude/settings.json"), sb ? LOOP : ROBOT, can("yes", sb ? "just the names; dev-loop passes them in" : "just the names, no keys")],
+      ["Signing key", c("~/.ssh"), GIT, sb ? can("no", "it stays on your Mac; dev-loop signs the commits after") : can("yes", "the robot runs as you, so git signs with your key")],
+      ["GitHub login", c("gh") + " login", sb ? GIT : ROBOT, sb ? can("no", "it stays on your Mac; used only for the push") : can("yes", "it pushes and opens the PR")],
+      ...(sb ? [] : [
+        ["Bedrock (AI)", "your Claude setup", ROBOT, can("yes", "it is how the robot thinks")],
+        ["Jira for the robot", "your Claude Atlassian sign-in", ROBOT, can("yes", "it reads and comments on the ticket")],
+      ]),
+    ]],
+    ["dev-loop's folder", "loop", "this repo", [
+      ["Pipeline settings", c(`pipeline.${r.id}.config.json`), LOOP, can("yes", "no secrets in it")],
+    ]],
+    [`The target repo`, "repo", r.name, [
+      ["Repo settings", c(".envrc"), ROBOT, can("warn", "it needs them to run the app and its tests. Some are real keys, so keep this file to local and INT values, never STG or PRD" + (sb ? ". sbx only lets them reach approved services." : "."))],
+    ]],
+    ...(sb ? [["sbx", "sbx", "Docker's own store on your Mac", [
+      ["GitHub token", c("sbx secret set github"), SBX, can("no", "sbx adds it to each request on the way out")],
+      ["Bedrock token", "Keystone kit", SBX, can("no", "sbx adds it on the way out")],
+      ["Jira for the robot", c("sbx mcp add atlassian"), SBX, can("no", "sbx signs in for it")],
+    ]]] : []),
+  ];
+  // one table: the place is its own first column, spanning its rows
+  document.getElementById("envtable").innerHTML =
+    `<thead><tr><th>Where</th><th>Setting</th><th>File or place</th><th>Used by</th><th>Can the robot read it?</th></tr></thead>` +
+    groups.map(([place, z, note, rows]) =>
+      `<tbody class="g g-${z}">` + rows.map((x, k) =>
+        `<tr>${k === 0 ? `<th scope="rowgroup" rowspan="${rows.length}" class="place">${place}<span>${note}</span></th>` : ""}` +
+        `<td>${x[0]}</td><td>${x[1]}</td><td>${by(x[2])}</td><td>${x[3]}</td></tr>`).join("") + "</tbody>").join("");
+}
+
+function drawPickup() {
+  const r = repo(), f = r.find, st = DATA.status;
+  const lbl = (x, cls = "") => `<span class="lbl ${cls}">${x}</span>`;
+  const rows = [];
+  const labels = [r.jira, state.phase === "dev" ? f.dev : f.research];
+  if (f.extra?.has) labels.push(f.extra.has);
+  rows.push(["Labels", labels.map((x) => lbl(x)).join(" ")]);
+  if (f.extra?.not) rows.push(["Not labelled", lbl(f.extra.not)]);
+  rows.push(["Status", state.phase === "dev" ? `not ${st.bounced} or ${st.prOpen}` : st.todo]);
+  if (state.phase === "dev" && f.devAssignee) rows.push(["Assignee", "you"]);
+  rows.push(["Order", "oldest first"]);
+  document.getElementById("pickup").innerHTML = rows.map(([k, v]) => `<li><b>${k}</b> ${v}</li>`).join("") + `<li class="every">checked every minute</li>`;
+}
+
+function render() {
+  // a repo without sbx set up can't pick it
+  const r = repo();
+  const sbxOk = r.sandboxes.includes("sbx");
+  if (!sbxOk && state.sandbox === "sbx") state.sandbox = "none";
+  chips("repo", DATA.repos.map((x) => ({ id: x.id, label: x.name })));
+  chips("phase", DATA.phases);
+  chips("sandbox", DATA.sandboxes.map((x) => ({ ...x, disabled: x.id === "sbx" && !sbxOk, reason: "not set up for this repo" })));
+  chips("mode", DATA.modes);
+  const flags = [`--project=${r.id}`, DATA.phases.find((p) => p.id === state.phase).flag, DATA.sandboxes.find((s) => s.id === state.sandbox).flag].filter(Boolean);
+  document.getElementById("cmd").textContent = `npm run loop -- ${flags.join(" ")}`;
+  const ph = DATA.phases.find((p) => p.id === state.phase);
+  document.getElementById("job-skills").innerHTML = ph.skills.map((k) => {
+    const sk = DATA.skills[k];
+    const extra = [...sk.helpers, ...(sk.uses ? [`/${sk.uses}`] : [])];
+    return `<code>/${k}</code> (${sk.job}; with ${extra.map((h) => `<code>${h}</code>`).join(", ")})`;
+  }).join(", then ");
+  drawPickup();
+  drawEnv();
+  document.getElementById("env-sub").textContent = state.sandbox !== "none" ? "Grouped by where each one lives. With sbx, the robot can read only the two folders it works in; sbx adds every token on the way out, so the robot never holds one. The one real secret it can read is the target repo\u2019s .envrc, which it needs to run the app." : "Grouped by where each one lives. With no safety room, the robot runs as you and can read what you can, except dev-loop\u2019s Jira login.";
+  drawDiagram();
+  drawSteps();
+  select(0);
+}
+
+/* Step-through: highlight one step in the diagram and the list. */
+function select(i) {
+  const steps = stepsFor();
+  current = Math.max(0, Math.min(i, steps.length - 1));
+  document.querySelectorAll("#diagram [data-i]").forEach((n) => {
+    const mine = Number(n.getAttribute("data-i")) === current;
+    n.classList.toggle("on", mine && n.classList.contains("step"));
+    n.classList.toggle("dim", !mine);
+  });
+  document.querySelectorAll("#steps li").forEach((li) => {
+    const isStep = li.dataset.i !== undefined;
+    const mine = isStep && Number(li.dataset.i) === current;
+    li.classList.toggle("on", mine && viewAll);
+    // one at a time: only the current step; view all: every item
+    li.hidden = !viewAll && !mine;
+    const more = li.querySelector(".more");
+    if (more) more.hidden = !mine;
+  });
+  document.getElementById("stepcount").textContent = `Step ${current + 1} of ${steps.length}`;
+  document.getElementById("prev").disabled = current <= 0;
+  document.getElementById("next").disabled = current >= steps.length - 1;
+  const va = document.getElementById("viewall");
+  va.textContent = viewAll ? "One at a time" : "View all";
+  va.setAttribute("aria-pressed", String(viewAll));
+}
+document.getElementById("viewall").addEventListener("click", () => { viewAll = !viewAll; select(current); });
+for (const id of ["prev"]) document.getElementById(id).addEventListener("click", () => select(Math.max(0, current - 1)));
+for (const id of ["next"]) document.getElementById(id).addEventListener("click", () => select(current + 1));
+const dash = document.getElementById("dash");
+function openDash() { if (typeof dash.showModal === "function") dash.showModal(); else dash.setAttribute("open", ""); }
+document.getElementById("dash-close").addEventListener("click", () => dash.close());
+dash.addEventListener("click", (e) => { if (e.target === dash) dash.close(); });
+document.addEventListener("keydown", (e) => {
+  if (dash.open) return;
+  if (e.target.closest && e.target.closest("button, input, [role=button]")) return;
+  if (e.key === "ArrowRight") select(current + 1);
+  if (e.key === "ArrowLeft") select(Math.max(0, current - 1));
+});
+
+drawRepos();
+render();
+document.getElementById("updated").textContent = `Last checked against the code: ${DATA.updated}. Batch mode is planned and will get its own picture.`;
+</script>
+</body>
+</html>

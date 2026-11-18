@@ -52,6 +52,19 @@ via `--append-system-prompt`. Edit the stance there, not here.
 - **Security follows the same line.** Credentials and signing keys stay
   with the loop on the host. A sandboxed agent produces work but never
   decides what gets signed or published.
+- **Before every merge, check the pillars.** At the end of a session or a
+  large group of changes, list each change against each pillar above (and
+  TDD, "a bounce beats a guess", "plain loop unchanged"): breaks, bends or
+  fine, with why. Fix a break before merging. Write a bend down in the
+  merge commit or CHANGELOG with the reason it is acceptable.
+
+## The guide page
+
+`docs/guide/how-dev-loop-works.html` is the plain-language picture of the
+loop, with option chips for repo, job, sandbox and mode. **Update it in the
+same change** when you change a CLI flag, a sandbox adapter, a supported
+repo (`pipeline.*.config.json`), a phase's steps, or what runs where. Its
+facts live in the `DATA` block at the top of its script.
 
 ## Both phases
 
@@ -82,6 +95,8 @@ Each doc has `## Research phase` and `## Dev phase` sections.
   discover run).
 - `docs/adapters/sbx/` — sbx how-tos (`templates.md`: build, update, roll back
   the sandbox template from `sandbox/sbx/template.sh`).
+- `docs/guide/how-dev-loop-works.html` — the plain-language, interactive picture
+  of the loop (repos, flags, sandbox). Keep it current (see "The guide page").
 - `docs/reset.md` — `npm run reset-project`; use it to start a ticket or project
   fresh instead of hand-rolling `rm -rf`/`grep -v`.
 - `docs/future-enhancements.md` — ideas not yet drafted into a change. When one

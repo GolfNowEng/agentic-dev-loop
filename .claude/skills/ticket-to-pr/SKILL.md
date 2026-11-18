@@ -194,6 +194,26 @@ since it's what gets pushed and PR'd.)
 worktree as the working directory unless stated otherwise. See "Cleanup"
 below for removing it once the run concludes.
 
+### Install the target repo's packages
+
+A new worktree has no `node_modules`. Right after creating it (fresh or
+resumed), install the packages inside it, from its own lockfile:
+
+```bash
+direnv exec <REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID> npm ci
+```
+
+Do the same in every other worktree you create (`-baseline`, `-fu`), in
+that worktree. Never copy, link or reuse a `node_modules` from `REPO_DIR` or
+another worktree: it may have been built for a different machine (a
+sandboxed run is Linux; the checkout's packages are macOS builds, and
+vitest's native parts then fail to load).
+
+If `npm ci` fails, or the test suite still can't start after it, stop and
+bounce with `failure_category: "env_setup"`, naming the command and its
+first error line. TDD needs the suite: never continue to Red, Green, Verify
+or the PR without running it.
+
 ### Resume: continue prior work instead of starting over
 
 A ticket can be picked up again after a bounce (e.g. `verify_rejected`) with

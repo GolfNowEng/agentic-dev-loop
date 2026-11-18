@@ -19,6 +19,12 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[dev]` ticket-to-pr installs the target repo's packages (`npm ci`) in each
+  worktree it creates, and bounces `env_setup` when the suite can't start
+  instead of carrying on. A sandboxed TARS-1634 run (2026-11-17) found no
+  `node_modules`, saw only the macOS-built ones, called vitest "not runnable"
+  and handed over untested work. A probe confirmed `npm ci` + `vitest run`
+  work inside the sandbox (8013 tests).
 - `[dev]` `[core]` A sandboxed dev run's commits are signed on the host.
   TARS-1634 (2026-11-17) pushed unsigned commits from the sandbox and hit
   GH013 (signed commits required). When the sandbox can't sign, the loop
