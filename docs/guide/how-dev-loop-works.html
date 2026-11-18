@@ -294,6 +294,36 @@ html { scroll-behavior: smooth; }
 .where.w-mac::before { background: var(--mac-edge); }
 .where.w-room::before { background: var(--room-edge); }
 figure.band figcaption { color: var(--muted); font-size: .88rem; }
+
+/* Options, simplified: menus, then the command; details fold away. No card. */
+.filters { background: transparent; border: 0; box-shadow: none; padding: 0; gap: 18px; overflow: visible; }
+.selects { gap: 16px; }
+.group { gap: 8px; }
+.cmdrow .cmd { padding: 11px 14px; font-size: .9rem; }
+.more-info { font-size: .9rem; color: var(--muted); }
+.more-info summary { cursor: pointer; width: fit-content; color: var(--muted); padding: 2px 0; }
+.more-info summary:hover { color: var(--ink); }
+.more-info summary:focus-visible { outline: 3px solid var(--key); outline-offset: 2px; border-radius: 4px; }
+.more-info[open] summary { margin-bottom: 12px; }
+.more-info .facts { gap: 10px; padding-left: 16px; border-left: 2px solid var(--line); }
+.more-info .facts > div { grid-template-columns: 84px minmax(0, 1fr); }
+.more-info .facts dd { line-height: 1.8; }
+
+/* The step note: a quiet caption for the diagram, not a card. */
+ol.steps { min-height: 0; gap: 10px; }
+ol.steps li { display: block; background: transparent; border: 0; border-left: 3px solid var(--line); border-radius: 0; padding: 2px 0 2px 16px; font-size: .95rem; color: var(--muted); max-width: 80ch; }
+ol.steps li::before { content: none; }
+ol.steps li.mac { border-left-color: var(--mac-edge); }
+ol.steps li.room { border-left-color: var(--room-edge); }
+ol.steps li:hover, ol.steps li.cur { border-color: inherit; }
+ol.steps li.mac:hover, ol.steps li.mac.cur { border-left-color: var(--mac-edge); }
+ol.steps li.room:hover, ol.steps li.room.cur { border-left-color: var(--room-edge); }
+ol.steps li.note-item { border-left: 3px dashed var(--line); }
+.where::before { content: none !important; }
+.where { margin-bottom: 4px; font-size: .72rem; }
+.step-title b { font-size: 1rem; color: var(--ink); }
+.more { margin-top: 4px; line-height: 1.55; }
+.stepbar { align-items: center; }
 </style>
 </head>
 <body>
@@ -327,33 +357,30 @@ figure.band figcaption { color: var(--muted); font-size: .88rem; }
     <div class="col">
       <div class="sec-head"><span class="eyebrow">02</span><h2 id="workflow-h">See it work</h2><p class="sub">Pick options. The command, the steps and the picture below all change to match.</p></div>
     <form class="filters" aria-label="Options" onsubmit="return false">
-      <div class="panel-in">
-      <div class="panel-label">1. Choose <span>&mdash; four menus</span></div>
       <div class="selects">
         <label class="group"><span class="group-label">Repo</span><select data-group="repo"></select></label>
         <label class="group"><span class="group-label">Job</span><select data-group="phase"></select></label>
         <label class="group"><span class="group-label">Safety room</span><select data-group="sandbox"></select></label>
         <label class="group"><span class="group-label">Mode</span><select data-group="mode"></select></label>
       </div>
-      </div>
-      <div class="panel-out">
-      <div class="panel-label">2. Run it <span>&mdash; from the dev-loop folder</span></div>
       <div class="cmdrow">
         <div class="cmd" id="cmd" aria-label="The command"></div>
         <button type="button" class="btn" id="copy">Copy</button>
       </div>
+      <details class="more-info">
+      <summary>What this command runs and picks up</summary>
       <dl class="facts">
         <div><dt>Runs</dt><dd id="job-skills" aria-live="polite"></dd></div>
         <div><dt title="Every minute it asks Jira for tickets that match all of these">Picks up</dt><dd><ul class="pickup" id="pickup"></ul></dd></div>
       </dl>
-      </div>
+      </details>
     </form>
     </div>
 
     <div class="col">
       <section aria-labelledby="steps-h" class="stack">
         <div class="stepbar">
-          <div><h3 id="steps-h">What happens</h3><p class="hint">Step through with the arrows (or your arrow keys), or click a box in the picture.</p></div>
+          <h3 id="steps-h">What happens</h3>
           <div class="stepnav">
             <button type="button" class="chip nav" id="prev" aria-label="Previous step">&larr;</button>
             <span id="stepcount" class="count" aria-live="polite">Step through it</span>
@@ -379,7 +406,6 @@ figure.band figcaption { color: var(--muted); font-size: .88rem; }
       <div class="figure" role="img" id="figure-wrap">
         <svg id="diagram" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
-      <figcaption>Each box is a step you can click. The step you're on is outlined; the others fade back.</figcaption>
     </figure>
   </section>
 
@@ -690,7 +716,7 @@ function drawSteps() {
     li.dataset.n = String(ol.children.length + 1);
     li.addEventListener("click", () => select(Number(li.dataset.i)));
     const sub = [].concat(s.sub).join(s.decision ? " \u00b7 " : " ");
-    li.innerHTML = `<div><span class="where w-${s.zone}">${s.zone === "room" ? "Safety room" : "Your Mac"}</span><span class="step-title"><b>${s.title}</b> <span class="step-sub">${sub}</span></span>${s.uses ? `<span class="uses">Uses <b>${s.uses}</b></span>` : ""}<span class="more" hidden>${s.more ?? ""}${s.why ? `<span class="why">${s.why}</span>` : ""}</span></div>`;
+    li.innerHTML = `<div><span class="where w-${s.zone}">Step ${Number(li.dataset.n)} \u00b7 ${s.zone === "room" ? "Safety room" : "Your Mac"}${s.uses ? ` \u00b7 uses ${s.uses.replace(" (through the gate)", ", through the gate")}` : ""}</span><span class="step-title"><b>${s.title}</b> <span class="step-sub">${sub}</span></span><span class="more" hidden>${s.more ?? ""}${s.why ? `<span class="why">${s.why}</span>` : ""}</span></div>`;
     ol.appendChild(li);
   }
   if (state.sandbox !== "none") {
