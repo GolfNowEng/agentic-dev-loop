@@ -518,35 +518,34 @@ function stepsFor() {
   const sb = state.sandbox !== "none";
   const robot = sb ? "room" : "mac";
   const viaGate = sb ? " (through the gate)" : "";
-  const unapprovedNote = sb ? " If it reaches for a service sbx hasn't approved, sbx refuses it (the red band at the bottom)." : "";
+  const unapprovedNote = sb ? " sbx refuses any service it hasn't approved (the red band)." : "";
   const out = [];
   out.push({ zone: "mac", title: "Track it", sub: ["opens the ticket's", "GitHub Issue"], uses: "GitHub Issue",
-    more: "When the loop picks up a ticket, your Mac opens (or reuses) a GitHub Issue for it. Every step posts its progress there. Jira is for project management only." });
+    more: "Your Mac opens a GitHub Issue for the ticket. Every step posts its progress there." });
   if (state.phase !== "dev") {
     out.push({ zone: robot, title: "Check ticket", sub: ["is it clear", "enough to build?"], uses: "AI (Bedrock)" + viaGate,
-      more: "The robot reads the ticket and the code, and checks the ticket is clear enough to build. Its thinking happens on Fandango's Bedrock AI gateway." + unapprovedNote });
+      more: "The robot reads the ticket and the code to check it's clear enough to build. It thinks through Fandango's Bedrock AI gateway." + unapprovedNote });
     out.push({ zone: "mac", title: "Post result", sub: ["\u2705 go on", "\u274c bounce"], uses: "Jira + Issue", decision: true,
-      more: "Your Mac posts the robot's findings: the full write-up on the GitHub Issue, and a short comment on Jira that links to it. \u2705 the ticket is clear, so it moves on to building. \u274c it bounces: the ticket goes to Blocked with the reason, for a person to fix. Then the loop picks it up again." });
+      more: "Your Mac posts the findings to the Issue and Jira. \u2705 Clear: on to building. \u274c Not clear: the ticket goes to Blocked with the reason, for a person to fix." });
   }
   if (state.phase !== "research") {
     out.push({ zone: robot, title: "Get packages", sub: ["downloads the", "code's parts"], uses: "nexus3" + viaGate,
-      more: "The robot installs the project's packages from Fandango's package store (nexus3.mgo.com), so it can run the tests." });
+      more: "The robot installs the project's packages from Fandango's package store, nexus3, so it can run the tests." });
     out.push({ zone: robot, title: "Write code", sub: ["tests first,", "then the code"], uses: "AI (Bedrock)" + viaGate,
-      more: "The robot writes a failing test for each requirement, then the code that makes it pass, then runs every test." + unapprovedNote });
+      more: "A failing test for each requirement first, then the code that makes it pass." + unapprovedNote });
     if (sb) {
       out.push({ zone: "room", title: "Hand over", sub: ["\u2705 pack it up", "\u274c bounce"], decision: true,
-        more: "The robot stops and packs up its work for the loop on your Mac: the branch with its commits, the PR title and description, the QA notes for Jira, and how the tests went. It writes these into one handover file and can't send anything out itself. \u274c it bounces with the reason instead (for example, the tests won't run): your Mac posts it on the Issue and Jira, and moves the ticket to Blocked." });
+        more: "The robot can't send anything out itself, so it hands its work to your Mac: the branch, the PR text, the QA notes and the test results. \u274c If something's wrong, it bounces with the reason and the ticket goes to Blocked." });
       out.push({ zone: "mac", title: "Double-check", sub: ["runs the tests,", "signs with your key"], uses: "nexus3", key: true,
-        more: "Your Mac doesn't just trust the safety room. It checks out the robot's branch into a fresh folder and signs each commit with your key, so GitHub knows it came from you. The robot never touches your key. Signing runs the repo's git hooks, and the hooks run the tests. If anything fails, it bounces.",
-        why: "Why nexus3? The fresh folder starts with no packages, and the tests need them. The safety room's packages are Linux builds that won't run on your Mac, so your Mac runs npm ci, which installs every package from scratch from the project's package store, nexus3 (your npm cache can save some downloads). If the robot changed package.json, the lockfile, .npmrc or .husky/, it bounces before installing anything." });
+        more: "Your Mac signs the robot's commits with your key, so GitHub knows they came from you. The robot never touches your key. Signing runs the repo's git hooks, which run the tests, and the tests need packages. The safety room's are Linux builds that won't run on your Mac, so it installs its own from nexus3 first. If anything fails, it bounces." });
       out.push({ zone: "mac", title: "Send it", sub: ["opens the PR,", "moves the ticket"], uses: "PR + Jira + Issue",
-        more: "Two helpers on your Mac. A small, cheap AI (haiku) runs your /push-branch skill with the title and description the robot already wrote: it pushes the branch and opens the PR, with nothing left to decide. Then dev-loop's own code checks the branch really reached GitHub, moves the Jira ticket to Code Review with the QA notes, and posts the PR link on the Issue.",
-        why: "Why not the robot? Its commits must be signed with your key (GitHub refuses unsigned ones), and your key never goes in the safety room. So the push moved out to your Mac, after the signing. /push-branch stays the one copy of how a push and a PR are done, so a small AI follows it as written instead of dev-loop copying it. Jira and the Issue are fixed steps, so plain code does them, never an AI." });
+        more: "A small AI (haiku) runs your /push-branch skill with the PR text the robot wrote, so it has nothing to decide. Then dev-loop's own code moves the ticket to Code Review and posts the PR link on the Issue.",
+        why: "Why not the robot? The push needs your key, and your key never goes in the safety room." });
     } else {
       out.push({ zone: "mac", title: "Ready?", sub: ["\u2705 tests pass", "\u274c bounce"], decision: true,
-        more: "\u2705 the tests pass, so on to sending. \u274c it bounces with the reason: your Mac posts it on the Issue and Jira, and moves the ticket to Blocked." });
+        more: "\u2705 Tests pass: on to sending. \u274c Otherwise it bounces with the reason and the ticket goes to Blocked." });
       out.push({ zone: "mac", title: "Sign + send", sub: ["signs, opens the PR,", "moves the ticket"], uses: "PR + Jira + Issue", key: true,
-        more: "With no safety room, the robot runs your /push-branch skill itself: your Mac's git signs each commit with your key, and it pushes and opens the PR. Then dev-loop's own code moves the Jira ticket to Code Review and posts the PR link on the Issue." });
+        more: "The robot runs your /push-branch skill itself: git signs with your key, pushes and opens the PR. Then dev-loop's own code moves the ticket to Code Review and posts the PR link." });
     }
   }
   return out;
