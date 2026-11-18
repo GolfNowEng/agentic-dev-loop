@@ -31,12 +31,20 @@ export interface PreflightCtx {
   instanceName: string;
   /** The project's "owner/repo" (config github.repo), for an adapter that checks GitHub reachability. */
   githubRepo?: string;
+  /**
+   * The target repo's checkout (REPO_DIR). The loop has written the robot's
+   * fake env under it (src/core/fake-env.ts); an adapter that can cover the
+   * real root env files does so here. Absent: nothing to cover.
+   */
+  repoDir?: string;
   config: unknown;
 }
 
 export interface RunSandboxSpec {
   instanceName: string;
   mounts: string[];
+  /** Same as PreflightCtx.repoDir. */
+  repoDir?: string;
   config: unknown;
 }
 

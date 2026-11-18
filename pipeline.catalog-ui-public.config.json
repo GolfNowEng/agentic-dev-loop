@@ -19,7 +19,7 @@
     },
     "dev": {
       "triggerLabel": "pipeline:dev",
-      "pollJql": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND assignee = \"{assignee}\" AND status != \"{bouncedStatus}\" AND status != \"{prOpenStatus}\" ORDER BY created ASC",
+      "pollJql": "labels = \"{label}\" AND labels = \"{repoLabel}\" AND assignee = \"{assignee}\" AND status != \"{bouncedStatus}\" AND status != \"{prOpenStatus}\" AND statusCategory != Done ORDER BY created ASC",
       "codeReviewFields": {
         "piiField": "___",
         "piiNoImpactOptionId": "___",

@@ -98,7 +98,8 @@ ticket itself.
   - the project is TARS;
   - the summary has the `[dev-loop-eval]` prefix;
   - the labels include `dev-loop-eval`;
-  - there is no parent, or the parent is a listed key;
+  - there is no parent, or the parent is a listed key (the eval
+    tickets themselves go under Epic TARS-1384, which TARS now requires);
   - there is no transition.
 - **GitHub.** `run.sh` exports `GH_REPO=<sandbox>`. `api` asserts the repo it calls (`$EVAL_REPO`)
   is the sandbox before every call. `assert_clone` checks both the origin fetch and push URLs.

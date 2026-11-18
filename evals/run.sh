@@ -77,6 +77,10 @@ run_scenario() {
   . "$EVALS/scenarios/$name.sh"
   setup || die "scenario $name: setup failed"
 
+  # The loop finds work only through Jira search, which lags a new ticket by ~30s.
+  # shellcheck disable=SC2086
+  [ -z "$KEYS" ] || jira wait-searchable $KEYS || die "scenario $name: Jira search never found the new tickets"
+
   keys_csv=$(echo $KEYS | tr ' ' ',')
   export DEVLOOP_EVAL_KEYS="$keys_csv"
   export GH_REPO="$SANDBOX"

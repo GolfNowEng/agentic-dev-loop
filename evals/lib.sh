@@ -104,6 +104,12 @@ api() { local m=$1 p=$2; shift 2; assert_repo "$EVAL_REPO"; outward gh api -X "$
 # The Jira helper, with the env file the loop uses (never read here).
 jira() { outward node --env-file="${DEVLOOP_ENV_FILE:-.env}" "$EVALS/jira.mjs" "$@"; }
 
+# A branch reset may delete: <TICKET> or <TICKET>-<slug>, plain characters only, never master.
+valid_branch_for_reset() {
+  case "$1" in master|main|"") return 1 ;; esac
+  printf '%s' "$1" | grep -qE '^[A-Z][A-Z0-9]*-[0-9]+(-[A-Za-z0-9._-]+)?$'
+}
+
 # Refuse anything but the sandbox repo slug.
 assert_repo() {
   [ "${1:-}" = "$SANDBOX" ] || die "repo is not the sandbox ($SANDBOX): ${1:-<empty>}"

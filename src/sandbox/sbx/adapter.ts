@@ -8,6 +8,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ResetStep } from "../../core/reset/step.ts";
 import type { SandboxAdapter, SandboxDenial, SandboxHandle } from "../types.ts";
+import { isEnvFile, rootEnvFiles } from "../../core/env-files.ts";
+import { fakeEnvPaths } from "../../core/fake-env.ts";
 import { DEFAULT_ENV_ALLOW, validateSbxConfig, type SbxConfig } from "./config.ts";
 import type { SbxResult, SbxRunner } from "./run.ts";
 import { openSbxDashboard, realDashboardDeps, type DashboardDeps } from "./dashboard.ts";
@@ -20,8 +22,38 @@ const APPROVE_HEADING = "Review, then run yourself if you approve:";
 const TOOLS_CHECK = "node --version && git --version && jq --version && echo dl-step:direnv && direnv version";
 /** Single-quoted for sh; mounts are real absolute paths but may hold spaces or @. */
 const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
-/** The skills run target-repo commands through `direnv exec`, which refuses an unallowed .envrc. */
-const envrcCheck = (dir: string): string => `echo dl-step:envrc && direnv exec ${shq(dir)} true`;
+/** The skills run target-repo commands through `direnv exec <worktree>`, which loads the loop's fake. */
+const envrcCheck = (repoDir: string): string => `echo dl-step:envrc && direnv exec ${shq(join(repoDir, ".claude", "worktrees"))} true`;
+/**
+ * Inside the sandbox: trust the repo for git (its top folder isn't mounted, so it is root-owned
+ * there) and allow only the loop's own fake.
+ */
+const sandboxSetup = (repoDir: string): string =>
+  `git config --global --add safe.directory ${shq(repoDir)} && direnv allow ${shq(fakeEnvPaths(repoDir).envrc)}`;
+/**
+ * No env file of any name or case at the repo's top, and the common case variants named
+ * directly (the disk is case-insensitive, so a lookup can find a file ls does not list).
+ */
+const hiddenCheck = (repoDir: string): string =>
+  `echo dl-step:hidden && ! ls -A ${shq(repoDir)} | grep -qiE '^\\.env' && ` +
+  [".envrc", ".ENVRC", ".Envrc", ".env", ".ENV", ".Env"].map((n) => `test ! -e ${shq(join(repoDir, n))}`).join(" && ");
+
+/** True when `repoDir` is a cloned checkout that is its own mount (not inside another one). */
+const coverable = (mounts: string[], repoDir: string | undefined): repoDir is string =>
+  repoDir !== undefined && mounts.includes(repoDir) && existsSync(join(repoDir, ".git"));
+
+/**
+ * The target repo's top folder holds the person's real .envrc/.env, so it is never mounted.
+ * Its mount is swapped for the two folders the robot needs: `.git` (worktree metadata,
+ * objects, branches) and `.claude/worktrees` (the worktrees and the loop's fake .envrc).
+ * Verified with sbx v0.54.0 (2026-11-17): from inside, no env file is visible under any
+ * case, `git worktree add` and commits work, and the commits land in the host repo. A
+ * per-file read-only cover was not enough: `.ENVRC` reached the real file.
+ */
+export function coverMounts(mounts: string[], repoDir: string | undefined): string[] {
+  if (!coverable(mounts, repoDir)) return mounts;
+  return mounts.flatMap((m) => (m === repoDir ? [join(repoDir, ".git"), join(repoDir, ".claude", "worktrees")] : [m]));
+}
 /** A plain GitHub owner/repo; it is interpolated into a shell command. */
 const OWNER_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 /**
@@ -32,9 +64,6 @@ const OWNER_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
  */
 const githubCheck = (repo: string): string =>
   `echo dl-step:git && git ls-remote git@github.com:${repo}.git HEAD >/dev/null && echo dl-step:gh && gh api repos/${repo} --jq .full_name`;
-/** Root-level env files a sandboxed agent could read; `*.example` templates are fine. */
-const ENV_FILE = /^\.env(rc)?(\..+)?$/;
-const isEnvFile = (n: string): boolean => ENV_FILE.test(n) && !n.endsWith(".example");
 /**
  * The sandbox's proxy to GitHub is intermittently flaky (2026-11-17: ~3 in 11
  * checks failed after ~12 s, the host never did): a garbled reply, a git exit
@@ -131,10 +160,7 @@ const stripPort = (host: string): string => host.replace(/:\d+$/, "");
 const HINTABLE_HOST = [/^[A-Za-z0-9.-]+$/, /^\[[0-9a-fA-F:]+\]$/];
 const isHintable = (host: string): boolean => HINTABLE_HOST.some((re) => re.test(host));
 
-/** The env files at the top of `dir` (sorted), the same rule preflight applies to each mount. */
-export function rootEnvFiles(dir: string): string[] {
-  return listDir(dir).filter(isEnvFile).sort();
-}
+export { rootEnvFiles };
 
 /**
  * `sbx policy log --json` stdout -> the allow lines a human may run, with the same host
@@ -162,8 +188,8 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
   /** Each host skill's real folder (the skills dir may be a symlink), mounted read-only. */
   const skillMounts = (cfg: SbxConfig): string[] => cfg.hostSkills.map((n) => `${realpath(join(skillsDir, n))}:${sandboxSkillDir(n)}:ro`);
 
-  async function create(name: string, cfg: SbxConfig, mounts: string[]): Promise<void> {
-    const r = await run(createArgs(name, cfg, mounts, skillMounts(cfg)), { timeoutMs: CREATE_TIMEOUT_MS });
+  async function create(name: string, cfg: SbxConfig, mounts: string[], repoDir?: string): Promise<void> {
+    const r = await run(createArgs(name, cfg, coverMounts(mounts, repoDir), skillMounts(cfg)), { timeoutMs: CREATE_TIMEOUT_MS });
     if (r.code !== 0 || r.timedOut) throw new Error(`sbx create failed (${why(r)}): ${firstLine(r.stderr)}`);
   }
 
@@ -242,7 +268,21 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
         throw new Error(`github.repo ${JSON.stringify(ctx.githubRepo)} is not a plain owner/repo`);
       }
       // Every mount is readable inside the sandbox. dev-loop's own folder never needs an env
-      // file (DEVLOOP_ENV_FILE points outside it), so one there is refused; elsewhere, warned.
+      // file (DEVLOOP_ENV_FILE points outside it), so one there is refused. The target repo's
+      // top folder is never mounted (coverMounts) and that is checked below; any other
+      // mount's env files are only warned about.
+      // A never-cloned repo has no real env file and no fake yet: nothing to check.
+      const repoDir = ctx.repoDir !== undefined && existsSync(join(ctx.repoDir, ".git")) ? ctx.repoDir : undefined;
+      if (repoDir !== undefined && !coverable(ctx.mounts, repoDir)) {
+        // Inside another mount (the v2 clone under dev-loop's root): its top can't be left out.
+        const found = listDir(repoDir).filter((n) => /^\.env/i.test(n) && !n.endsWith(".example")).sort();
+        if (found.length > 0) {
+          throw new Error(`${found[0]} is in ${repoDir}, which the sandbox can read (it is inside dev-loop's folder): remove it; the robot uses the fake env`);
+        }
+      }
+      if (repoDir !== undefined && !existsSync(fakeEnvPaths(repoDir).envrc)) {
+        throw new Error(`the robot's fake env is missing at ${fakeEnvPaths(repoDir).envrc}: the loop writes it at startup`);
+      }
       const envrcDirs: string[] = [];
       for (const dir of new Set(ctx.mounts)) {
         const entries = listDir(dir);
@@ -251,6 +291,7 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
         if (dir === ctx.repoRoot) {
           throw new Error(`${found[0]} is in ${dir}, which the sandbox can read: move it out of the repo and point DEVLOOP_ENV_FILE at it (see docs/sandbox-sbx.md)`);
         }
+        if (dir === repoDir) continue;
         if (entries.includes(".envrc")) envrcDirs.push(dir);
         warn(`note: the sandbox agent can read ${found.join(", ")} in ${dir} (expected for local dev/INT settings; keep real secrets out of it).`);
       }
@@ -274,13 +315,15 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
       const name = ctx.instanceName;
       try {
         try {
-          await create(name, cfg, ctx.mounts);
+          await create(name, cfg, ctx.mounts, repoDir);
         } catch (err) {
           throw new Error(`sbx preflight failed: ${err instanceof Error ? err.message : String(err)}`);
         }
         const repo = ctx.githubRepo;
         const skillChecks = cfg.hostSkills.map((n) => `echo dl-step:skill && test -r ${shq(`${sandboxSkillDir(n)}/SKILL.md`)}`);
-        const check = [TOOLS_CHECK, ...envrcDirs.map(envrcCheck), ...skillChecks, ...(repo === undefined ? [] : [githubCheck(repo)])].join(" && ");
+        const fakeChecks = repoDir === undefined ? [] : [`echo dl-step:allow && ${sandboxSetup(repoDir)}`, hiddenCheck(repoDir), envrcCheck(repoDir)];
+        const otherEnvrc = envrcDirs.map((d) => `echo dl-step:envrc && direnv exec ${shq(d)} true`);
+        const check = [TOOLS_CHECK, ...fakeChecks, ...otherEnvrc, ...skillChecks, ...(repo === undefined ? [] : [githubCheck(repo)])].join(" && ");
         let r = await run(["exec", name, "sh", "-c", check]);
         for (let tryNo = 1; tryNo < GITHUB_TRIES && repo !== undefined && flakyGithubStep(r) !== undefined; tryNo++) {
           warn(`note: sandbox GitHub check (${flakyGithubStep(r)}) failed on try ${tryNo} of ${GITHUB_TRIES}: ${firstLine(r.stderr) || "no error output"}; retrying`);
@@ -299,9 +342,15 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
         if (last === "skill") {
           throw new Error(`a host skill (sandbox.sbx.hostSkills) is not readable inside the sandbox at ${SANDBOX_SKILLS_DIR}: check the folder exists and sbx can mount it (see docs/sandbox-sbx.md)`);
         }
+        if (last === "allow") throw new Error(`could not set up the robot's fake .envrc inside the sandbox: ${firstLine(r.stderr) || why(r)}`);
+        if (last === "hidden") {
+          throw new Error("the target repo's real env files are visible inside the sandbox (its top folder should not be mounted); refusing to run the robot next to them");
+        }
         if (last === "envrc") {
           throw new Error(
-            "the target repo's .envrc is not allowed inside the sandbox (it changed, or the template predates it): rebuild the template with npm run sbx:template:build (see docs/sandbox-sbx.md)",
+            repoDir !== undefined
+              ? "the robot's fake .envrc does not load inside the sandbox: restart the loop (it rewrites the fake); see docs/sandbox-sbx.md"
+              : "the target repo's .envrc is not allowed inside the sandbox (it changed, or the template predates it): rebuild the template with npm run sbx:template:build (see docs/sandbox-sbx.md)",
           );
         }
         const step = last === "gh" ? "gh api" : last === "git" ? "git" : undefined;
@@ -358,7 +407,16 @@ export function makeSbxAdapter(deps: SbxAdapterDeps): SandboxAdapter {
 
     async prepare(spec) {
       const cfg = sbxConfig(spec.config);
-      await create(spec.instanceName, cfg, spec.mounts);
+      await create(spec.instanceName, cfg, spec.mounts, spec.repoDir);
+      if (coverable(spec.mounts, spec.repoDir) && existsSync(fakeEnvPaths(spec.repoDir).envrc)) {
+        // direnv's allow list and git's safe.directory live in the sandbox: set them in each new one.
+        const r = await run(["exec", spec.instanceName, "sh", "-c", sandboxSetup(spec.repoDir)]);
+        if (r.code !== 0 || r.timedOut) {
+          // A rejected prepare has no handle to tear down, so remove the instance here.
+          await remove(spec.instanceName).catch(() => {});
+          throw new Error(`could not set up the robot's fake .envrc inside the sandbox: ${firstLine(r.stderr) || why(r)}`);
+        }
+      }
       const h: SandboxHandle = { adapter: "sbx", instanceName: spec.instanceName };
       handleEnvAllow.set(h, cfg.envAllow);
       return h;

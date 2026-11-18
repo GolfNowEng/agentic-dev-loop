@@ -124,9 +124,10 @@ seeing what an endpoint actually returns:
 - Do not expand scope — if you notice unrelated issues while poking around,
   mention them as a brief aside, don't investigate them.
 - **Never report a raw env var value or `.envrc`/`.env` file content as
-  evidence.** Your worktree lives inside the target repo's own directory
-  tree specifically so `direnv` picks up its real local env — that env can
-  contain real secrets. Report presence/shape only (e.g. "the dev server
+  evidence.** Your worktree's `direnv` loads the loop's fake env (placeholder
+  values from `.envrc.example`); never read the target repo's real `.envrc`
+  or `.env`. Real values can still turn up in logs or fixtures, so treat any
+  value as secret. Report presence/shape only (e.g. "the dev server
   logs `hasClientSecret: true`" or "the var is set"), never the value
   itself, even when it looks like it would make your evidence more
   concrete.

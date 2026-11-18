@@ -18,7 +18,8 @@
 
 import type { Role } from "./types.ts";
 
-export type AtlassianNaming = "v1" | "v2";
+/** "both": the host connector, which may be either server version (v1 or Atlassian's /v2/mcp). */
+export type AtlassianNaming = "v1" | "v2" | "both";
 
 export interface AtlassianTool {
   v1?: string;
@@ -45,7 +46,8 @@ export const ATLASSIAN_TOOLS: readonly AtlassianTool[] = [
 
 /** The role's Atlassian tool names (no mcp__ prefix) in the given naming. */
 export function atlassianToolNames(role: Role, naming: AtlassianNaming): string[] {
-  return ATLASSIAN_TOOLS.filter((t) => t.roles.includes(role)).flatMap((t) => (t[naming] ? [t[naming]] : []));
+  const pick = (t: AtlassianTool): string[] => (naming === "both" ? [t.v1, t.v2] : [t[naming]]).filter((n): n is string => n !== undefined);
+  return [...new Set(ATLASSIAN_TOOLS.filter((t) => t.roles.includes(role)).flatMap(pick))];
 }
 
 /** Where a role's Atlassian tools live: the MCP server name and its tool naming. */
@@ -54,8 +56,14 @@ export interface AtlassianMcp {
   naming: AtlassianNaming;
 }
 
-/** The host connector: what a run outside any sandbox sees. */
-export const HOST_ATLASSIAN_MCP: AtlassianMcp = { server: "atlassian", naming: "v1" };
+/**
+ * The host connector: what a run outside any sandbox sees. Its server version
+ * is whatever the person connected (`claude mcp add atlassian ...`), so both
+ * namings are allowed. TARS-1640 (2026-11-17): the connector was /v2/mcp, the
+ * allowlist had only `addCommentToJiraIssue`, and research's ✅ comment was
+ * denied as `addOrEditJiraIssueComment`. The write hooks match both names.
+ */
+export const HOST_ATLASSIAN_MCP: AtlassianMcp = { server: "atlassian", naming: "both" };
 
 const BUILTIN_TOOLS = ["Bash", "Read", "Grep", "Glob"];
 

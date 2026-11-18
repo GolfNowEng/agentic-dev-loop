@@ -29,6 +29,8 @@ import { researchEarlySkillResult } from "../roles/research/spawn-result.ts";
 import { researchClaudeMdExcludes } from "../roles/research/startup.ts";
 import type { SandboxSelection } from "../sandbox/select.ts";
 import { allowedToolsFor, HOST_ATLASSIAN_MCP } from "../core/atlassian-tools.ts";
+import { rootEnvFiles } from "../core/env-files.ts";
+import { realFakeEnvDeps, ROBOT_ENV_VAR, writeFakeEnv } from "../core/fake-env.ts";
 
 export const MODEL = "sonnet";
 
@@ -53,6 +55,12 @@ export interface SkillRunnerDeps {
   sandbox?: SandboxSelection;
   /** 6 lowercase hex chars for the instance name; randomBytes(3) by default. */
   shortId?: () => string;
+  /**
+   * Rewrites the robot's fake .envrc before each run (src/core/fake-env.ts).
+   * Default: from origin's .envrc.example in REPO_DIR. A failure is logged,
+   * never fatal.
+   */
+  refreshFakeEnv?: () => Promise<void>;
 }
 
 /** Lowercase, and any char outside [a-z0-9-] becomes "-". */
@@ -147,6 +155,8 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
 
   // A sandbox whose commits the loop signs and pushes on the host tells dev to stop at ready_to_push.
   const hostPush = deps.sandbox?.adapter.hostPush?.(deps.sandbox.config) === true;
+  const refreshFakeEnv =
+    deps.refreshFakeEnv ?? (async () => void (await writeFakeEnv(repoDir, deps.config.targetRepo.defaultBranch, realFakeEnvDeps)));
 
   return async ({ role, ticketKey, runDir, maxBudgetUsd }): Promise<RunSkillResult> => {
     const skill = SKILL_NAME[role];
@@ -156,9 +166,16 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
 
     if (deps.beforeRun && role === "research") await deps.beforeRun(role, ticketKey);
     await mkdir(absRunDir, { recursive: true });
+    try {
+      await refreshFakeEnv();
+    } catch (err) {
+      deps.logError(`[${skill}] ${ticketKey}: could not refresh the robot's fake env: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // Rescanned per run: a person may add a .env between runs.
+    const denyReads = rootEnvFiles(repoDir).map((f) => join(repoDir, f));
 
     const sandbox = deps.sandbox
-      ? { adapter: deps.sandbox.adapter, run: { instanceName: sandboxInstanceName(deps.slug, ticketKey, role, shortId()), mounts, config: deps.sandbox.config } }
+      ? { adapter: deps.sandbox.adapter, run: { instanceName: sandboxInstanceName(deps.slug, ticketKey, role, shortId()), mounts, repoDir, config: deps.sandbox.config } }
       : undefined;
     const where = sandbox ? ` in ${sandbox.run.instanceName}` : "";
     deps.log(`[${skill}] ${ticketKey}: running${where} (run dir ${runDir}, budget $${maxBudgetUsd})...`);
@@ -178,6 +195,8 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
         // draft-spec.md/verdict.json. This is only partly read-only: research
         // still has broad Bash, which this deny does not cover.
         denyEditsUnder: role === "research" ? [repoDir] : [],
+        // The robot works on the fake env; its Read tool never opens the real files.
+        denyReads,
         logPrefix: skill,
         ...(role === "research" ? { appendSystemPrompt: deps.researchStance } : {}),
         timeoutMin: view.limits.runTimeoutMin,
@@ -185,7 +204,8 @@ export function makeRunSkill(deps: SkillRunnerDeps): RunSkillFn {
         stream: deps.stream,
         ticketKey,
         rawUsagePath: join(absRunDir, "usage.json"),
-        env: claudeEnvFor(view.limits, process.env),
+        // Marks the robot, so the fake .envrc loads its fake values (src/core/fake-env.ts).
+        env: { ...claudeEnvFor(view.limits, process.env), [ROBOT_ENV_VAR]: "1" },
         ...(sandbox ? { sandbox } : {}),
       });
     } finally {

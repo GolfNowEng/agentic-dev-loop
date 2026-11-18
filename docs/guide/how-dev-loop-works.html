@@ -161,7 +161,7 @@ h1 code.name { font-weight: 700; }
 #envtable tbody tr > td:first-of-type { white-space: nowrap; }
 .can { font-weight: 700; white-space: nowrap; }
 .can-no { color: var(--muted); }
-.can-warn { color: var(--key); }
+.can-warn, .can-soft { color: var(--key); }
 .why-txt { color: var(--muted); }
 .by { display: inline-block; font-size: .78rem; font-weight: 700; border-radius: 999px; padding: 0 9px; border: 1.5px solid; white-space: nowrap; }
 .by-loop { color: var(--mac-edge); border-color: var(--mac-edge); }
@@ -328,7 +328,7 @@ const DATA = {
       find: { research: "pipeline:research", dev: "pipeline:dev", devAssignee: true } },
     { id: "catalog-ui-public", jira: "repo:catalog-ui-public", name: "catalog-ui-public", gh: "fandango/catalog-ui-public", sandboxes: [],
       find: { research: "pipeline:research", dev: "pipeline:dev", devAssignee: true } },
-    { id: "eval", jira: "repo:webtarsthree", name: "eval (test repo)", gh: "JustinChan-fd/dev-loop-eval-sandbox", sandboxes: [],
+    { id: "eval", jira: "repo:dev-loop-eval", name: "eval (test repo)", gh: "JustinChan-fd/dev-loop-eval-sandbox", sandboxes: [],
       find: { research: "pipeline:v2", dev: "pipeline:v2:dev", extra: { has: "dev-loop-eval" } } },
   ],
   phases: [
@@ -631,9 +631,10 @@ function drawEnv() {
   const r = repo();
   const c = (x) => `<code>${x}</code>`;
   // can the robot read it? plain yes/no with the reason; "warn" = yes, and it matters
-  const can = (k, why) => `<span class="can can-${k}">${k === "no" ? "No" : k === "warn" ? "\u26a0\ufe0f Yes" : "Yes"}</span> <span class="why-txt">${why}</span>`;
+  // "soft" = no, but only by a rule the robot could get around
+  const can = (k, why) => `<span class="can can-${k}">${k === "no" ? "No" : k === "warn" ? "\u26a0\ufe0f Yes" : k === "soft" ? "\u26a0\ufe0f No, by rule only" : "Yes"}</span> <span class="why-txt">${why}</span>`;
   const by = (x) => `<span class="by by-${x.cls}">${x.t}</span>`;
-  const LOOP = { cls: "loop", t: "dev-loop" }, ROBOT = { cls: "robot", t: "robot" }, GIT = { cls: "you", t: "your git" }, SBX = { cls: "sbx", t: "sbx" };
+  const LOOP = { cls: "loop", t: "dev-loop" }, ROBOT = { cls: "robot", t: "robot" }, GIT = { cls: "you", t: "your git" }, SBX = { cls: "sbx", t: "sbx" }, YOU = { cls: "you", t: "you" };
   // groups: [place, zone class, note, rows: [setting, where, used by, can the robot read it]]
   const groups = [
     ["Your Mac", "mac", "your home folder, outside every repo", [
@@ -650,7 +651,10 @@ function drawEnv() {
       ["Pipeline settings", c(`pipeline.${r.id}.config.json`), LOOP, can("yes", "no secrets in it")],
     ]],
     [`The target repo`, "repo", r.name, [
-      ["Repo settings", c(".envrc"), ROBOT, can("warn", "it needs them to run the app and its tests. Some are real keys, so keep this file to local and INT values, never STG or PRD" + (sb ? ". sbx only lets them reach approved services." : "."))],
+      ["Repo settings", c(".envrc"), YOU, sb
+        ? can("no", "it stays on your Mac, for when you run the app yourself")
+        : can("soft", "a shell command could still read it, so keep it to INT values")],
+      ["Fake settings", c(".claude/worktrees/.envrc"), ROBOT, can("yes", "placeholder values from .envrc.example, so tests still run")],
     ]],
     ...(sb ? [["sbx", "sbx", "Docker's own store on your Mac", [
       ["GitHub token", c("sbx secret set github"), SBX, can("no", "sbx adds it to each request on the way out")],
@@ -700,7 +704,7 @@ function render() {
   }).join(", then ");
   drawPickup();
   drawEnv();
-  document.getElementById("env-sub").textContent = state.sandbox !== "none" ? "Grouped by where each one lives. With sbx, the robot can read only the two folders it works in; sbx adds every token on the way out, so the robot never holds one. The one real secret it can read is the target repo\u2019s .envrc, which it needs to run the app." : "Grouped by where each one lives. With no safety room, the robot runs as you and can read what you can, except dev-loop\u2019s Jira login.";
+  document.getElementById("env-sub").textContent = state.sandbox !== "none" ? "Grouped by where each one lives. With sbx, the robot can read only the two folders it works in; sbx adds every token on the way out, so the robot never holds one. It gets fake settings instead of the real .envrc." : "Grouped by where each one lives. With no safety room, the robot runs as you, so it could read what you can, except dev-loop\u2019s Jira login. It gets fake settings instead of the real .envrc.";
   drawDiagram();
   drawSteps();
   select(0);

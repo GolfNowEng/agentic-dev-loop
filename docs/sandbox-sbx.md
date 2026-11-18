@@ -53,7 +53,7 @@ sbx policy allow network deb.nodesource.com     # once, yourself
 npm run sbx:template:build -- --tag=v1
 ```
 
-Type `allow` when it asks about the target repo's `.envrc`. Then set
+Then set
 `"template": "docker.io/library/dev-loop-sbx:v1"` in the project's
 `sandbox.sbx` block. Packages live in `sandbox/sbx/template.sh`. Updating,
 upgrading node and rolling back:
@@ -141,12 +141,24 @@ Anything inside the mounts is readable by the agent, so:
   `DEVLOOP_ENV_FILE=$HOME/.config/dev-loop/.env`, exported in `~/.zshrc`.
   Preflight **refuses** a `.env`, `.envrc` or `.env.*` (except `*.example`)
   at the top of dev-loop's folder.
-- In the target repo, preflight only notes it. webtarsthree's `.envrc` is
-  needed: the dev skill runs every command through `direnv exec`. Keep it
-  to local dev/INT settings. Preflight also checks that it is allowed
-  inside the sandbox (a template rebuild approves it).
-- The check covers only the top of each mount. A secret deeper in, such as
-  `config/secrets.json`, is not caught.
+- The target repo's **top folder is never mounted**, so its real `.envrc`,
+  `.env` and `.env.*` are not in the sandbox at all. Only `<repo>/.git` and
+  `<repo>/.claude/worktrees` are mounted: the robot's worktrees live there.
+  The robot's `direnv exec <worktree>` loads the loop's fake env,
+  `<repo>/.claude/worktrees/.envrc`, built from the committed
+  `.envrc.example` with placeholder values (`src/core/fake-env.ts`).
+  - A read-only file mounted over `.envrc` is not enough: the Mac's disk
+    is case-insensitive, and `.ENVRC` reached the real file (checked
+    2026-11-17).
+  - Preflight refuses to start if any env file, in any case, is visible at
+    the repo's top inside a sandbox, or if the fake is missing.
+  - Each run's sandbox allows only the fake, and trusts the repo for git
+    (`safe.directory`, since its top folder is root-owned inside).
+  - Only host push uses the real `.envrc`, on your Mac.
+  - The v2 clone (no `targetRepo.path`) sits inside dev-loop's folder, so
+    its top can't be left out. There, preflight refuses any env file in it.
+- The dev-loop folder check applies only to its top. A secret deeper in,
+  such as `config/secrets.json`, is not caught.
 
 ## 7. Check, then run in discover mode
 
@@ -205,8 +217,10 @@ tools: each role's allowlist is built from it, in the host form or, when the
 adapter proxies Atlassian (`atlassianMcp`), the gateway form. Only the same
 tools are allowed under either name; the generic `executeWrite` /
 `executeDestructive` / `transitionJiraIssue` are never allowed. Dev's
-`createIssueLink` has no v2 tool, so a sandboxed dev run can file a follow-up
-ticket but not link it. The hooks in `.claude/settings.json` match the tool
+`createIssueLink` has no v2 tool, so a dev run on the newer server files a
+follow-up ticket and records the link in its description instead. With no
+sandbox, the host connector may be either version (`claude mcp get atlassian`
+shows its URL), so the host allowlist has both namings. The hooks in `.claude/settings.json` match the tool
 name under any server (`mcp__.+__(...)`), and `test/core/atlassian-tools.test.ts`
 fails if a write tool is missing from them. `npm run sbx:smoke` calls
 `getAccessibleAtlassianResources` by its gateway name, so a mismatch shows up

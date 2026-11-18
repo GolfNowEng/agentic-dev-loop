@@ -24,8 +24,8 @@ git config --global core.pager cat
 
 # --- direnv ---------------------------------------------------------------
 # The skills run target-repo commands through `direnv exec`, so direnv is
-# installed here. Allowing a repo's .envrc is NOT done by this script: it is
-# your approval, typed at the prompt template:build shows you afterwards.
+# installed here. The template allows nothing: the loop allows its own fake
+# .envrc (never a person's real one) in each run's sandbox.
 
 # --- check ----------------------------------------------------------------
 node --version

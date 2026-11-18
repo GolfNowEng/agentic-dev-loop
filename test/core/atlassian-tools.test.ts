@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ATLASSIAN_TOOLS, ATLASSIAN_WRITE_NAMES, COMMENT_TOOL_NAMES, atlassianToolNames, bareToolName } from "../../src/core/atlassian-tools.ts";
+import { ATLASSIAN_TOOLS, ATLASSIAN_WRITE_NAMES, COMMENT_TOOL_NAMES, HOST_ATLASSIAN_MCP, allowedToolsFor, atlassianToolNames, bareToolName } from "../../src/core/atlassian-tools.ts";
 import { ALLOWED_TOOLS as DEV_TOOLS } from "../../src/roles/dev/tools.ts";
 import { ALLOWED_TOOLS as RESEARCH_TOOLS } from "../../src/roles/research/tools.ts";
 
@@ -27,9 +27,13 @@ describe("bareToolName", () => {
 });
 
 describe("atlassianToolNames", () => {
-  it("v1 names keep each role's allowlist byte-for-byte", () => {
-    expect(atlassianToolNames("research", "v1").map((n) => `mcp__atlassian__${n}`).join(",") + ",Bash,Read,Grep,Glob").toBe(RESEARCH_TOOLS);
-    expect(atlassianToolNames("dev", "v1").map((n) => `mcp__atlassian__${n}`).join(",") + ",Bash,Read,Grep,Glob").toBe(DEV_TOOLS);
+  it("each role's host allowlist is its both-naming list, byte-for-byte", () => {
+    expect(atlassianToolNames("research", "both").map((n) => `mcp__atlassian__${n}`).join(",") + ",Bash,Read,Grep,Glob").toBe(RESEARCH_TOOLS);
+    expect(atlassianToolNames("dev", "both").map((n) => `mcp__atlassian__${n}`).join(",") + ",Bash,Read,Grep,Glob").toBe(DEV_TOOLS);
+  });
+
+  it("v1 names are unchanged", () => {
+    expect(atlassianToolNames("dev", "v1")).toEqual(["getAccessibleAtlassianResources", "getJiraIssue", "createJiraIssue", "createIssueLink"]);
   });
 
   it("v2 names map the renamed tools and add the paged comment read", () => {
@@ -46,6 +50,24 @@ describe("atlassianToolNames", () => {
     ]);
     // createIssueLink has no named v2 tool; it stays unavailable rather than going through executeWrite.
     expect(atlassianToolNames("dev", "v2")).toEqual(["getAccessibleAtlassianResources", "getJiraIssue", "createJiraIssue", "listJiraIssueComments"]);
+  });
+
+  it("both: the host connector may be either server version, so every v1 and v2 name, each once (TARS-1640)", () => {
+    const research = atlassianToolNames("research", "both");
+    expect(research).toContain("addCommentToJiraIssue");
+    expect(research).toContain("addOrEditJiraIssueComment");
+    expect(research).toContain("listJiraIssueComments");
+    expect(new Set(research).size).toBe(research.length);
+    expect(atlassianToolNames("dev", "both")).toEqual([
+      "getAccessibleAtlassianResources", "getJiraIssue", "createJiraIssue", "createIssueLink", "listJiraIssueComments",
+    ]);
+    for (const n of ["executeWrite", "executeDestructive", "transitionJiraIssue"]) expect(atlassianToolNames("research", "both")).not.toContain(n);
+  });
+
+  it("the host connector (no sandbox) uses both namings", () => {
+    expect(HOST_ATLASSIAN_MCP).toEqual({ server: "atlassian", naming: "both" });
+    expect(allowedToolsFor("research")).toContain("mcp__atlassian__addOrEditJiraIssueComment");
+    expect(allowedToolsFor("research")).toContain("mcp__atlassian__addCommentToJiraIssue");
   });
 
   it("never allows a generic or destructive gateway tool", () => {

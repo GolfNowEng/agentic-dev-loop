@@ -713,6 +713,53 @@ a human gave it a discrimination principle plus rules A-E (Jira comment
 spelled out the matrix shape, and the bounce counts come from the runs
 log `detail` fields only. Look into it properly when picking this up.
 
+### Startup check: the Atlassian tools the skills rely on exist
+
+**Idea**: at startup, list the connected Atlassian MCP server's tools and
+refuse to poll when one the role relies on is missing under both names.
+Today a rename only shows up mid-run as a permission denial or a confused
+bounce.
+
+**Why**: TARS-1640's eval (2026-11-17). The host connector had moved to
+Atlassian's `/v2/mcp`, research's comment tool was denied, and dev bounced
+`spec_ambiguous`. The allowlist now names both versions, and a text guard
+pins the skills' name table. A live tool list would catch the *next*
+rename. `claude mcp get` shows the server URL but not its tools, so this
+needs an MCP `tools/list` call, or a cheap `claude -p` probe like
+`npm run sbx:smoke` does.
+
+### Settings drift check (code reads a setting `.envrc.example` lacks)
+
+**Idea**: before a dev run, the loop compares the settings the target repo's
+code reads (`process.env.X`, `import.meta.env.X`) with the names in
+`.envrc.example`, and bounces `env_setup` naming any that are missing. The
+robot works on a fake env built only from `.envrc.example`
+(`src/core/fake-env.ts`), so a missing name means the app or a test runs
+without it. Today the robot bounces when it notices; a mechanical check
+would catch it every time.
+
+**Why not yet (2026-11-17)**: webtarsthree's `.envrc.example` already
+drifts from real `.envrc` files (some names only in one, some only in the
+other), so the check would bounce every ticket. **Fix webtarsthree's
+`.envrc.example` first**, then add the check.
+
+### sbx adds real INT keys on the way out
+
+**Idea**: for the few settings that are real INT API keys sent as an HTTP
+header, let sbx's proxy inject them per request (as it does the GitHub
+token), so the robot can run against INT services while still never holding
+the key. Header-shaped keys only; anything the app needs in memory stays
+fake.
+
+### Typed settings list plus vault refs (webtarsthree team idea)
+
+**Idea**: replace the hand-kept `.envrc.example` with a typed schema in the
+target repo (`@t3-oss/env-core`, `envalid` or `zod`), which is the one list
+of settings, their types and their safe defaults. The real values become
+vault references (`op run`, Doppler, dotenvx) instead of plaintext in
+`.envrc`. dev-loop's fake env and the drift check would then read the
+schema. This is for the webtarsthree team to decide.
+
 ### GitHub Issue + Projects board as pipeline state owner (Jira = product/planning only)
 
 **Idea**: move pipeline execution state out of Jira and into GitHub. Jira

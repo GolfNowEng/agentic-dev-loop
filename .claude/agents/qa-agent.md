@@ -109,8 +109,9 @@ your findings -- do not improvise. Stop the dev server when done.
 - Never report a raw env var value or `.envrc`/`.env` file content as
   evidence when you run the app or read logs during QA — presence/shape
   only (e.g. "reads `API_KEY` from env", "token present, 42 chars"), same
-  reasoning as `ticket-to-pr` itself: the per-run worktree sits inside the
-  target repo's own directory tree so direnv activates real secrets there.
+  reasoning as `ticket-to-pr` itself. The worktree's direnv loads the loop's
+  fake env (placeholder values from `.envrc.example`); never read the target
+  repo's real `.envrc` or `.env`.
 - Run the app, its tests and any build through `direnv exec <worktree path>`
   (e.g. `direnv exec <worktree path> npm run dev`). direnv's shell hook does
   not fire in a headless session, so without it the app starts with the

@@ -19,6 +19,50 @@ Steps 1–3 built (plan 2026-11-12-sandbox-adapter-foundation.md, then the
 sbx adapter, not yet dogfooded). Design:
 [docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md](docs/superpowers/specs/2026-11-12-sbx-sandboxed-spawns-design.md).
 
+- `[dev]` The dev poll skips finished tickets (`statusCategory != Done`) in
+  every project config. The eval closed TARS-1640 while it still carried
+  `pipeline:v2:dev`, and dev ran it again instead of the new TARS-1641.
+  Checked live: the old query found the closed ticket, the new one doesn't.
+  The eval's close also removes every `pipeline:*` label now.
+- `[core]` With no sandbox, the robot may call the Atlassian tools under
+  either server's names. TARS-1640's eval (2026-11-17): the host connector
+  was Atlassian's `/v2/mcp`, where the comment tool is
+  `addOrEditJiraIssueComment`. The allowlist had only the v1
+  `addCommentToJiraIssue`, so research's ✅ Jira comment was denied, and dev
+  then bounced `spec_ambiguous` for want of it. The write hooks already
+  matched both names. The skills now carry a table of both names for each
+  renamed tool. They read comments with `listJiraIssueComments` where it
+  exists (dev saw zero comments from `getJiraIssue` alone). With no
+  `createIssueLink`, a follow-up records its link in its description.
+- `[core]` Evals: tickets go under Epic TARS-1384 (TARS now requires an
+  Epic), carry `repo:dev-loop-eval`, and the loop starts only once Jira
+  search finds them (~30 s lag). A Jira error now prints Jira's own reason.
+- `[core]` `[dev]` `[research]` The robot never sees the target repo's real
+  `.envrc`. Worktrees sit inside the repo, so `direnv exec <worktree>` used
+  to walk up and load the person's real keys. Now the loop writes a fake env
+  at `<repo>/.claude/worktrees/.envrc` from the committed `.envrc.example`
+  (placeholder values, single-quoted, never executed) and allows it. direnv
+  stops there.
+  - **sbx:** the target repo's top folder is no longer mounted, only its
+    `.git` and `.claude/worktrees`. A read-only file over `.envrc` was
+    tried and dropped: on the Mac's case-insensitive disk, `.ENVRC`
+    reached the real file. Preflight checks from inside a sandbox that no
+    env file shows, in any case.
+  - **No sandbox:** a `Read` deny rule covers the real files (soft: a shell
+    `cat` still could).
+  - **Host push** names the repo dir for direnv, so it keeps the real env.
+  - **A person's own worktrees** in `.claude/worktrees/` still get the real
+    `.envrc`: the fake hands over to it unless `DEVLOOP_ROBOT_ENV=1`, which
+    only robot spawns set.
+  - **Settings parsing:** a trailing `# note` is dropped. Names that change
+    how commands run (`PATH`, `NODE_OPTIONS`, `LD_*`, `GIT_*` …) are never
+    overridden.
+  - **Template build** no longer mounts the target repo or asks to allow its
+    `.envrc`.
+  - **Skills:** new settings go into `.envrc.example` with fake values, and
+    the PR names them ("New settings: … add the real INT value to your
+    .envrc"). A setting the fake lacks bounces `env_setup`.
+  - Spec: [docs/superpowers/specs/2026-11-17-robot-fake-env-design.md](docs/superpowers/specs/2026-11-17-robot-fake-env-design.md).
 - `[dev]` ticket-to-pr installs the target repo's packages (`npm ci`) in each
   worktree it creates, and bounces `env_setup` when the suite can't start
   instead of carrying on. A sandboxed TARS-1634 run (2026-11-17) found no

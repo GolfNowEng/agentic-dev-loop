@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll } from "vitest";
-import { CREATE_TIMEOUT_MS, createArgs, makeSbxAdapter } from "../../../src/sandbox/sbx/adapter.ts";
+import { CREATE_TIMEOUT_MS, coverMounts, createArgs, makeSbxAdapter } from "../../../src/sandbox/sbx/adapter.ts";
+import { FAKE_ENV_MARKER, fakeEnvPaths } from "../../../src/core/fake-env.ts";
 import type { SbxResult, SbxRunner } from "../../../src/sandbox/sbx/run.ts";
 import type { SandboxHandle } from "../../../src/sandbox/types.ts";
 
@@ -512,7 +513,7 @@ describe("sbx adapter: preflight", () => {
       });
     }
 
-    it("only warns, naming the files, for env files in another mounted folder", async () => {
+    it("only warns, naming the files, for env files in a mounted folder that is not the target repo", async () => {
       writeFileSync(join(repo, ".envrc"), "SECRET=x\n");
       try {
         const warnings: string[] = [];
@@ -721,5 +722,128 @@ describe("sbx adapter: host skills (sandbox.sbx.hostSkills)", () => {
     const create = f.calls.find((c) => c.args[0] === "create");
     expect(create?.args.at(-1)).toBe(`${join(SKILLS, "push-branch")}:/home/agent/.dev-loop/skills/push-branch:ro`);
     rmSync(kit, { recursive: true, force: true });
+  });
+});
+
+describe("sbx adapter: the target repo's root (and its real env files) is never mounted", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "sbx-hide-"));
+  const kit = join(tmp, "kit");
+  mkdirSync(kit);
+  writeFileSync(join(kit, "spec.yaml"), "name: kit\n");
+  const root = join(tmp, "root");
+  const repo = join(tmp, "repo");
+  mkdirSync(root);
+  mkdirSync(join(repo, ".claude", "worktrees"), { recursive: true });
+  mkdirSync(join(repo, ".git"));
+  writeFileSync(join(repo, ".envrc"), "export X=fake-test-value\n");
+  writeFileSync(join(repo, ".env.local"), "X=fake-test-value\n");
+  writeFileSync(join(repo, ".envrc.example"), "export X=placeholder\n");
+  const fake = fakeEnvPaths(repo);
+  writeFileSync(fake.envrc, `${FAKE_ENV_MARKER}\n`);
+  afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const P = "dl-12-webtarsthree-preflight-abc123";
+  const identity = (p: string) => p;
+  const pctx = (repoDir: string | undefined = repo, mounts = [root, repo]) => ({
+    repoRoot: root, mounts, cwd: root, instanceName: P, config: { kitDir: kit, envAllow: [] }, ...(repoDir ? { repoDir } : {}),
+  });
+  const SUB = [join(repo, ".git"), join(repo, ".claude", "worktrees")];
+  const SETUP = `git config --global --add safe.directory '${repo}' && direnv allow '${fake.envrc}'`;
+  const DIRENV = "v24.3.0\ngit version 2.47.0\njq-1.7.1\ndl-step:direnv\n2.32.1\n";
+  const answer = (exec: SbxResult) => (args: string[]) => (args[0] === "exec" ? exec : ok());
+  const pf = (exec: SbxResult) =>
+    makeSbxAdapter({ run: fakeRunner(answer(exec)).run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV, warn: () => {} }).preflight(pctx());
+
+  it("coverMounts swaps a cloned repo dir's mount for its .git and .claude/worktrees only", () => {
+    expect(coverMounts([root, repo], repo)).toEqual([root, ...SUB]);
+    expect(coverMounts([root, repo], undefined)).toEqual([root, repo]);
+    const fresh = join(tmp, "fresh");
+    expect(coverMounts([root, fresh], fresh)).toEqual([root, fresh]);
+    // The v2 clone sits inside dev-loop's root: not its own mount, nothing to swap.
+    expect(coverMounts([root], join(root, "clone"))).toEqual([root]);
+  });
+
+  it("prepare creates with the sub-mounts, then trusts the repo for git and allows the fake inside the sandbox", async () => {
+    const f = fakeRunner();
+    await makeSbxAdapter({ run: f.run }).prepare({ instanceName: N, mounts: [root, repo], repoDir: repo, config: CFG });
+    expect(f.calls[0].args.slice(-3)).toEqual([root, ...SUB]);
+    expect(f.calls[0].args).not.toContain(repo);
+    expect(f.calls[1].args).toEqual(["exec", N, "sh", "-c", SETUP]);
+  });
+
+  it("prepare: a failed setup removes the instance it created, then throws", async () => {
+    const f = fakeRunner((a) => (a[0] === "exec" ? fail(1, "boom") : ok()));
+    await expect(makeSbxAdapter({ run: f.run }).prepare({ instanceName: N, mounts: [root, repo], repoDir: repo, config: CFG })).rejects.toThrow(
+      "could not set up the robot's fake .envrc inside the sandbox: boom",
+    );
+    expect(f.calls.map((c) => c.args[0])).toEqual(["create", "exec", "rm"]);
+    expect(f.calls[2].args).toEqual(["rm", "-f", N]);
+  });
+
+  it("prepare without repoDir is unchanged (one create, the repo mounted whole, no setup)", async () => {
+    const f = fakeRunner();
+    await makeSbxAdapter({ run: f.run }).prepare({ instanceName: N, mounts: [root, repo], config: CFG });
+    expect(f.calls).toHaveLength(1);
+    expect(f.calls[0].args.at(-1)).toBe(repo);
+  });
+
+  it("preflight: sub-mounts on create; the check sets up the fake, proves no env file (any case) is visible, then loads the fake", async () => {
+    const f = fakeRunner(answer(ok(`${DIRENV}dl-step:allow\ndl-step:hidden\ndl-step:envrc\n`)));
+    const warnings: string[] = [];
+    await makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV, warn: (m) => void warnings.push(m) }).preflight(pctx());
+    expect(f.calls[0].args.slice(-2)).toEqual(SUB);
+    const check = f.calls[1].args[4];
+    expect(check).toContain(`echo dl-step:allow && ${SETUP}`);
+    expect(check).toContain(`echo dl-step:hidden && ! ls -A '${repo}' | grep -qiE '^\\.env'`);
+    expect(check).toContain(`test ! -e '${repo}/.ENVRC'`);
+    expect(check).toContain(`echo dl-step:envrc && direnv exec '${repo}/.claude/worktrees' true`);
+    expect(warnings).toEqual([]);
+  });
+
+  it("preflight: an env file showing through is refused", async () => {
+    await expect(pf(fail(1, "", `${DIRENV}dl-step:allow\ndl-step:hidden\n`))).rejects.toThrow(
+      "the target repo's real env files are visible inside the sandbox (its top folder should not be mounted); refusing to run the robot next to them",
+    );
+  });
+
+  it("preflight: a failed setup, or a fake that won't load, names the loop's fake", async () => {
+    await expect(pf(fail(1, "boom", `${DIRENV}dl-step:allow\n`))).rejects.toThrow("could not set up the robot's fake .envrc inside the sandbox: boom");
+    await expect(pf(fail(1, "direnv: error x is blocked", `${DIRENV}dl-step:allow\ndl-step:hidden\ndl-step:envrc\n`))).rejects.toThrow(
+      "the robot's fake .envrc does not load inside the sandbox: restart the loop (it rewrites the fake); see docs/sandbox-sbx.md",
+    );
+  });
+
+  it("preflight: a never-cloned repo dir (no .git) has nothing to cover and is not refused", async () => {
+    const fresh = join(tmp, "fresh2");
+    const f = fakeRunner(answer(ok(DIRENV)));
+    await makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(pctx(fresh, [root]));
+    expect(f.calls[1].args[4]).not.toContain("dl-step:hidden");
+  });
+
+  it("preflight: an env file in a repo dir that can't be swapped out (inside dev-loop's root) is refused before any sbx call", async () => {
+    const clone = join(root, "clone");
+    mkdirSync(join(clone, ".git"), { recursive: true });
+    mkdirSync(join(clone, ".claude", "worktrees"), { recursive: true });
+    writeFileSync(fakeEnvPaths(clone).envrc, `${FAKE_ENV_MARKER}\n`);
+    writeFileSync(join(clone, ".env"), "x");
+    try {
+      const f = fakeRunner();
+      await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(pctx(clone, [root]))).rejects.toThrow(
+        `.env is in ${clone}, which the sandbox can read (it is inside dev-loop's folder): remove it; the robot uses the fake env`,
+      );
+      expect(f.calls).toEqual([]);
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+
+  it("preflight: no fake on the host is refused before any sbx call", async () => {
+    const bare = join(tmp, "bare");
+    mkdirSync(join(bare, ".git"), { recursive: true });
+    const f = fakeRunner();
+    await expect(makeSbxAdapter({ run: f.run, realpath: identity, hostNodeMajor: 24, env: FULL_ENV }).preflight(pctx(bare, [root, bare]))).rejects.toThrow(
+      `the robot's fake env is missing at ${bare}/.claude/worktrees/.envrc: the loop writes it at startup`,
+    );
+    expect(f.calls).toEqual([]);
   });
 });

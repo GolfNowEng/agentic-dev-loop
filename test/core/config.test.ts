@@ -294,6 +294,12 @@ describe("the three project config files", () => {
     expect(c.ceilings).toEqual({ maxRunsPerDay: 100, maxAttemptsPerTicket: 2, maxCostPerTicketUsd: 50 });
   });
 
+  it.each([...PROJECTS, "eval"])("%s: the dev poll skips finished tickets (statusCategory != Done)", async (project) => {
+    // TARS-1640 (2026-11-17): closed while still labelled pipeline:v2:dev, and dev ran it again.
+    const c = await loadConfig(path.join(REPO_ROOT, `pipeline.${project}.config.json`));
+    expect(c.roles.dev.pollJql).toContain("AND statusCategory != Done");
+  });
+
   it("catalog-ui-* keep their v1 labels until cutover", async () => {
     for (const project of ["catalog-ui-management", "catalog-ui-public"]) {
       const c = await loadConfig(path.join(REPO_ROOT, `pipeline.${project}.config.json`));
@@ -339,6 +345,9 @@ describe("per-role equivalence with the legacy config files", () => {
       Object.entries(devValue).map(([k, v]) => [k, v === "___" ? researchValue[k] : v]),
     ) as T;
   const EVAL = ' AND labels != "dev-loop-eval"';
+  // Added after the merge (TARS-1640): dev never picks up a finished ticket.
+  const NOT_DONE = " AND statusCategory != Done";
+  const withNotDone = (jql: string) => jql.replace(' AND status != "{prOpenStatus}"', ` AND status != "{prOpenStatus}"${NOT_DONE}`);
   const beforeOrderBy = (jql: string, clause: string) => jql.replace(/ ORDER BY /, `${clause} ORDER BY `);
 
   function expectedView(project: string, role: Role): Record<string, unknown> {
@@ -357,7 +366,7 @@ describe("per-role equivalence with the legacy config files", () => {
     }
     return {
       triggerLabel: d.jira.handoffLabel,
-      pollJql: d.jira.pollJql.dev,
+      pollJql: withNotDone(d.jira.pollJql.dev),
       repoLabel: d.jira.repoLabel,
       claimStatus: fillFrom(d.jira.claimStatus, r.jira.claimStatus),
       statusNames: fillFrom(d.jira.statusNames, r.jira.statusNames),
@@ -381,7 +390,7 @@ describe("per-role equivalence with the legacy config files", () => {
       expected.pollJql =
         role === "research"
           ? beforeOrderBy(expected.pollJql as string, EVAL)
-          : beforeOrderBy(legacyDevJql.replace(' AND assignee = "{assignee}"', ""), EVAL);
+          : beforeOrderBy(withNotDone(legacyDevJql.replace(' AND assignee = "{assignee}"', "")), EVAL);
     }
     expect(actual).toEqual(expected);
   });

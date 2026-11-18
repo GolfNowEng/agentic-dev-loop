@@ -29,6 +29,7 @@ import { allowedToolsFor } from "../../core/atlassian-tools.ts";
  * attempt on 2026-09-02, confirmed via that run's own permission_denials.
  *
  * The Atlassian names come from src/core/atlassian-tools.ts (the one list the
- * hooks are tested against); this is the host-connector form.
+ * hooks are tested against); this is the host-connector form (both server
+ * namings, since the connector may be v1 or /v2/mcp).
  */
 export const ALLOWED_TOOLS = allowedToolsFor("research");

@@ -60,10 +60,17 @@ export function runIdFromRunDir(runDir: string): string {
   return i < 0 ? seg : seg.slice(i + 1);
 }
 
-export function hostPushPrompt(a: { skill: string; worktree: string; branch: string; title: string; body: string }): string {
+/**
+ * Every direnv call names REPO_DIR, not the worktree: worktrees sit under
+ * .claude/worktrees/, where the loop's fake .envrc for the robot lives
+ * (src/core/fake-env.ts). `direnv exec <REPO_DIR> <cmd>` loads the person's
+ * real .envrc and runs <cmd> in the caller's cwd (the push worktree), so host
+ * push keeps the real env, as before.
+ */
+export function hostPushPrompt(a: { skill: string; worktree: string; repoDir: string; branch: string; title: string; body: string }): string {
   return [
     `Read ${a.skill} with the Read tool and follow it exactly, in its content-supplied mode, with --no-jira.`,
-    `Work only in ${a.worktree}: run every command as \`direnv exec ${a.worktree} <command>\` from that directory (\`cd ${a.worktree} && direnv exec ${a.worktree} git push -u origin ${a.branch}\`).`,
+    `Work only in ${a.worktree}: run every command as \`direnv exec ${a.repoDir} <command>\` from that directory (\`cd ${a.worktree} && direnv exec ${a.repoDir} git push -u origin ${a.branch}\`).`,
     `The branch is ${a.branch}; its commits are already signed; do not commit, amend, rebase or reset.`,
     `Never pass --no-verify or skip a hook. If the push or the PR fails, stop and print the error.`,
     `--title "${a.title}"`,
@@ -99,7 +106,7 @@ export async function hostPush(ticketKey: string, runId: string, ready: ReadyToP
     ...(oldTip ? { oldTip } : {}),
     ...(pushed !== undefined ? { pushed } : {}),
   });
-  const wtGit: GitFn = (args, cwd) => d.run("direnv", ["exec", wt, "git", ...args], cwd, WT_GIT_TIMEOUT_MS);
+  const wtGit: GitFn = (args, cwd) => d.run("direnv", ["exec", d.repoDir, "git", ...args], cwd, WT_GIT_TIMEOUT_MS);
   let added = false;
 
   if (ready.pr_body.includes(PR_BODY_BEGIN) || ready.pr_body.includes(PR_BODY_END)) {
@@ -132,7 +139,7 @@ export async function hostPush(ticketKey: string, runId: string, ready: ReadyToP
       return fail(`branch changes ${risky}; host push refuses to install or run hooks from sandbox-edited package/hook files — push it by hand after review`);
     }
 
-    try { await d.run("direnv", ["exec", wt, "npm", "ci"], wt); }
+    try { await d.run("direnv", ["exec", d.repoDir, "npm", "ci"], wt); }
     catch (e) { return fail(`npm ci failed in ${wt}: ${firstLine(e)}`); }
 
     const signed = await (d.sign ?? signUnpushed)({ worktree: wt, branch: ready.branch, ticketKey, defaultBranch: d.defaultBranch, git: wtGit });
@@ -142,7 +149,7 @@ export async function hostPush(ticketKey: string, runId: string, ready: ReadyToP
     if (!existsSync(d.pushBranchSkill)) return fail(`push-branch skill not found at ${d.pushBranchSkill}`);
 
     const res = await d.spawn({
-      prompt: hostPushPrompt({ skill: d.pushBranchSkill, worktree: wt, branch: ready.branch, title: ready.pr_title, body: ready.pr_body }),
+      prompt: hostPushPrompt({ skill: d.pushBranchSkill, worktree: wt, repoDir: d.repoDir, branch: ready.branch, title: ready.pr_title, body: ready.pr_body }),
       model: HOST_PUSH_MODEL,
       allowedTools: HOST_PUSH_TOOLS,
       addDir: d.repoDir,

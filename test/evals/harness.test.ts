@@ -16,7 +16,7 @@ import { join, relative, resolve } from "node:path";
 import { loadConfig } from "../../src/core/config.ts";
 import { checkEvalConfig, SANDBOX_REPO } from "../../evals/config-guard.mjs";
 import { summarize } from "../../evals/report.mjs";
-import { createIssueBody, STORY_POINTS_FIELD, EVAL_STORY_POINTS } from "../../evals/jira.mjs";
+import { closeLabelUpdate, createIssueBody, EVAL_EPIC, jiraErrorDetail, STORY_POINTS_FIELD, EVAL_STORY_POINTS, waitSearchable } from "../../evals/jira.mjs";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const rel = (p: string) => relative(ROOT, p);
@@ -250,6 +250,18 @@ describe("evals harness, dry run", () => {
     expect(out).toMatch(/DRY: .*repos\/JustinChan-fd\/dev-loop-eval-sandbox\/pulls/);
   });
 
+  it("reset.sh --write (dry) also lists the sandbox's open Issues and branches to remove", () => {
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(stateDir, "keys"), "TARS-9001\n");
+    const r = run("reset.sh", ["--write"]);
+    expect(r.status, r.stderr).toBe(0);
+    const out = r.stdout + r.stderr;
+    // Mirror Issues and pushed branches are left by every run (TARS-1642's Issue #2 and branch).
+    expect(out).toMatch(/DRY: .*repos\/JustinChan-fd\/dev-loop-eval-sandbox\/issues\?state=open/);
+    expect(out).toMatch(/DRY: .*repos\/JustinChan-fd\/dev-loop-eval-sandbox\/branches/);
+    expect(stubsCalled()).toEqual([]);
+  });
+
   it("reset.sh skips keys that are not well-formed", () => {
     mkdirSync(stateDir, { recursive: true });
     writeFileSync(join(stateDir, "keys"), "TARS-9001\n$(rm -rf x)\n");
@@ -474,14 +486,68 @@ describe("evals/jira.mjs create request body", () => {
     expect(body.fields.customfield_10002).toBe(1);
     expect(body.fields.project).toEqual({ key: "TARS" });
     expect(body.fields.summary).toBe("[dev-loop-eval] x");
-    expect(body.fields.labels).toEqual(["repo:webtarsthree", "dev-loop-eval", "pipeline:v2"]);
+    expect(body.fields.labels).toEqual(["repo:dev-loop-eval", "dev-loop-eval", "pipeline:v2"]);
     expect(body.fields.description.content).toHaveLength(2);
     expect(body).not.toHaveProperty("transition");
-    expect(body.fields).not.toHaveProperty("parent");
+    // TARS requires every Task to sit under an Epic ("Must be linked to an Epic using the Parent field").
+    expect(EVAL_EPIC).toBe("TARS-1384");
+    expect(body.fields.parent).toEqual({ key: "TARS-1384" });
   });
 
   it("omits the trigger label without --trigger, and refuses a summary without the prefix", () => {
-    expect(createIssueBody("[dev-loop-eval] b", "d", false).fields.labels).toEqual(["repo:webtarsthree", "dev-loop-eval"]);
+    expect(createIssueBody("[dev-loop-eval] b", "d", false).fields.labels).toEqual(["repo:dev-loop-eval", "dev-loop-eval"]);
     expect(() => createIssueBody("no prefix", "d", false)).toThrow(/dev-loop-eval/);
+  });
+});
+
+describe("evals/jira.mjs error detail", () => {
+  it("a Jira error names Jira's own reasons (field errors and messages), redacted", () => {
+    const body = JSON.stringify({ errorMessages: ["Bad thing"], errors: { customfield_10002: "Field 'customfield_10002' cannot be set.", summary: "for alice@example.com" } });
+    const msg = jiraErrorDetail(body);
+    expect(msg).toContain("Bad thing");
+    expect(msg).toContain("customfield_10002: Field 'customfield_10002' cannot be set.");
+    expect(msg).not.toContain("alice@example.com");
+  });
+
+  it("a non-JSON or empty body gives its first 200 characters, or nothing", () => {
+    expect(jiraErrorDetail("<html>gateway</html>")).toBe("<html>gateway</html>");
+    expect(jiraErrorDetail("x".repeat(500))).toHaveLength(200);
+    expect(jiraErrorDetail("")).toBe("");
+  });
+});
+
+describe("evals/jira.mjs wait-searchable", () => {
+  it("polls search for the keys until all are found, then resolves with the tries", async () => {
+    const seen: string[] = [];
+    let n = 0;
+    const search = async (jql: string) => {
+      seen.push(jql);
+      return ++n < 3 ? ["TARS-1"] : ["TARS-1", "TARS-2"];
+    };
+    const sleeps: number[] = [];
+    const tries = await waitSearchable(["TARS-1", "TARS-2"], { search, sleep: async (ms: number) => void sleeps.push(ms), timeoutMs: 60_000, stepMs: 5000 });
+    expect(tries).toBe(3);
+    expect(seen[0]).toBe("key in (TARS-1, TARS-2)");
+    expect(sleeps).toEqual([5000, 5000]);
+  });
+
+  it("gives up after timeoutMs with a clear error naming the missing keys", async () => {
+    let now = 0;
+    await expect(
+      waitSearchable(["TARS-9"], { search: async () => [], sleep: async (ms: number) => void (now += ms), now: () => now, timeoutMs: 20_000, stepMs: 5000 }),
+    ).rejects.toThrow("Jira search still does not find TARS-9 after 20s (new tickets take ~30s to be searchable)");
+  });
+
+  it("refuses a non-key before any search", async () => {
+    await expect(waitSearchable(["x) OR 1=1"], { search: async () => [], sleep: async () => {} })).rejects.toThrow(/not a ticket key/);
+  });
+});
+
+describe("evals/jira.mjs close strips the pipeline labels", () => {
+  it("the label update removes every pipeline:* label and keeps the rest", () => {
+    expect(closeLabelUpdate(["dev-loop-eval", "pipeline:v2:dev", "repo:dev-loop-eval", "pipeline:v2"])).toEqual({
+      update: { labels: [{ remove: "pipeline:v2:dev" }, { remove: "pipeline:v2" }] },
+    });
+    expect(closeLabelUpdate(["dev-loop-eval", "repo:dev-loop-eval"])).toBeNull();
   });
 });

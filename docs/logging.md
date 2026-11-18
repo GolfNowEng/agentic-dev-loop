@@ -49,10 +49,10 @@ file — it can never flip a run's `outcome`.
   `.pipeline/<slug>/repo/.claude/worktrees/<TICKET>-<RUN_ID>-ground/` in the
   fallback case) — this run's own isolated, detached `git worktree`,
   **nested inside the checkout it was branched from**, not a sibling path
-  elsewhere. Nested so tools like `direnv` that activate by walking up
-  from the current directory pick up the target repo's own `.envrc`/local
-  env automatically — a sibling directory never could, regardless of any
-  `direnv allow`. Created at the start of Ground and removed
+  elsewhere. Its `direnv` loads the loop's fake env,
+  `<REPO_DIR>/.claude/worktrees/.envrc` (placeholder values from the
+  committed `.envrc.example`, `src/core/fake-env.ts`), never the person's
+  real `.envrc`. Created at the start of Ground and removed
   unconditionally (hard gate) before the run's Cleanup completes — see
   `docs/skills.md`. `ticket-refine` never branches or commits here either;
   it's read-only by convention, just isolated per run. Expected to be
@@ -122,10 +122,9 @@ verify_loops, retries, failure_category, detail, pr, cost_usd, tokens.
   `.pipeline/<slug>/repo/.claude/worktrees/<TICKET>-<RUN_ID>/` in the fallback
   case) — this run's own isolated `git worktree`, **nested inside the
   checkout it was branched from**, not a sibling path elsewhere, on its
-  own branch (`<TICKET>-<slug>`). Nested so tools like `direnv` that
-  activate by walking up from the current directory pick up the target
-  repo's own `.envrc`/local env automatically — a sibling directory never
-  could. Removed once the run's Cleanup runs — unconditionally if the run
+  own branch (`<TICKET>-<slug>`). Its `direnv` loads the loop's fake env
+  (`<REPO_DIR>/.claude/worktrees/.envrc`), never the person's real
+  `.envrc`. Removed once the run's Cleanup runs — unconditionally if the run
   landed or bounced with everything committed, but deliberately **kept**
   if the run bounces with uncommitted in-progress work, so a human can
   inspect exactly what was tried (see `docs/skills.md`). Expected to be

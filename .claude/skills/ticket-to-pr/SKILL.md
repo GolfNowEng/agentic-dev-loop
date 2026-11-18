@@ -136,18 +136,21 @@ the config; take the checkout's location only from `REPO_DIR`.
 in a shared checkout.** At the start of Phase 0, create an isolated
 worktree for this run, on its own branch, **inside** `REPO_DIR`'s own
 directory tree (`<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>`, not a
-sibling path elsewhere), so tools like `direnv` that activate by walking
-up from the current directory pick up the target repo's own
-`.envrc`/local env automatically — a worktree living outside that tree
-never can. Never work directly in `REPO_DIR` itself, since a human may `cd`
+sibling path elsewhere). The loop keeps a **fake env** at
+`<REPO_DIR>/.claude/worktrees/.envrc`, built from the target repo's committed
+`.envrc.example` with placeholder values, so `direnv` walking up from a
+worktree stops there and loads the fake, never the person's real
+`<REPO_DIR>/.envrc`. Never read `<REPO_DIR>/.envrc` or `<REPO_DIR>/.env`
+(with any tool), never copy `.envrc.example` to a `.envrc`, and never point
+`direnv exec` at `<REPO_DIR>` itself. Never work directly in `REPO_DIR` itself, since a human may `cd`
 into it or be mid-inspection of a prior run's worktree at any moment
 while this loop runs unattended in the background.
 
 **Run every target-repo command through `direnv exec`.** direnv's shell
 hook never fires in this headless session: `cd` alone loads nothing, so
 tests that need the repo's local env (e.g. webtarsthree's
-`PLACEMENT_SERVICE_ENDPOINT` from its git-ignored `.envrc`) fail as if they
-were broken. Prefix every install, test, lint, typecheck, build, dev-server,
+`PLACEMENT_SERVICE_ENDPOINT`, placeholder-valued in the fake env) fail as if
+they were broken. Prefix every install, test, lint, typecheck, build, dev-server,
 `git commit` and `git push` command with the worktree path, so commit and
 push hooks see the same env:
 
@@ -162,6 +165,21 @@ as blocked (`direnv status`), bounce `env_setup` saying so; never run
 `direnv allow` yourself. A test that fails only without this env is not a
 bug on <defaultBranch>: never report it as pre-existing or file a
 follow-up for it.
+
+**Settings (env vars, feature flags).** The fake env has every setting
+`.envrc.example` lists on `origin/<defaultBranch>`, with placeholder values.
+- **The ticket adds a setting:** add it to the worktree's `.envrc.example`
+  as `export NAME=<fake value>` (a placeholder, `false` for a flag, a
+  `localhost` URL; never a real-looking key) with a one-line comment, in the
+  same commit as the code that reads it. The fake env only picks it up on
+  the next run, so pass it inline while testing:
+  `direnv exec <worktree> env NAME=<fake value> npm test`. List it in the PR
+  body's `New settings:` line (Phase 4 step 7).
+- **The code needs a setting the fake env lacks, and the ticket isn't
+  adding it** (it is missing from `.envrc.example`): stop and bounce with
+  `failure_category: "env_setup"`, naming the setting and the file that
+  reads it. Never invent a real-looking value, and never read the real
+  `.envrc` to find one.
 
 If `REPO_DIR` has no `.git` yet (the shared clone was never made on this
 machine), clone it first; otherwise skip straight to the fetch:
@@ -286,10 +304,28 @@ the tip SHA.
 
 Each phase's `progress.jsonl` events use the phase name shown.
 
+**Atlassian tool names.** Your Jira tools may come from either version of
+Atlassian's MCP server, and some tools have a different name on each. Use
+whichever of each pair you have (both are allowed):
+
+| Job | Older server | Newer server (`/v2/mcp`) |
+|---|---|---|
+| Read a ticket's comments | `getJiraIssue` (fields incl. `comment`) | `listJiraIssueComments` (pages every comment; the newer `getJiraIssue` shows at most 20 and may show none) |
+
+Where the newer server has `listJiraIssueComments`, use it to read
+comments: never conclude a ticket has no comments from `getJiraIssue`
+alone.
+
+**Linking tickets.** The newer server has no `createIssueLink`. When a step
+says to link a ticket and that tool is missing, record the link in the new
+ticket's description (`Relates to <TICKET>` / `Blocks <TICKET>`) and say so
+in `verdict.json`'s `detail`; never stop the run for it.
+
 ### Phase 0 — Intake
 
 1. Fetch the ticket (`getJiraIssue`, fields: summary, description, comments,
-   status, issuetype) for `$ARGUMENTS`.
+   status, issuetype) for `$ARGUMENTS`, and read every comment with
+   `listJiraIssueComments` where you have it (see "Atlassian tool names").
 2. Find the ticket's research-loop-authored comment (title starts with
    `✅ research-loop -`, per research-loop's own comment convention — see
    its `docs/future-enhancements.md`'s "Simplify Jira/GitHub comment
@@ -547,7 +583,14 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
      Phase 0). The `## QA Notes` list is the `qa_notes` array from step 6,
      numbered, in order. No other sections — no "Core Architecture,"
      "Files Changed," "Migration Notes," or similar — with one exception:
-     when step 1 recorded `preexisting_failures`, append this section last:
+     when this change adds settings to `.envrc.example`, add this line
+     right after the `## Changes` bullets:
+
+     ```markdown
+     New settings: `NAME_ONE`, `NAME_TWO` (in `.envrc.example` with fake values) — add the real INT value to your .envrc
+     ```
+
+     And when step 1 recorded `preexisting_failures`, append this section last:
 
      ```markdown
      ## Pre-existing failures
@@ -565,10 +608,10 @@ Commit once all Phase 2 tests pass, using `COMMIT_TYPE` from Phase 0
      files by repo-relative path only (e.g. `src/client/App.jsx`, not
      `/Users/<email>/Desktop/repo/src/client/App.jsx`). The same rule
      extends to any raw env var value, `.envrc`/`.env` content, or
-     credential/token/key/password value — Ground/Red/Green run inside a
-     per-run worktree nested inside the target repo's own directory tree
-     specifically so direnv picks up its real local `.envrc`/`.env` (see
-     "Target repo" below), so real secrets are reachable there too. Report
+     credential/token/key/password value — the worktree's env is the
+     loop's fake env, but a person's real values may still turn up in
+     logs, fixtures or a misconfigured machine, so treat any value as
+     secret (defense in depth). Report
      presence/shape only, mirroring whatever `hasClientSecret`/length-only
      pattern the target repo's own app logging already uses (e.g. "reads
      `API_KEY` from env" or "token present, 42 chars"), never the literal

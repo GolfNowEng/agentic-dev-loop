@@ -68,6 +68,8 @@ describe("makeRunSkill", () => {
       },
       log: () => {},
       logError: () => {},
+      // Never the real refresh: it would run direnv allow on temp files.
+      refreshFakeEnv: async () => {},
       ...extra,
     };
   }
@@ -119,6 +121,44 @@ describe("makeRunSkill", () => {
     const clone = resolveRepoPath(`.pipeline/v2/${SLUG}/repo`);
     expect(spawned[0].denyEditsUnder).toEqual([clone]);
     expect(resolveRepoPath(runDir("research")).startsWith(clone + "/")).toBe(false);
+  });
+
+  it("both roles: denyReads lists the target repo's real root env files (never *.example), rescanned per run", async () => {
+    const run = makeRunSkill(deps());
+    await run({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+    expect(spawned[0].denyReads).toEqual([]);
+    await writeFile(join(repo, ".envrc"), "export X=fake\n");
+    await writeFile(join(repo, ".env"), "X=fake\n");
+    await writeFile(join(repo, ".envrc.example"), "export X=placeholder\n");
+    await run({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+    await run({ role: "research", ticketKey: "TARS-1", runDir: runDir("research"), maxBudgetUsd: 50 });
+    expect(spawned[1].denyReads).toEqual([join(repo, ".env"), join(repo, ".envrc")]);
+    expect(spawned[2].denyReads).toEqual([join(repo, ".env"), join(repo, ".envrc")]);
+  });
+
+  it("both roles' spawn env marks the robot (DEVLOOP_ROBOT_ENV=1), so the fake env loads for it", async () => {
+    const run = makeRunSkill(deps());
+    await run({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+    await run({ role: "research", ticketKey: "TARS-1", runDir: runDir("research"), maxBudgetUsd: 50 });
+    expect(spawned.map((o) => o.env.DEVLOOP_ROBOT_ENV)).toEqual(["1", "1"]);
+  });
+
+  it("refreshes the fake env before every spawn; a refresh failure is logged, never fatal", async () => {
+    const order: string[] = [];
+    onSpawn = async () => void order.push("spawn");
+    const errors: string[] = [];
+    let n = 0;
+    const run = makeRunSkill(deps({
+      refreshFakeEnv: async () => {
+        order.push("refresh");
+        if (++n === 2) throw new Error("disk full");
+      },
+      logError: (m) => errors.push(m),
+    }));
+    await run({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+    await run({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
+    expect(order).toEqual(["refresh", "spawn", "refresh", "spawn"]);
+    expect(errors.some((e) => e.includes("fake env") && e.includes("disk full"))).toBe(true);
   });
 
   it("validates REPO_DIR at construction: a malformed targetRepo.path throws before any run", () => {
@@ -264,11 +304,11 @@ describe("makeRunSkill", () => {
       expect(() => makeRunSkill({ ...deps(), slug })).not.toThrow();
     });
 
-    it("with a selection, spawn opts carry the adapter, instance name, mounts and adapter config", async () => {
+    it("with a selection, spawn opts carry the adapter, instance name, mounts, repo dir and adapter config", async () => {
       await makeRunSkill(deps({ sandbox: sel("enforce"), shortId: () => "a1b2c3" }))({ role: "dev", ticketKey: "TARS-1", runDir: runDir("dev"), maxBudgetUsd: 20 });
       expect(spawned[0].sandbox).toEqual({
         adapter: fakeAdapter,
-        run: { instanceName: "dl-17-skill-runner-test-tars-1-dev-a1b2c3", mounts: ["/abs/dev-loop", repo], config: { k: 1 } },
+        run: { instanceName: "dl-17-skill-runner-test-tars-1-dev-a1b2c3", mounts: ["/abs/dev-loop", repo], repoDir: repo, config: { k: 1 } },
       });
     });
 

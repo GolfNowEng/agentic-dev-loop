@@ -16,9 +16,8 @@
 
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { FlagError, parseFlags } from "../src/core/flags.ts";
 import { fillModelEnvFromClaudeSettings } from "../src/core/claude-settings-env.ts";
 import { repoSlugFromUrl } from "../src/core/config.ts";
@@ -67,28 +66,6 @@ function projectConfig() {
     process.exit(1);
   }
   return { slug, cfg: validateSbxConfig(raw.sandbox.sbx), repoPath: raw.targetRepo.path };
-}
-
-/**
- * Asks the person at the terminal to type "allow". No terminal (an agent, a pipe): never allowed.
- * Ctrl-D or Ctrl-C at the prompt counts as "no", so the caller's cleanup still runs.
- */
-async function confirmAllow(dir) {
-  if (!process.stdin.isTTY) {
-    console.log(`\n${dir}/.envrc: not allowing it (no terminal to ask). Rerun from your own terminal to approve it.`);
-    return false;
-  }
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = await new Promise((done) => {
-      rl.on("close", () => done(""));
-      rl.on("SIGINT", () => rl.close());
-      rl.question(`\nAllow ${dir}/.envrc inside the template? Review it first. Type "allow" to approve: `).then(done, () => done(""));
-    });
-    return answer.trim() === "allow";
-  } finally {
-    rl.close();
-  }
 }
 
 /** The same rule preflight applies: no env file at the top of dev-loop's folder, which every sandbox mounts. */
@@ -200,22 +177,22 @@ switch (cmd) {
   case "template": {
     // Prints the manual steps; template:build runs them.
     const tag = templateTag();
-    const { repoPath } = projectConfig();
+    projectConfig();
     console.log(`Rebuild the template as dev-loop-sbx:${tag}. One command does it all:
 
   npm run sbx:template:build -- --tag=${tag}
 
-It creates a build sandbox from the kit (with dev-loop and ${repoPath ?? "the target repo"} mounted),
-runs sandbox/sbx/template.sh inside it (node, jq, direnv, git settings), asks you to
-type "allow" for the target repo's .envrc,
-saves the template, and removes the build sandbox. Edit that file to add packages.
+It creates a build sandbox from the kit (with dev-loop mounted), runs
+sandbox/sbx/template.sh inside it (node, jq, direnv, git settings),
+saves the template, and removes the build sandbox. The target repo is not
+mounted: the robot's env is the loop's fake, allowed in each run's sandbox. Edit that file to add packages.
 Then set "template": "docker.io/library/dev-loop-sbx:${tag}" and run npm run sbx:preflight.`);
     break;
   }
 
   case "template:build": {
     const tag = templateTag();
-    const { cfg, repoPath } = projectConfig();
+    const { cfg } = projectConfig();
     const nodeMajor = (flags.values["--node"] ?? process.versions.node.split(".")[0]).trim();
     if (!/^[0-9]+$/.test(nodeMajor)) {
       console.error("--node must be a major version like 26");
@@ -227,7 +204,8 @@ Then set "template": "docker.io/library/dev-loop-sbx:${tag}" and run npm run sbx
       console.error(`${ref} already exists. Pick a new --tag (keep the old one for rollback).`);
       process.exit(1);
     }
-    const mounts = [ROOT, ...(repoPath && repoPath !== ROOT ? [repoPath] : [])];
+    // Only dev-loop: the target repo's real .envrc never enters a template.
+    const mounts = [ROOT];
     const name = "dl-template-build";
     console.log(`Building ${ref} (node ${nodeMajor}). This takes a few minutes.`);
     let ok = false;
@@ -237,16 +215,6 @@ Then set "template": "docker.io/library/dev-loop-sbx:${tag}" and run npm run sbx
       const script = resolve(ROOT, "sandbox/sbx/template.sh");
       if (sbx(["exec", name, "sh", script, nodeMajor]) !== 0) {
         throw new Error("template.sh failed. If a host was blocked, review npm run sbx:status and allow it yourself, then rerun.");
-      }
-      // direnv allow is an approval, like a network grant: only a person at a terminal can give it.
-      for (const dir of mounts.slice(1).filter((d) => existsSync(join(d, ".envrc")))) {
-        if (!(await confirmAllow(dir))) {
-          console.log(`Skipped. Runs will stop with "the target repo's .envrc is not allowed" until you allow it in a rebuild.`);
-          continue;
-        }
-        if (sbx(["exec", "-w", dir, name, "direnv", "allow"]) !== 0 || sbx(["exec", "-w", dir, name, "direnv", "exec", dir, "true"]) !== 0) {
-          throw new Error(`direnv allow failed for ${dir}/.envrc`);
-        }
       }
       if (sbx(["stop", name]) !== 0) throw new Error("sbx stop failed");
       if (sbx(["template", "save", name, ref]) !== 0) throw new Error("sbx template save failed");

@@ -86,7 +86,7 @@ for (const [name, input] of WRITES) {
     projectKey: "TARS",
     issueTypeName: "Task",
     summary: "[dev-loop-eval] follow-up",
-    additional_fields: { labels: ["repo:webtarsthree", "dev-loop-eval"] },
+    additional_fields: { labels: ["repo:dev-loop-eval", "dev-loop-eval"] },
   };
   const create = (patch) => run(mcp("createJiraIssue", { ...GOOD, ...patch }));
   const allow = (name, r) => check(`set: createJiraIssue ${name} allowed`, r.status === 0, `got ${r.status}, stderr: ${r.stderr}`);
@@ -101,7 +101,7 @@ for (const [name, input] of WRITES) {
   deny("in another project", create({ projectKey: "MC" }));
   deny("with no project", create({ projectKey: undefined }));
   deny("with projectKey TARS but additional_fields.project elsewhere", create({ additional_fields: { ...GOOD.additional_fields, project: { key: "MC" } } }));
-  deny("without the dev-loop-eval label", create({ additional_fields: { labels: ["repo:webtarsthree"] } }));
+  deny("without the dev-loop-eval label", create({ additional_fields: { labels: ["repo:dev-loop-eval"] } }));
   deny("with no labels at all", create({ additional_fields: undefined }));
   deny("with labels not an array", create({ additional_fields: { labels: "dev-loop-eval" } }));
   deny("with a foreign parent", create({ issueTypeName: "Sub-task", parent: "TARS-1381" }));

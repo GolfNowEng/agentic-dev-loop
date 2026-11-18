@@ -2,7 +2,8 @@
 
 A template is a saved sandbox disk that every loop sandbox starts from. It
 holds what the kit can't supply (the kit is a `FROM scratch` mixin): node,
-jq, direnv, git settings, and your approval of the target repo's `.envrc`.
+jq, direnv and git settings. It holds no direnv approval: each run's
+sandbox allows only the loop's fake `.envrc`.
 
 ## Where it lives
 
@@ -30,14 +31,12 @@ inside the build sandbox. To add a package, add a line under
 npm run sbx:template:build -- --tag=v3
 ```
 
-1. Creates a build sandbox from the kit, with dev-loop and the target repo
-   mounted at their real paths.
+1. Creates a build sandbox from the kit, with dev-loop mounted at its real
+   path. The target repo is not mounted, so its real `.envrc` never
+   enters a template.
 2. Runs `template.sh` inside it, with the node major from the shell you
    run it in (override with `--node=26`).
-3. For each target repo with an `.envrc`, asks you to type `allow`. That
-   is your direnv approval, baked into the template. With no terminal (an
-   agent, a pipe), it never allows.
-4. Stops the sandbox, saves `dev-loop-sbx:v3`, and removes the build
+3. Stops the sandbox, saves `dev-loop-sbx:v3`, and removes the build
    sandbox, even when a step fails.
 
 It refuses a tag that already exists, so the old one stays for rollback.
@@ -58,8 +57,6 @@ yourself (`sbx policy allow network <host>`), and rerun.
 |---|---|
 | Add a tool or package | you decide; edit `template.sh` |
 | The project moves to a new node major | preflight: "sandbox image has no node N". Run `nvm use N` on the host first, then build with `--node=N` |
-| The target repo's `.envrc` changed | preflight: "the target repo's .envrc is not allowed inside the sandbox" |
-| A new target repo with an `.envrc` | same message, from its first preflight |
 
 ## Roll back
 

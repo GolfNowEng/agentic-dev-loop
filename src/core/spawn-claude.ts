@@ -137,6 +137,13 @@ export interface SpawnClaudeOpts {
    * characters, or the spawn is refused (spawnError).
    */
   denyEditsUnder?: string[];
+  /**
+   * Absolute files the child must not Read, passed as `Read(//<path>)` in the
+   * same `permissions.deny` list. Same path rule as denyEditsUnder. Stops the
+   * Read tool only, not a Bash `cat`: a soft rule (the target repo's real
+   * env files with no sandbox; see src/core/fake-env.ts).
+   */
+  denyReads?: string[];
   /** Prefix for this run's log lines (the skill name). Overrides SpawnClaudeDeps.logPrefix. */
   logPrefix?: string;
   /** Run the spawn through this sandbox adapter. Omitted: no sandbox, the spawn is unchanged. */
@@ -339,18 +346,22 @@ export function startProgressTail(
 const DENY_DIR = /^\/[A-Za-z0-9@._/+-]*$/;
 
 /** The `--settings` JSON, or null when there is nothing to set. Throws on an unsafe deny dir. */
-export function settingsJson(opts: Pick<SpawnClaudeOpts, "excludeClaudeMd" | "denyEditsUnder">): string | null {
+export function settingsJson(opts: Pick<SpawnClaudeOpts, "excludeClaudeMd" | "denyEditsUnder" | "denyReads">): string | null {
   const settings: { claudeMdExcludes?: string[]; permissions?: { deny: string[] } } = {};
   if (opts.excludeClaudeMd && opts.excludeClaudeMd.length > 0) settings.claudeMdExcludes = opts.excludeClaudeMd;
   const dirs = opts.denyEditsUnder ?? [];
   for (const d of dirs) {
     if (!DENY_DIR.test(d)) throw new Error(`denyEditsUnder: ${JSON.stringify(d)} must be an absolute path with no glob characters`);
   }
-  if (dirs.length > 0) {
-    settings.permissions = {
-      deny: dirs.flatMap((d) => ["Edit", "Write", "NotebookEdit"].map((tool) => `${tool}(/${d.replace(/\/+$/, "")}/**)`)),
-    };
+  const reads = opts.denyReads ?? [];
+  for (const f of reads) {
+    if (!DENY_DIR.test(f)) throw new Error(`denyReads: ${JSON.stringify(f)} must be an absolute path with no glob characters`);
   }
+  const deny = [
+    ...dirs.flatMap((d) => ["Edit", "Write", "NotebookEdit"].map((tool) => `${tool}(/${d.replace(/\/+$/, "")}/**)`)),
+    ...reads.map((f) => `Read(/${f})`),
+  ];
+  if (deny.length > 0) settings.permissions = { deny };
   return Object.keys(settings).length > 0 ? JSON.stringify(settings) : null;
 }
 

@@ -17,6 +17,7 @@ import {
   TEARDOWN_GRACE_MS,
   PREPARE_TIMEOUT_MS,
   INSPECT_TIMEOUT_MS,
+  settingsJson,
 } from "../../src/core/spawn-claude.ts";
 import type { SpawnClaudeOpts, SpawnFn, SpawnClaudeDeps } from "../../src/core/spawn-claude.ts";
 import { parseVerdict } from "../../src/core/verdict.ts";
@@ -402,6 +403,18 @@ describe("spawnClaudeRun", () => {
     expect(seen[0].filter((a) => a === "--settings")).toHaveLength(1);
   });
 
+  it("denyReads: Read(//abs/file) rules in the same permissions.deny list as denyEditsUnder", () => {
+    expect(JSON.parse(settingsJson({ denyReads: ["/abs/t/.envrc"] })!)).toEqual({ permissions: { deny: ["Read(//abs/t/.envrc)"] } });
+    expect(JSON.parse(settingsJson({ denyEditsUnder: ["/abs/t"], denyReads: ["/abs/t/.env"] })!)).toEqual({
+      permissions: { deny: ["Edit(//abs/t/**)", "Write(//abs/t/**)", "NotebookEdit(//abs/t/**)", "Read(//abs/t/.env)"] },
+    });
+    expect(settingsJson({ denyReads: [] })).toBeNull();
+  });
+
+  it("denyReads rejects a relative path or a glob character", () => {
+    for (const bad of ["rel/.envrc", "/abs/*", "/abs/(x)"]) expect(() => settingsJson({ denyReads: [bad] })).toThrow(/denyReads/);
+  });
+
   it("denyEditsUnder rejects a relative path or a glob character (it becomes a permission rule)", async () => {
     const spawn: SpawnFn = () => {
       throw new Error("must not spawn");
@@ -701,18 +714,19 @@ describe("killedTimeoutVerdict", () => {
   });
 });
 
-// Byte-for-byte the strings each v1 main.ts passed to --allowedTools at
-// ad1ad2a (src/main.ts:59 and research-loop/src/main.ts:66). Never unioned.
+// Byte-for-byte. Each role's v1 names, with the renamed /v2/mcp names next to
+// their v1 originals and listJiraIssueComments added: the host connector may be
+// either server version (TARS-1640). Never unioned across roles.
 describe("role ALLOWED_TOOLS", () => {
-  it("dev is its v1 constant plus the two follow-up-ticket writes (Ruling 30)", () => {
+  it("dev: its v1 tools plus the two follow-up-ticket writes (Ruling 30), and the v2 comment read", () => {
     expect(DEV_ALLOWED_TOOLS).toBe(
-      "mcp__atlassian__getAccessibleAtlassianResources,mcp__atlassian__getJiraIssue,mcp__atlassian__createJiraIssue,mcp__atlassian__createIssueLink,Bash,Read,Grep,Glob",
+      "mcp__atlassian__getAccessibleAtlassianResources,mcp__atlassian__getJiraIssue,mcp__atlassian__createJiraIssue,mcp__atlassian__createIssueLink,mcp__atlassian__listJiraIssueComments,Bash,Read,Grep,Glob",
     );
   });
 
-  it("research equals its v1 constant", () => {
+  it("research: its v1 tools and their v2 names", () => {
     expect(RESEARCH_ALLOWED_TOOLS).toBe(
-      "mcp__atlassian__getAccessibleAtlassianResources,mcp__atlassian__getJiraIssue,mcp__atlassian__searchJiraIssuesUsingJql,mcp__atlassian__addCommentToJiraIssue,mcp__atlassian__editJiraIssue,mcp__atlassian__search,mcp__atlassian__getConfluencePage,mcp__atlassian__searchConfluenceUsingCql,Bash,Read,Grep,Glob",
+      "mcp__atlassian__getAccessibleAtlassianResources,mcp__atlassian__getJiraIssue,mcp__atlassian__searchJiraIssuesUsingJql,mcp__atlassian__addCommentToJiraIssue,mcp__atlassian__addOrEditJiraIssueComment,mcp__atlassian__editJiraIssue,mcp__atlassian__search,mcp__atlassian__getConfluencePage,mcp__atlassian__getConfluenceContent,mcp__atlassian__searchConfluenceUsingCql,mcp__atlassian__searchConfluence,mcp__atlassian__listJiraIssueComments,Bash,Read,Grep,Glob",
     );
   });
 });

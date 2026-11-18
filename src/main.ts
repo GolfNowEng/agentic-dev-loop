@@ -71,6 +71,7 @@ import { killActiveChild, spawnClaudeRun } from "./core/spawn-claude.ts";
 import { realOpenPrUrlForBranch } from "./core/github-client.ts";
 import { realGit } from "./worker/host-sign.ts";
 import { hostPush, hostPushPreflightProblem, runIdFromRunDir } from "./worker/host-push.ts";
+import { fakeEnvSummary, realFakeEnvDeps, writeFakeEnv } from "./core/fake-env.ts";
 import { notify } from "./core/notify.ts";
 import { recordAdoptedFlights, runWorkerIteration, type WorkerDeps } from "./worker/cycle.ts";
 import { makeRunSkill, sandboxInstancePrefix, sandboxMounts, sandboxPreflightInstanceName } from "./worker/skill-runner.ts";
@@ -342,9 +343,14 @@ async function main(): Promise<void> {
   // Built only for a real sandbox, so a long slug never fails the default (none) path.
   const preflightInstanceName =
     sandboxSelection.adapter.name !== DEFAULT_ADAPTER ? sandboxPreflightInstanceName(slug, randomBytes(3).toString("hex")) : "";
+  // The robot's fake env (src/core/fake-env.ts), before preflight: a sandbox
+  // covers the real env files with it. Names only, never values.
+  const fake = await writeFakeEnv(repoDirFor(config, slug), config.targetRepo.defaultBranch, realFakeEnvDeps);
+  logError(`[${prefix}] ${fakeEnvSummary(fake)}`);
   await sandboxSelection.adapter.preflight({
     repoRoot: REPO_ROOT,
     mounts: sandboxMounts(REPO_ROOT, repoDirFor(config, slug)),
+    repoDir: repoDirFor(config, slug),
     cwd: REPO_ROOT,
     instanceName: preflightInstanceName,
     githubRepo: config.github.repo,

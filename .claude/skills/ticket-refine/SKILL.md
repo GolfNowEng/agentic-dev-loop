@@ -32,6 +32,21 @@ or to bounce it with concrete evidence of why it isn't ready.
 
 ## Setup: idempotent re-refinement
 
+**Atlassian tool names.** Your Jira tools may come from either version of
+Atlassian's MCP server, and some tools have a different name on each. Use
+whichever of each pair you have (both are allowed):
+
+| Job | Older server | Newer server (`/v2/mcp`) |
+|---|---|---|
+| Post a Jira comment | `addCommentToJiraIssue` | `addOrEditJiraIssueComment` |
+| Read a ticket's comments | `getJiraIssue` (fields incl. `comment`) | `listJiraIssueComments` (pages every comment; the newer `getJiraIssue` shows at most 20 and may show none) |
+| Read a Confluence page | `getConfluencePage` | `getConfluenceContent` |
+| Search Confluence | `searchConfluenceUsingCql` | `searchConfluence` |
+
+Where the newer server has `listJiraIssueComments`, use it to read
+comments: never conclude a ticket has no comments from `getJiraIssue`
+alone.
+
 **Always check first**: does this ticket already have a research-loop
 Jira comment (title starts with `✅ research-loop -` or `❌ research-loop
 -`) or an equivalent GitHub Issue comment (first line starts with `##
@@ -122,10 +137,15 @@ in a shared checkout.** At the start of Step 2 (Ground) — the only step
 that touches the target repo — create an isolated, detached worktree for
 this run **inside** `REPO_DIR`'s own directory tree
 (`<REPO_DIR>/.claude/worktrees/<TICKET>-<RUN_ID>-ground`, not a sibling
-path elsewhere), so tools like `direnv` that activate by walking up from
-the current directory pick up the target repo's own `.envrc`/local env
-automatically — a worktree living outside that tree never can, no matter
-what. Never work directly in `REPO_DIR` itself, since a human may `cd`
+path elsewhere). The loop keeps a **fake env** at
+`<REPO_DIR>/.claude/worktrees/.envrc`, built from the target repo's committed
+`.envrc.example` with placeholder values, so `direnv exec <worktree>` loads
+the fake, never the person's real `<REPO_DIR>/.envrc`.
+Never read `<REPO_DIR>/.envrc` or `<REPO_DIR>/.env` (with any tool),
+never copy `.envrc.example` to a `.envrc`, and never point `direnv exec`
+at `<REPO_DIR>` itself. If grounding shows the ticket needs a setting
+`.envrc.example` lacks, say so in the refined ticket (the implementer adds
+it there with a fake value). Never work directly in `REPO_DIR` itself, since a human may `cd`
 into it or be mid-inspection of a prior run's worktree at any moment while
 this loop runs unattended in the background.
 
@@ -244,8 +264,9 @@ an infrastructure gap, not a spec-readiness problem.
 Before restating the ask, exhaust the context Jira itself already has —
 don't declare something ambiguous or under-specified until you've checked:
 
-1. **This ticket's own comment thread** (`getJiraIssue` with `comment` in
-   `fields`, or the equivalent comment-listing call) — read every comment,
+1. **This ticket's own comment thread** (`listJiraIssueComments` where you
+   have it, else `getJiraIssue` with `comment` in `fields`; see "Atlassian
+   tool names") — read every comment,
    not just the description. A prior discussion may already answer the
    exact question you're about to flag as open.
 2. **Linked issues, one hop** — any ticket connected via `relates to` /
@@ -727,7 +748,7 @@ requirement).
    below it — making the two surfaces (and a human skimming either one)
    look out of sync even when the underlying state is correct. Concretely,
    this means: **never pass an existing `commentId` to
-   `addCommentToJiraIssue`** (that parameter updates the named comment in
+   `addCommentToJiraIssue` or `addOrEditJiraIssueComment`** (that parameter updates the named comment in
    place instead of creating a new one — always omit it), never `gh api
    ... -X PATCH` an existing GitHub comment, and never `gh issue comment
    --edit-last`. (`editJiraIssue` itself edits issue *fields*, not
@@ -748,9 +769,9 @@ requirement).
 8. **Never write a raw env var value, `.envrc`/`.env` file content, or any
    credential/token/key/password value into a Jira comment, GitHub Issue
    comment, `progress.jsonl` note, or the always-emitted result line** —
-   Ground's worktree lives inside the target repo's own directory tree
-   specifically so `direnv` picks up its real local env, which means that
-   env can contain real secrets. Report presence/shape only, never the raw
+   Ground's worktree loads the loop's fake env, but real values can still
+   turn up in logs, fixtures or a misconfigured machine, so treat any value
+   as secret (defense in depth). Report presence/shape only, never the raw
    value — this rule now applies to the GitHub write surface exactly as it
    already applied to Jira. **Code-level backstop on both surfaces**: the
    existing `PreToolUse` hook (`.claude/hooks/block-secret-comments.sh`)

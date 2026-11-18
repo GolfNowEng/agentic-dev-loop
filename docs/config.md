@@ -478,8 +478,10 @@ plus an `assignee = "{assignee}"` clause (filled from
 below) `AND status != "{bouncedStatus}"` (filled from
 `jira.statusNames.bounced`) and (as of the landed-loop fix below)
 `AND status != "{prOpenStatus}"` (filled from `jira.statusNames.prOpen`)
-— the label signals pipeline stage, but a genuine bounce or a landed PR
-each need their own exclusion so the very next poll cycle doesn't
+and (2026-11-17, TARS-1640) `AND statusCategory != Done`, so a closed or
+done ticket that still carries the dev label is never run again
+— the label signals pipeline stage, but a genuine bounce, a landed PR or a
+finished ticket each need their own exclusion so the very next poll cycle doesn't
 immediately re-match and re-run the same ticket. `runLoopIteration`
 for `loopKind: "dev"` still has **no atomic claim step at all**: it goes
 straight from poll to running the skill. This is safe only because this

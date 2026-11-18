@@ -25,6 +25,7 @@ import { allowedToolsFor } from "../../core/atlassian-tools.ts";
  * stuck on exactly that Read prompt and exited with no verdict.json.
  *
  * The Atlassian names come from src/core/atlassian-tools.ts (the one list the
- * hooks are tested against); this is the host-connector form.
+ * hooks are tested against); this is the host-connector form (both server
+ * namings, since the connector may be v1 or /v2/mcp).
  */
 export const ALLOWED_TOOLS = allowedToolsFor("dev");
