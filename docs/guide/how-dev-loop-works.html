@@ -19,10 +19,10 @@
 /* Layout: one column; filter chips on top, a diagram that redraws below, then plain steps. */
 :root {
   --bg: #f6f7f4; --ink: #1d2420; --muted: #5d6862; --line: #c9d0cb; --card: #ffffff;
-  --room: #edf2f9; --room-edge: #5b82b8;
-  --mac: #f4f1f8; --mac-edge: #7656a8;
-  --ext: #eff5ed; --ext-edge: #3f8a4b;
-  --key: #c98a1c; --bad: #b4473b; --un: #faf0ee;
+  --room: #e3ebf6; --room-edge: #5b82b8;
+  --mac: #efeaf6; --mac-edge: #7656a8;
+  --ext: #e8f2e5; --ext-edge: #3f8a4b;
+  --key: #c98a1c; --bad: #b4473b; --un: #f8e9e6;
   --hover: #eef1ee; --field-edge: #a9b3ad; --shadow: 0 1px 2px rgba(29, 36, 32, .08); --chip: #ffffff; --chip-on: #1d2420; --chip-on-ink: #f6f7f4;
   --a-loop: #1f6f78; --a-loop-bg: #e2f1f2; --a-robot: #a8457a; --a-robot-bg: #f7e6ef;
   --a-you: #8a5a12; --a-you-bg: #f6ecd9; --a-sbx: #3d67a3; --a-sbx-bg: #e3ebf6;
@@ -127,8 +127,8 @@ h1 code.name { font-weight: 700; }
 #diagram .small { fill: var(--muted); font-size: 12.5px; }
 #diagram .zone-title { font-weight: 700; font-size: 14px; }
 .z-room { fill: var(--room); stroke: var(--room-edge); }
-.z-mac { fill: var(--card); stroke: var(--mac-edge); }
-.z-ext { fill: var(--card); stroke: var(--ext-edge); stroke-dasharray: 7 5; }
+.z-mac { fill: var(--mac); stroke: var(--mac-edge); }
+.z-ext { fill: var(--ext); stroke: var(--ext-edge); stroke-dasharray: 7 5; }
 .t-room { fill: var(--room-edge); }
 .t-mac { fill: var(--mac-edge); }
 #diagram .t-ext { fill: var(--ext-edge); }
@@ -146,10 +146,10 @@ h1 code.name { font-weight: 700; }
 .gate { fill: var(--room-edge); }
 #diagram .gate-text { fill: var(--bg); font-size: 11px; font-weight: 700; }
 .head { fill: var(--muted); }
-.z-un { fill: var(--card); stroke: var(--bad); stroke-dasharray: 7 5; }
+.z-un { fill: var(--un); stroke: var(--bad); stroke-dasharray: 7 5; }
 #diagram .t-un { fill: var(--bad); }
-#diagram .halo-ext { paint-order: stroke; stroke: var(--card); stroke-width: 6px; stroke-linejoin: round; }
-#diagram .halo-un { paint-order: stroke; stroke: var(--card); stroke-width: 6px; stroke-linejoin: round; }
+#diagram .halo-ext { paint-order: stroke; stroke: var(--ext); stroke-width: 6px; stroke-linejoin: round; }
+#diagram .halo-un { paint-order: stroke; stroke: var(--un); stroke-width: 6px; stroke-linejoin: round; }
 #diagram .un-on { fill: var(--ink); font-weight: 700; }
 .pickup { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 18px; }
 .pickup b { color: var(--ink); font-weight: 700; margin-right: 4px; }
